@@ -4,7 +4,9 @@ project(runner LANGUAGES C CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "rustdesk")
+# HOMEDESK: Load the launcher name and generated UI macros from build/config.toml.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../build/homedesk_brand.cmake")
+set(BINARY_NAME "${HOMEDESK_EXECUTABLE_NAME}")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
 set(APPLICATION_ID "com.carriez.flutter_hbb")

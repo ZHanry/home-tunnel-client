@@ -32,8 +32,10 @@ server/console/data/
 Thumbs.db
 
 # 临时文件与日志
+**/__pycache__/
+*.pyc
+build/assets/generated/
 *.log
 *.tmp
 *.bak
 *.swp
-

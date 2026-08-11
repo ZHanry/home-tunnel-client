@@ -1,3 +1,5 @@
+mod homedesk_build; // HOMEDESK: Read the monorepo brand before compiling the upstream client.
+
 #[cfg(windows)]
 fn build_windows() {
     let file = "src/platform/windows.cc";
@@ -78,6 +80,7 @@ fn install_android_deps() {
 }
 
 fn main() {
+    homedesk_build::configure(); // HOMEDESK: Export validated brand values as compile-time environment variables.
     hbb_common::gen_version();
     install_android_deps();
     #[cfg(all(windows, feature = "inline"))]

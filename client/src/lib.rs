@@ -1,4 +1,5 @@
 mod keyboard;
+mod homedesk_brand; // HOMEDESK: Isolate the compiled application-name default from upstream code.
 /// cbindgen:ignore
 pub mod platform;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

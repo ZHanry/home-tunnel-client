@@ -122,6 +122,7 @@ impl Drop for SimpleCallOnReturn {
 }
 
 pub fn global_init() -> bool {
+    crate::homedesk_brand::init(); // HOMEDESK: Apply the configured brand before paths, tray, or UI initialization.
     #[cfg(target_os = "linux")]
     {
         if !crate::platform::linux::is_x11() {

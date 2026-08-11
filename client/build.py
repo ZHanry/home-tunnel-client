@@ -11,6 +11,12 @@ import argparse
 import sys
 from pathlib import Path
 
+# HOMEDESK: Load the monorepo brand once; platform packaging consumes only these validated values.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'build'))
+from brand_config import load_brand
+from homedesk_package import stage_linux_package, validate_deb_arch
+HOMEDESK_BRAND = load_brand()
+
 windows = platform.platform().startswith('Windows')
 osx = platform.platform().startswith(
     'Darwin') or platform.platform().startswith("macOS")
@@ -31,7 +37,8 @@ def get_deb_arch() -> str:
     custom_arch = os.environ.get("DEB_ARCH")
     if custom_arch is None:
         return "amd64"
-    return custom_arch
+    # HOMEDESK: Reject path/shell metacharacters before the architecture reaches package commands or names.
+    return validate_deb_arch(custom_arch)
 
 def get_deb_extra_depends() -> str:
     custom_arch = os.environ.get("DEB_ARCH")
@@ -289,25 +296,23 @@ def get_features(args):
     return features
 
 
-def generate_control_file(version):
-    control_file_path = "../res/DEBIAN/control"
-    system2('/bin/rm -rf %s' % control_file_path)
-
-    content = """Package: rustdesk
+def generate_control_file(version, control_file_path):
+    # HOMEDESK: Debian metadata is generated from build/config.toml instead of upstream literals.
+    content = """Package: %s
 Section: net
 Priority: optional
 Version: %s
 Architecture: %s
-Maintainer: rustdesk <info@rustdesk.com>
+Maintainer: %s <info@rustdesk.com>
 Homepage: https://rustdesk.com
 Depends: libgtk-3-0t64 | libgtk-3-0, libxcb-randr0, libxdo3 | libxdo4, libxfixes3, libxcb-shape0, libxcb-xfixes0, libasound2t64 | libasound2, libsystemd0, curl, libva2, libva-drm2, libva-x11-2, libgstreamer-plugins-base1.0-0, libpam0g, gstreamer1.0-pipewire%s
 Recommends: libayatana-appindicator3-1
-Description: A remote control software.
+Description: %s remote desktop client.
 
-""" % (version, get_deb_arch(), get_deb_extra_depends())
-    file = open(control_file_path, "w")
-    file.write(content)
-    file.close()
+""" % (HOMEDESK_BRAND.package_name, version, get_deb_arch(), HOMEDESK_BRAND.app_name,
+       get_deb_extra_depends(), HOMEDESK_BRAND.app_name)
+    control_file_path.write_text(content, encoding="utf-8", newline="\n")
+    control_file_path.chmod(0o644)
 
 
 def ffi_bindgen_function_refactor():
@@ -317,88 +322,36 @@ def ffi_bindgen_function_refactor():
 
 
 def build_flutter_deb(version, features):
+    # HOMEDESK: Stage a branded package without rewriting upstream resource templates in place.
     if not skip_cargo:
         system2(f'cargo build --locked --features {features} --lib --release')
         ffi_bindgen_function_refactor()
     os.chdir('flutter')
     system2('flutter build linux --release')
-    system2('mkdir -p tmpdeb/usr/bin/')
-    system2('mkdir -p tmpdeb/usr/share/rustdesk')
-    system2('mkdir -p tmpdeb/etc/rustdesk/')
-    system2('mkdir -p tmpdeb/etc/pam.d/')
-    system2('mkdir -p tmpdeb/usr/share/rustdesk/files/systemd/')
-    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
-    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
-    system2('mkdir -p tmpdeb/usr/share/applications/')
-    system2('mkdir -p tmpdeb/usr/share/polkit-1/actions')
-    system2('rm tmpdeb/usr/bin/rustdesk || true')
-    system2(
-        f'cp -r {flutter_build_dir}/* tmpdeb/usr/share/rustdesk/')
-    system2(
-        'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk/files/systemd/')
-    system2(
-        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/rustdesk.png')
-    system2(
-        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/rustdesk.svg')
-    system2(
-        'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/rustdesk.desktop')
-    system2(
-        'cp ../res/rustdesk-link.desktop tmpdeb/usr/share/applications/rustdesk-link.desktop')
-    system2(
-        'cp ../res/startwm.sh tmpdeb/etc/rustdesk/')
-    system2(
-        'cp ../res/xorg.conf tmpdeb/etc/rustdesk/')
-    system2(
-        'cp ../res/pam.d/rustdesk.debian tmpdeb/etc/pam.d/rustdesk')
-    system2(
-        "echo \"#!/bin/sh\" >> tmpdeb/usr/share/rustdesk/files/polkit && chmod a+x tmpdeb/usr/share/rustdesk/files/polkit")
-
-    system2('mkdir -p tmpdeb/DEBIAN')
-    generate_control_file(version)
-    system2('cp -a ../res/DEBIAN/* tmpdeb/DEBIAN/')
+    stage_linux_package(Path('../res'), Path('tmpdeb'), HOMEDESK_BRAND, Path(flutter_build_dir))
+    generate_control_file(version, Path('tmpdeb/DEBIAN/control'))
     md5_file_folder("tmpdeb/")
-    system2('dpkg-deb -b tmpdeb rustdesk.deb;')
+    deb_name = f'{HOMEDESK_BRAND.package_name}.deb'
+    system2(f'dpkg-deb --root-owner-group -b tmpdeb {deb_name}')
 
     system2('/bin/rm -rf tmpdeb/')
-    system2('/bin/rm -rf ../res/DEBIAN/control')
-    os.rename('rustdesk.deb', '../rustdesk-%s.deb' % version)
+    os.rename(deb_name, '../%s_%s_%s.deb' %
+              (HOMEDESK_BRAND.package_name, version, get_deb_arch()))
     os.chdir("..")
 
 
 def build_deb_from_folder(version, binary_folder):
+    # HOMEDESK: Reuse the same branded staging path for prebuilt Linux bundles.
     os.chdir('flutter')
-    system2('mkdir -p tmpdeb/usr/bin/')
-    system2('mkdir -p tmpdeb/usr/share/rustdesk')
-    system2('mkdir -p tmpdeb/usr/share/rustdesk/files/systemd/')
-    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/256x256/apps/')
-    system2('mkdir -p tmpdeb/usr/share/icons/hicolor/scalable/apps/')
-    system2('mkdir -p tmpdeb/usr/share/applications/')
-    system2('mkdir -p tmpdeb/usr/share/polkit-1/actions')
-    system2('rm tmpdeb/usr/bin/rustdesk || true')
-    system2(
-        f'cp -r ../{binary_folder}/* tmpdeb/usr/share/rustdesk/')
-    system2(
-        'cp ../res/rustdesk.service tmpdeb/usr/share/rustdesk/files/systemd/')
-    system2(
-        'cp ../res/128x128@2x.png tmpdeb/usr/share/icons/hicolor/256x256/apps/rustdesk.png')
-    system2(
-        'cp ../res/scalable.svg tmpdeb/usr/share/icons/hicolor/scalable/apps/rustdesk.svg')
-    system2(
-        'cp ../res/rustdesk.desktop tmpdeb/usr/share/applications/rustdesk.desktop')
-    system2(
-        'cp ../res/rustdesk-link.desktop tmpdeb/usr/share/applications/rustdesk-link.desktop')
-    system2(
-        "echo \"#!/bin/sh\" >> tmpdeb/usr/share/rustdesk/files/polkit && chmod a+x tmpdeb/usr/share/rustdesk/files/polkit")
-
-    system2('mkdir -p tmpdeb/DEBIAN')
-    generate_control_file(version)
-    system2('cp -a ../res/DEBIAN/* tmpdeb/DEBIAN/')
+    stage_linux_package(Path('../res'), Path('tmpdeb'), HOMEDESK_BRAND, Path('../') / binary_folder)
+    generate_control_file(version, Path('tmpdeb/DEBIAN/control'))
     md5_file_folder("tmpdeb/")
-    system2('dpkg-deb -b tmpdeb rustdesk.deb;')
+    deb_name = f'{HOMEDESK_BRAND.package_name}.deb'
+    system2(f'dpkg-deb --root-owner-group -b tmpdeb {deb_name}')
 
     system2('/bin/rm -rf tmpdeb/')
-    system2('/bin/rm -rf ../res/DEBIAN/control')
-    os.rename('rustdesk.deb', '../rustdesk-%s.deb' % version)
+    os.rename(deb_name, '../%s_%s_%s.deb' %
+              (HOMEDESK_BRAND.package_name, version, get_deb_arch()))
     os.chdir("..")
 
 
@@ -438,6 +391,7 @@ def build_flutter_arch_manjaro(version, features):
 
 
 def build_flutter_windows(version, features, skip_portable_pack):
+    # HOMEDESK: CMake emits the configured launcher name; the portable artifact uses the public contract name.
     if not skip_cargo:
         system2(f'cargo build --locked --features {features} --lib --release')
         if not os.path.exists("target/release/librustdesk.dll"):
@@ -453,7 +407,7 @@ def build_flutter_windows(version, features, skip_portable_pack):
     os.chdir('libs/portable')
     system2('pip3 install -r requirements.txt')
     system2(
-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/rustdesk.exe')
+        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/{HOMEDESK_BRAND.executable_name}.exe')
     os.chdir('../..')
     if os.path.exists('./rustdesk_portable.exe'):
         os.replace('./target/release/rustdesk-portable-packer.exe',
@@ -463,9 +417,10 @@ def build_flutter_windows(version, features, skip_portable_pack):
                   './rustdesk_portable.exe')
     print(
         f'output location: {os.path.abspath(os.curdir)}/rustdesk_portable.exe')
-    os.rename('./rustdesk_portable.exe', f'./rustdesk-{version}-install.exe')
+    artifact_name = f'{HOMEDESK_BRAND.app_name}-{version}-win-{win_arch}.exe'
+    os.rename('./rustdesk_portable.exe', f'./{artifact_name}')
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/{artifact_name}')
 
 
 def main():

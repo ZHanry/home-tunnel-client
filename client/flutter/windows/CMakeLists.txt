@@ -4,7 +4,9 @@ project(rustdesk LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "rustdesk")
+# HOMEDESK: Load the launcher name and generated resource macros from build/config.toml.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../../build/homedesk_brand.cmake")
+set(BINARY_NAME "${HOMEDESK_EXECUTABLE_NAME}")
 
 # Explicitly opt into modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
