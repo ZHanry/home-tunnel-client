@@ -1,0 +1,44 @@
+name: homedesk
+
+services:
+  hbbs:
+    image: ghcr.io/rustdesk/rustdesk-server:1.1.16@sha256:8ecdab65deb7c84652a626380e31d11a8f1fbafd97916d57f95c20628f943c00
+    container_name: homedesk-hbbs
+    command: hbbs -r ${HOMEDESK_SERVER_HOST:?请在 server/.env 中设置 NAS 内网 IP}:21117
+    volumes:
+      - ./data:/root
+    ports:
+      - "${HOMEDESK_BIND_IP:?请在 server/.env 中设置 NAS 内网 IP}:21115:21115/tcp"
+      - "${HOMEDESK_BIND_IP:?请在 server/.env 中设置 NAS 内网 IP}:21116:21116/tcp"
+      - "${HOMEDESK_BIND_IP:?请在 server/.env 中设置 NAS 内网 IP}:21116:21116/udp"
+    depends_on:
+      - hbbr
+    restart: unless-stopped
+
+  hbbr:
+    image: ghcr.io/rustdesk/rustdesk-server:1.1.16@sha256:8ecdab65deb7c84652a626380e31d11a8f1fbafd97916d57f95c20628f943c00
+    container_name: homedesk-hbbr
+    command: hbbr
+    volumes:
+      - ./data:/root
+    ports:
+      - "${HOMEDESK_BIND_IP:?请在 server/.env 中设置 NAS 内网 IP}:21117:21117/tcp"
+    restart: unless-stopped
+
+  # T-04 解开本段注释并接入自研 Home Console。
+  # console:
+  #   build:
+  #     context: ./console
+  #   image: homedesk/console:0.1.0
+  #   container_name: homedesk-console
+  #   environment:
+  #     PORT: "8080"
+  #     TOKEN: ${HOMEDESK_CONSOLE_TOKEN:?请在 server/.env 中设置 Console Token}
+  #     DB_PATH: /data/homedesk.sqlite3
+  #     NET_CIDR: ${HOMEDESK_NET_CIDR:?请在 server/.env 中设置家庭网段}
+  #     RETENTION_DAYS: "90"
+  #   volumes:
+  #     - ./console-data:/data
+  #   ports:
+  #     - "${HOMEDESK_BIND_IP:?请在 server/.env 中设置 NAS 内网 IP}:8080:8080/tcp"
+  #   restart: unless-stopped

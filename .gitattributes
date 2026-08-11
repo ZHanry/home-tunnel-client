@@ -1,0 +1,9 @@
+* text=auto
+
+# NAS / Linux 上执行的文件必须保持 LF，避免 Windows 检出后出现 ^M。
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.toml.example text eol=lf
+*.env.example text eol=lf

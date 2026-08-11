@@ -1,0 +1,39 @@
+# Rust / Cargo
+**/target/
+*.profraw
+
+# Flutter / Dart
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/build/
+
+# HomeDesk 本地配置（仓库只保留 example）
+build/config.toml
+server/.env
+server/data/
+server/console/data/
+
+# 密钥、证书与本地数据库
+**/id_ed25519
+**/id_ed25519.pub
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 临时文件与日志
+*.log
+*.tmp
+*.bak
+*.swp
+
