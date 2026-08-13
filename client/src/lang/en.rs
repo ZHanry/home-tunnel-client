@@ -51,6 +51,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Change Path", "Change path"),
         ("Create Folder", "Create folder"),
         ("whitelist_tip", "Only whitelisted IP can access me"),
+        // HOMEDESK: 家庭网络白名单拒绝提示。
+        ("Only the configured home network can access this device", "Only the configured home network can access this device"),
         ("verification_tip", "A verification code has been sent to the registered email address, enter the verification code to continue logging in."),
         ("whitelist_sep", "Separated by comma, semicolon, spaces or new line"),
         ("Add Tag", "Add tag"),

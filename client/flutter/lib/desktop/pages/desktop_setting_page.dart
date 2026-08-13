@@ -12,6 +12,7 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
+import 'package:flutter_hbb/homedesk_advanced.dart'; // HOMEDESK: 控制家庭内网高级设置的显示与解锁。
 import 'package:flutter_hbb/mobile/widgets/dialog.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/printer_model.dart';
@@ -157,6 +158,7 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   @override
   void initState() {
     super.initState();
+    loadHomeDeskAdvancedMode(); // HOMEDESK: 从本地配置恢复高级模式状态。
     WidgetsBinding.instance.addObserver(this);
     _videoConnTimer =
         periodic_immediate(Duration(milliseconds: 1000), () async {
@@ -1296,7 +1298,8 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
       _OptionCheckBox(context, 'Deny LAN discovery', 'enable-lan-discovery',
           reverse: true, enabled: enabled),
       ...directIp(context),
-      whitelist(),
+      // HOMEDESK: 普通模式隐藏白名单编辑，构建期白名单仍始终生效。
+      Obx(() => homedeskAdvancedMode.value ? whitelist() : Offstage()),
       ...autoDisconnect(context),
       _OptionCheckBox(context, 'keep-awake-during-incoming-sessions-label',
           kOptionKeepAwakeDuringIncomingSessions,
@@ -1613,15 +1616,17 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
       }),
       preventMouseKeyBuilder(
         block: locked,
-        child: Column(children: [
-          network(context),
-        ]),
+        // HOMEDESK: 解锁后无需重启设置页即可显示服务器入口。
+        child: Obx(() => Column(children: [
+              network(context),
+            ])),
       ),
     ]).marginOnly(bottom: _kListViewBottomMargin);
   }
 
   Widget network(BuildContext context) {
-    final hideServer =
+    // HOMEDESK: 默认隐藏服务器配置，仅持久化高级模式可见。
+    final hideServer = !homedeskAdvancedMode.value ||
         bind.mainGetBuildinOption(key: kOptionHideServerSetting) == 'Y';
     final hideProxy =
         isWeb || bind.mainGetBuildinOption(key: kOptionHideProxySetting) == 'Y';
@@ -1720,7 +1725,9 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
                 listTile(
                   icon: Icons.dns_outlined,
                   title: 'ID/Relay Server',
-                  onTap: () => showServerSettings(gFFI.dialogManager, setState),
+                  // HOMEDESK: 高级模式仅展示可修改的家庭内网 ID 服务器。
+                  onTap: () => showServerSettings(gFFI.dialogManager, setState,
+                      homeDeskOnly: true),
                 ),
               if (!hideProxy && !hideServer) divider,
               if (!hideProxy)
@@ -2407,6 +2414,26 @@ class _About extends StatefulWidget {
 }
 
 class _AboutState extends State<_About> {
+  int _versionTapCount = 0; // HOMEDESK: 连续点击版本号五次解锁高级模式。
+  DateTime? _lastVersionTap;
+
+  Future<void> _onVersionTap() async {
+    if (!(isWindows || isLinux)) return; // HOMEDESK: T-02 高级入口仅面向桌面目标平台。
+    loadHomeDeskAdvancedMode();
+    if (homedeskAdvancedMode.value) return;
+    final now = DateTime.now();
+    if (_lastVersionTap == null ||
+        now.difference(_lastVersionTap!) > const Duration(seconds: 2)) {
+      _versionTapCount = 0;
+    }
+    _lastVersionTap = now;
+    _versionTapCount += 1;
+    if (_versionTapCount < 5) return;
+    _versionTapCount = 0;
+    await unlockHomeDeskAdvancedMode();
+    showToast('已解锁高级模式：可修改家庭内网服务器和 IP 白名单');
+  }
+
   @override
   Widget build(BuildContext context) {
     return futureBuilder(future: () async {
@@ -2436,9 +2463,14 @@ class _AboutState extends State<_About> {
               const SizedBox(
                 height: 8.0,
               ),
-              SelectionArea(
-                  child: Text('${translate('Version')}: $version')
-                      .marginSymmetric(vertical: 4.0)),
+              // HOMEDESK: 两秒内连续点击版本号五次，解锁并持久化高级模式。
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _onVersionTap,
+                child: SelectionArea(
+                    child: Text('${translate('Version')}: $version')
+                        .marginSymmetric(vertical: 4.0)),
+              ),
               SelectionArea(
                   child: Text('${translate('Build Date')}: $buildDate')
                       .marginSymmetric(vertical: 4.0)),

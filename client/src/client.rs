@@ -294,6 +294,12 @@ impl Client {
         let (rendezvous_server, servers, contained) = if other_server.is_empty() {
             crate::get_rendezvous_server(1_000).await
         } else {
+            // HOMEDESK: 显式 @public 和任意公网 ID 服务器都不能绕过纯内网边界。
+            if crate::homedesk_config::public_services_disabled()
+                && !crate::homedesk_config::is_private_rendezvous_server(other_server)
+            {
+                bail!("HomeDesk 仅允许连接家庭内网服务器");
+            }
             if other_server == PUBLIC_SERVER {
                 (
                     check_port(RENDEZVOUS_SERVERS[0], RENDEZVOUS_PORT),
@@ -510,6 +516,14 @@ impl Client {
                             is_local = ph.is_local();
                             signed_id_pk = ph.pk.into();
                             relay_server = ph.relay_server;
+                            // HOMEDESK: 私有 hbbs 不得把客户端引向公网 relay。
+                            if crate::homedesk_config::public_services_disabled()
+                                && !crate::homedesk_config::is_private_rendezvous_server(
+                                    &relay_server,
+                                )
+                            {
+                                relay_server.clear();
+                            }
                             peer_addr = AddrMangle::decode(&ph.socket_addr);
                             feedback = ph.feedback;
                             let s = udp.0.take();
@@ -764,7 +778,11 @@ impl Client {
         conn: &mut Stream,
     ) -> ResultType<Option<Vec<u8>>> {
         let rs_pk = get_rs_pk(if key.is_empty() {
-            config::RS_PUB_KEY
+            if crate::homedesk_config::public_services_disabled() {
+                crate::homedesk_config::compiled_key() // HOMEDESK: 空参数也回退到构建期 hbbs 公钥。
+            } else {
+                config::RS_PUB_KEY
+            }
         } else {
             key
         });
@@ -908,6 +926,12 @@ impl Client {
         conn_type: ConnType,
         ipv4: bool,
     ) -> ResultType<Stream> {
+        // HOMEDESK: 在真正建连前执行最后一道 relay 私网校验。
+        if crate::homedesk_config::public_services_disabled()
+            && !crate::homedesk_config::is_private_rendezvous_server(&relay_server)
+        {
+            bail!("HomeDesk 仅允许家庭内网中继服务器");
+        }
         let mut conn = connect_tcp(
             ipv4_to_ipv6(check_port(relay_server, RELAY_PORT), ipv4),
             CONNECT_TIMEOUT,
@@ -1803,7 +1827,11 @@ impl LoginConfigHandler {
             let server = server_key.next().unwrap_or_default();
             let args = server_key.next().unwrap_or_default();
             let key = if server == PUBLIC_SERVER {
-                config::RS_PUB_KEY.to_owned()
+                if crate::homedesk_config::public_services_disabled() {
+                    crate::homedesk_config::compiled_key().to_owned() // HOMEDESK: 禁止把公共公钥带入连接状态。
+                } else {
+                    config::RS_PUB_KEY.to_owned()
+                }
             } else {
                 let mut args_map: HashMap<String, &str> = HashMap::new();
                 for arg in args.split('&') {

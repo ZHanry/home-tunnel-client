@@ -54,7 +54,8 @@ void setTemporaryPasswordLengthDialog(
 }
 
 void showServerSettings(OverlayDialogManager dialogManager,
-    void Function(VoidCallback) setState) async {
+    void Function(VoidCallback) setState,
+    {bool homeDeskOnly = false}) async { // HOMEDESK: 桌面高级模式只编辑家庭内网 ID 服务器。
   Map<String, dynamic> options = {};
   try {
     options = jsonDecode(await bind.mainGetOptions());
@@ -62,13 +63,15 @@ void showServerSettings(OverlayDialogManager dialogManager,
     print("Invalid server config: $e");
   }
   showServerSettingsWithValue(
-      ServerConfig.fromOptions(options), dialogManager, setState);
+      ServerConfig.fromOptions(options), dialogManager, setState,
+      homeDeskOnly: homeDeskOnly); // HOMEDESK: 保留上游默认对话框供其他入口使用。
 }
 
 void showServerSettingsWithValue(
     ServerConfig serverConfig,
     OverlayDialogManager dialogManager,
-    void Function(VoidCallback)? upSetState) async {
+    void Function(VoidCallback)? upSetState,
+    {bool homeDeskOnly = false}) async { // HOMEDESK: HomeDesk 不开放 Relay/API/Key 公网逃逸入口。
   var isInProgress = false;
   final idCtrl = TextEditingController(text: serverConfig.idServer);
   final relayCtrl = TextEditingController(text: serverConfig.relayServer);
@@ -143,8 +146,8 @@ void showServerSettingsWithValue(
     return CustomAlertDialog(
       title: Row(
         children: [
-          Expanded(child: Text(translate('ID/Relay Server'))),
-          ...ServerConfigImportExportWidgets(controllers, errMsgs),
+          Expanded(child: Text(translate(homeDeskOnly ? 'ID Server' : 'ID/Relay Server'))),
+          if (!homeDeskOnly) ...ServerConfigImportExportWidgets(controllers, errMsgs), // HOMEDESK: 禁止导入绕过内网校验。
         ],
       ),
       content: ConstrainedBox(
@@ -156,12 +159,12 @@ void showServerSettingsWithValue(
                   buildField(translate('ID Server'), idCtrl, idServerMsg.value,
                       autofocus: true),
                   SizedBox(height: 8),
-                  if (!isIOS && !isWeb) ...[
+                  if (!homeDeskOnly && !isIOS && !isWeb) ...[ // HOMEDESK: Relay 由私有 hbbs 下发。
                     buildField(translate('Relay Server'), relayCtrl,
                         relayServerMsg.value),
                     SizedBox(height: 8),
                   ],
-                  buildField(
+                  if (!homeDeskOnly) buildField( // HOMEDESK: API 固定从私有 ID 服务器派生。
                     translate('API Server'),
                     apiCtrl,
                     apiServerMsg.value,
@@ -175,8 +178,8 @@ void showServerSettingsWithValue(
                       return null;
                     },
                   ),
-                  SizedBox(height: 8),
-                  buildField('Key', keyCtrl, ''),
+                  if (!homeDeskOnly) SizedBox(height: 8), // HOMEDESK: 高级模式不修改构建期固定公钥。
+                  if (!homeDeskOnly) buildField('Key', keyCtrl, ''), // HOMEDESK: 固定公钥防止静默降级。
                   if (isInProgress)
                     Padding(
                       padding: EdgeInsets.only(top: 8),

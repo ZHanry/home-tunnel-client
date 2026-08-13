@@ -285,6 +285,10 @@ fn heartbeat_url() -> String {
 }
 
 fn handle_config_options(config_options: HashMap<String, String>) {
+    let mut config_options = config_options;
+    if crate::homedesk_config::public_services_disabled() {
+        crate::homedesk_config::sanitize_options(&mut config_options); // HOMEDESK: 账号同步不能覆盖内网边界。
+    }
     let mut options = Config::get_options();
     let default_settings = config::DEFAULT_SETTINGS.read().unwrap().clone();
     config_options

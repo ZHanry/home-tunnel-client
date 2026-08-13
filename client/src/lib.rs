@@ -1,5 +1,7 @@
 mod keyboard;
 mod homedesk_brand; // HOMEDESK: Isolate the compiled application-name default from upstream code.
+mod homedesk_config; // HOMEDESK: 隔离家庭内网服务器、公钥与白名单默认值。
+mod homedesk_net; // HOMEDESK: 独立、可测试的 RFC1918 网络边界。
 /// cbindgen:ignore
 pub mod platform;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

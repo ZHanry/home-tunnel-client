@@ -158,7 +158,7 @@ impl RendezvousMediator {
                 && !crate::platform::installing_service()
             {
                 let mut futs = Vec::new();
-                let servers = Config::get_rendezvous_servers();
+                let servers = crate::homedesk_config::rendezvous_servers(); // HOMEDESK: 注册循环永不连接公共服务器。
                 SHOULD_EXIT.store(false, Ordering::SeqCst);
                 MANUAL_RESTARTED.store(false, Ordering::SeqCst);
                 for host in servers.clone() {
@@ -405,13 +405,17 @@ impl RendezvousMediator {
                 });
             }
             Some(rendezvous_message::Union::ConfigureUpdate(cu)) => {
-                let v0 = Config::get_rendezvous_servers();
-                Config::set_option(
-                    "rendezvous-servers".to_owned(),
-                    cu.rendezvous_servers.join(","),
-                );
+                let v0 = crate::homedesk_config::rendezvous_servers(); // HOMEDESK: 忽略服务端推送的公网回退列表。
+                let pushed_servers = cu
+                    .rendezvous_servers
+                    .iter()
+                    .filter(|server| crate::homedesk_config::is_private_rendezvous_server(server))
+                    .cloned()
+                    .collect::<Vec<_>>(); // HOMEDESK: 公网服务器不写入持久配置。
+                Config::set_option("rendezvous-servers".to_owned(), pushed_servers.join(","));
                 Config::set_serial(cu.serial);
-                if v0 != Config::get_rendezvous_servers() {
+                if v0 != crate::homedesk_config::rendezvous_servers() {
+                    // HOMEDESK: 只比较过滤后的私有服务器。
                     Self::restart();
                 }
             }
@@ -826,6 +830,12 @@ impl RendezvousMediator {
         let mut relay_server = Config::get_option("relay-server");
         if relay_server.is_empty() {
             relay_server = provided_by_rendezvous_server;
+        }
+        // HOMEDESK: hbbs 返回异常地址时，不得建立公网 relay 连接。
+        if crate::homedesk_config::public_services_disabled()
+            && !crate::homedesk_config::is_private_rendezvous_server(&relay_server)
+        {
+            relay_server.clear();
         }
         if relay_server.is_empty() {
             relay_server = crate::increase_port(&self.host, 1);

@@ -12,6 +12,7 @@ import 'package:flutter_hbb/common/formatter/id_formatter.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/main.dart';
+import 'package:flutter_hbb/homedesk_advanced.dart'; // HOMEDESK: 校验高级模式的内网服务器输入。
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
@@ -3607,7 +3608,12 @@ Future<bool> setServerConfig(
     controllers[3].text = config.key;
   }
   // id
-  if (config.idServer.isNotEmpty && errMsgs != null) {
+  if (errMsgs != null) {
+    // HOMEDESK: 构建产物不允许通过高级模式保存公网 ID 服务器。
+    if (!isHomeDeskPrivateServer(config.idServer)) {
+      errMsgs[0].value = '家庭内网 ID 服务器不能为空，且仅允许 RFC1918 IPv4 地址（可带端口）';
+      return false;
+    }
     errMsgs[0].value = translate(await bind.mainTestIfValidServer(
         server: config.idServer, testWithProxy: true));
     if (errMsgs[0].isNotEmpty) {

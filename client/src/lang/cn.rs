@@ -211,6 +211,8 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Connect via relay", "中继连接"),
         ("Always connect via relay", "强制走中继连接"),
         ("whitelist_tip", "只有白名单里的 IP 才能访问本机"),
+        // HOMEDESK: 家庭网络白名单拒绝提示。
+        ("Only the configured home network can access this device", "当前 IP 不在家庭网络白名单中，连接已拒绝"),
         ("Login", "登录"),
         ("Verify", "验证"),
         ("Remember me", "记住我"),

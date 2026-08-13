@@ -8,6 +8,7 @@ import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
+import 'package:flutter_hbb/homedesk_advanced.dart'; // HOMEDESK: 高级白名单仅接受家庭内网 CIDR。
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
@@ -229,7 +230,7 @@ void changeWhiteList({Function()? callback}) async {
       ),
       actions: [
         dialogButton("Cancel", onPressed: close, isOutline: true),
-        if (!isOptFixed)
+        if (!isOptFixed && !homedeskAdvancedMode.value) // HOMEDESK: 高级模式不能清空白名单为允许全部。
           dialogButton("Clear", onPressed: () async {
             await bind.mainSetOption(
                 key: kOptionWhitelist, value: defaultOptionWhitelist);
@@ -247,7 +248,14 @@ void changeWhiteList({Function()? callback}) async {
               newWhiteListField = controller.text.trim();
               var newWhiteList = "";
               if (newWhiteListField.isEmpty) {
-                // pass
+                // HOMEDESK: 家庭内网构建不允许通过空白输入关闭白名单。
+                if (homedeskAdvancedMode.value) {
+                  msg = '家庭内网白名单不能为空';
+                  setState(() {
+                    isInProgress = false;
+                  });
+                  return;
+                }
               } else {
                 final ips =
                     newWhiteListField.trim().split(RegExp(r"[\s,;\n]+"));
@@ -259,6 +267,15 @@ void changeWhiteList({Function()? callback}) async {
                 for (final ip in ips) {
                   if (!ipMatch.hasMatch(ip) && !ipv6Match.hasMatch(ip)) {
                     msg = "${translate("Invalid IP")} $ip";
+                    setState(() {
+                      isInProgress = false;
+                    });
+                    return;
+                  }
+                  // HOMEDESK: 高级模式禁止白名单扩展到家庭私网以外。
+                  if (homedeskAdvancedMode.value &&
+                      !isHomeDeskPrivateWhitelistEntry(ip)) {
+                    msg = '仅允许 RFC1918 家庭内网 IPv4/CIDR：$ip';
                     setState(() {
                       isInProgress = false;
                     });

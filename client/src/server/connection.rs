@@ -1362,7 +1362,8 @@ impl Connection {
                 .next()
                 .is_none()
         {
-            self.send_login_error("Your ip is blocked by the peer")
+            // HOMEDESK: 明确告知拒绝原因，便于区分白名单与密码错误。
+            self.send_login_error("Only the configured home network can access this device")
                 .await;
             self.post_alarm_audit(
                 AlarmAuditType::IpWhitelist, //"ip whitelist",

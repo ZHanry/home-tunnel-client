@@ -1,0 +1,13 @@
+# 仅供自动测试；地址与全零公钥不对应任何真实部署。
+[brand]
+app_name = "HomeDesk"
+executable_name = "homedesk"
+package_name = "homedesk"
+
+[server]
+host = "192.168.50.10"
+key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[net]
+whitelist_cidr = "192.168.50.0/24"
+pure_lan_default = true

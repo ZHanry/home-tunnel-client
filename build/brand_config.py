@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import ipaddress
 import json
 import os
 import re
@@ -21,6 +23,26 @@ class BrandConfig:
     app_name: str
     executable_name: str
     package_name: str
+    source: Path
+
+
+@dataclass(frozen=True)
+class ServerConfig:
+    host: str
+    key: str
+
+
+@dataclass(frozen=True)
+class NetConfig:
+    whitelist_cidr: str
+    pure_lan_default: bool
+
+
+@dataclass(frozen=True)
+class BuildConfig:
+    brand: BrandConfig
+    server: ServerConfig
+    net: NetConfig
     source: Path
 
 
@@ -75,13 +97,9 @@ def _validate(config: BrandConfig) -> BrandConfig:
     return config
 
 
-def load_brand(path: Path | None = None, repo_root: Path | None = None) -> BrandConfig:
-    source = (path or resolve_config_path(repo_root)).resolve()
-    if not source.is_file():
-        raise FileNotFoundError(f"品牌配置不存在：{source}")
-
+def _read_sections(source: Path, selected: set[str]) -> dict[str, dict[str, object]]:
+    sections: dict[str, dict[str, object]] = {name: {} for name in selected}
     section = ""
-    values: dict[str, str] = {}
     for line_number, raw_line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1):
         line = _strip_comment(raw_line).strip()
         if not line:
@@ -89,31 +107,108 @@ def load_brand(path: Path | None = None, repo_root: Path | None = None) -> Brand
         if line.startswith("[") and line.endswith("]"):
             section = line[1:-1].strip()
             continue
-        if section != "brand":
+        if section not in selected:
             continue
         match = _VALUE_RE.fullmatch(line)
-        if not match:
-            raise ValueError(f"{source}:{line_number} 不是受支持的 brand 字符串配置")
-        key, encoded_value = match.groups()
-        if key in values:
-            raise ValueError(f"{source}:{line_number} brand.{key} 重复定义")
-        try:
-            values[key] = json.loads(encoded_value)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"{source}:{line_number} brand 字符串转义无效") from error
+        if match:
+            key, encoded_value = match.groups()
+            try:
+                value: object = json.loads(encoded_value)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"{source}:{line_number} 字符串转义无效") from error
+        else:
+            key, separator, raw_value = line.partition("=")
+            key = key.strip()
+            raw_value = raw_value.strip()
+            if not separator or raw_value not in ("true", "false"):
+                raise ValueError(f"{source}:{line_number} 不是受支持的 {section} 配置")
+            value = raw_value == "true"
+        if key in sections[section]:
+            raise ValueError(f"{source}:{line_number} {section}.{key} 重复定义")
+        sections[section][key] = value
+    return sections
 
-    required = ("app_name", "executable_name", "package_name")
-    missing = [key for key in required if key not in values]
-    if missing:
-        raise ValueError(f"{source} 缺少 brand 配置：{', '.join(missing)}")
+
+def _required_string(values: dict[str, object], section: str, key: str, source: Path) -> str:
+    value = values.get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"{source} 缺少字符串配置 {section}.{key}")
+    return value
+
+
+def _load_brand_from_values(values: dict[str, object], source: Path) -> BrandConfig:
     return _validate(
         BrandConfig(
-            app_name=values["app_name"],
-            executable_name=values["executable_name"],
-            package_name=values["package_name"],
+            app_name=_required_string(values, "brand", "app_name", source),
+            executable_name=_required_string(values, "brand", "executable_name", source),
+            package_name=_required_string(values, "brand", "package_name", source),
             source=source,
         )
     )
+
+
+_PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+
+
+def _validate_server_net(
+    server: ServerConfig, net: NetConfig, source: Path
+) -> tuple[ServerConfig, NetConfig]:
+    try:
+        host = ipaddress.ip_address(server.host)
+    except ValueError as error:
+        raise ValueError(f"{source} server.host 必须是 RFC1918 内网 IPv4 地址") from error
+    if not isinstance(host, ipaddress.IPv4Address) or not any(host in item for item in _PRIVATE_NETWORKS):
+        raise ValueError(f"{source} server.host 必须是 RFC1918 内网 IPv4 地址")
+
+    try:
+        decoded_key = base64.b64decode(server.key, validate=True)
+    except (ValueError, base64.binascii.Error) as error:
+        raise ValueError(f"{source} server.key 必须是有效的 hbbs Base64 公钥") from error
+    if len(decoded_key) != 32:
+        raise ValueError(f"{source} server.key 必须解码为 32 字节 hbbs 公钥")
+
+    try:
+        whitelist = ipaddress.ip_network(net.whitelist_cidr, strict=False)
+    except ValueError as error:
+        raise ValueError(f"{source} net.whitelist_cidr 必须是有效的 IPv4 CIDR") from error
+    if not isinstance(whitelist, ipaddress.IPv4Network) or not any(
+        whitelist.subnet_of(item) for item in _PRIVATE_NETWORKS
+    ):
+        raise ValueError(f"{source} net.whitelist_cidr 必须完全位于 RFC1918 内网范围")
+    if not net.pure_lan_default:
+        raise ValueError(f"{source} T-02 阶段要求 net.pure_lan_default = true")
+    return server, net
+
+
+def load_brand(path: Path | None = None, repo_root: Path | None = None) -> BrandConfig:
+    source = (path or resolve_config_path(repo_root)).resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"品牌配置不存在：{source}")
+
+    return _load_brand_from_values(_read_sections(source, {"brand"})["brand"], source)
+
+
+def load_config(path: Path | None = None, repo_root: Path | None = None) -> BuildConfig:
+    source = (path or resolve_config_path(repo_root)).resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"构建配置不存在：{source}")
+    values = _read_sections(source, {"brand", "server", "net"})
+    brand = _load_brand_from_values(values["brand"], source)
+    server = ServerConfig(
+        host=_required_string(values["server"], "server", "host", source),
+        key=_required_string(values["server"], "server", "key", source),
+    )
+    pure_lan_default = values["net"].get("pure_lan_default")
+    if not isinstance(pure_lan_default, bool):
+        raise ValueError(f"{source} 缺少布尔配置 net.pure_lan_default")
+    net = NetConfig(
+        whitelist_cidr=_required_string(values["net"], "net", "whitelist_cidr", source),
+        pure_lan_default=pure_lan_default,
+    )
+    _validate_server_net(server, net, source)
+    return BuildConfig(brand=brand, server=server, net=net, source=source)
 
 
 def _c_escape(value: str) -> str:
@@ -167,7 +262,8 @@ def main() -> int:
     parser.add_argument("--print-json", action="store_true", help="输出解析结果")
     args = parser.parse_args()
 
-    config = load_brand(args.config)
+    build_config = load_config(args.config)
+    config = build_config.brand
     if args.cmake_out:
         write_cmake(config, args.cmake_out)
     if args.header_out:
@@ -179,6 +275,10 @@ def main() -> int:
                     "app_name": config.app_name,
                     "executable_name": config.executable_name,
                     "package_name": config.package_name,
+                    "server_host": build_config.server.host,
+                    "server_key_configured": True,
+                    "whitelist_cidr": build_config.net.whitelist_cidr,
+                    "pure_lan_default": build_config.net.pure_lan_default,
                     "source": str(config.source),
                 },
                 ensure_ascii=False,

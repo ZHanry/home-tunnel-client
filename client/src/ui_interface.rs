@@ -408,7 +408,10 @@ pub fn get_sound_inputs() -> Vec<String> {
 }
 
 #[inline]
-pub fn set_options(m: HashMap<String, String>) {
+pub fn set_options(mut m: HashMap<String, String>) {
+    if crate::homedesk_config::public_services_disabled() {
+        crate::homedesk_config::sanitize_options(&mut m); // HOMEDESK: 批量导入同样不能覆盖内网安全边界。
+    }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         *OPTIONS.lock().unwrap() = m.clone();
@@ -420,6 +423,26 @@ pub fn set_options(m: HashMap<String, String>) {
 
 #[inline]
 pub fn set_option(key: String, value: String) {
+    // HOMEDESK: 高级模式也只能保存 RFC1918 ID 服务器，拒绝恢复公网回退。
+    if key == config::keys::OPTION_CUSTOM_RENDEZVOUS_SERVER
+        && crate::homedesk_config::public_services_disabled()
+        && !crate::homedesk_config::is_private_rendezvous_server(&value)
+    {
+        log::warn!("HomeDesk 拒绝保存空白或非内网 ID 服务器");
+        return;
+    }
+    // HOMEDESK: 后端再次校验并规范化白名单，空值或公网范围均不得覆盖构建期默认值。
+    let value = if key == config::keys::OPTION_WHITELIST
+        && crate::homedesk_config::public_services_disabled()
+    {
+        let Some(normalized) = crate::homedesk_config::normalize_private_whitelist(&value) else {
+            log::warn!("HomeDesk 拒绝保存空白或非内网白名单");
+            return;
+        };
+        normalized
+    } else {
+        value
+    };
     if &key == "stop-service" {
         #[cfg(target_os = "macos")]
         {
@@ -1493,9 +1516,13 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let rendezvous_servers = crate::ipc::get_rendezvous_servers(1_000).await;
+    let rendezvous_servers = crate::ipc::get_rendezvous_servers(1_000)
+        .await
+        .into_iter()
+        .filter(|server| crate::homedesk_config::is_private_rendezvous_server(server))
+        .collect::<Vec<_>>(); // HOMEDESK: 改 ID 流程也只能访问家庭内网服务器。
     #[cfg(any(target_os = "android", target_os = "ios"))]
-    let rendezvous_servers = Config::get_rendezvous_servers();
+    let rendezvous_servers = crate::homedesk_config::rendezvous_servers(); // HOMEDESK: 移动端保持同一内网边界。
 
     let mut futs = Vec::new();
     let err: Arc<Mutex<&str>> = Default::default();

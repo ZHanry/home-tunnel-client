@@ -2162,7 +2162,10 @@ pub fn is_win_10_or_greater() -> bool {
 
 pub fn bootstrap() -> bool {
     if let Ok(lic) = get_license_from_exe_name() {
-        *config::EXE_RENDEZVOUS_SERVER.write().unwrap() = lic.host.clone();
+        // HOMEDESK: HomeDesk 只接受 build/config.toml 注入，不允许文件名覆盖服务器。
+        if !crate::homedesk_config::public_services_disabled() {
+            *config::EXE_RENDEZVOUS_SERVER.write().unwrap() = lic.host.clone();
+        }
     }
 
     #[cfg(debug_assertions)]

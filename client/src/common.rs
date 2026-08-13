@@ -123,6 +123,7 @@ impl Drop for SimpleCallOnReturn {
 
 pub fn global_init() -> bool {
     crate::homedesk_brand::init(); // HOMEDESK: Apply the configured brand before paths, tray, or UI initialization.
+    crate::homedesk_config::apply(); // HOMEDESK: 在任何联网逻辑之前安装家庭内网默认值。
     #[cfg(target_os = "linux")]
     {
         if !crate::platform::linux::is_x11() {
@@ -627,7 +628,15 @@ pub fn test_nat_type() {
 async fn test_nat_type_() -> ResultType<bool> {
     log::info!("Testing nat ...");
     let start = std::time::Instant::now();
-    let server1 = Config::get_rendezvous_server();
+    // HOMEDESK: NAT 测试也必须使用过滤后的家庭内网服务器。
+    let server1 = if crate::homedesk_config::public_services_disabled() {
+        crate::homedesk_config::rendezvous_servers()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| crate::homedesk_config::compiled_server().to_owned())
+    } else {
+        Config::get_rendezvous_server()
+    };
     let server2 = crate::increase_port(&server1, -1);
     let mut msg_out = RendezvousMessage::new();
     let serial = Config::get_serial();
@@ -660,9 +669,17 @@ async fn test_nat_type_() -> ResultType<bool> {
                     port2 = tnr.port;
                 }
                 if let Some(cu) = tnr.cu.as_ref() {
+                    let rendezvous_servers = cu
+                        .rendezvous_servers
+                        .iter()
+                        .filter(|server| {
+                            crate::homedesk_config::is_private_rendezvous_server(server)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>(); // HOMEDESK: NAT 响应中的公共回退服务器不落盘。
                     Config::set_option(
                         "rendezvous-servers".to_owned(),
-                        cu.rendezvous_servers.join(","),
+                        rendezvous_servers.join(","),
                     );
                     Config::set_serial(cu.serial);
                 }
@@ -691,9 +708,16 @@ pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>, boo
     let (mut a, mut b) = get_rendezvous_server_(ms_timeout).await;
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::get_license_from_exe_name() {
-        if !lic.host.is_empty() {
+        if !crate::homedesk_config::public_services_disabled() && !lic.host.is_empty() {
             a = lic.host;
         }
+    }
+    // HOMEDESK: 丢弃旧配置、IPC 或许可证注入的公网服务器，避免回退到 RustDesk 公共服务。
+    if crate::homedesk_config::public_services_disabled() {
+        if !crate::homedesk_config::is_private_rendezvous_server(&a) {
+            a = crate::homedesk_config::compiled_server().to_owned();
+        }
+        b.retain(|server| crate::homedesk_config::is_private_rendezvous_server(server));
     }
     let mut b: Vec<String> = b
         .drain(..)
@@ -714,7 +738,7 @@ pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>, boo
 fn get_rendezvous_server_(_ms_timeout: u64) -> (String, Vec<String>) {
     (
         Config::get_rendezvous_server(),
-        Config::get_rendezvous_servers(),
+        crate::homedesk_config::rendezvous_servers(), // HOMEDESK: 移动端也不返回公共服务器列表。
     )
 }
 
@@ -739,7 +763,7 @@ pub async fn get_nat_type(ms_timeout: u64) -> i32 {
 // used for client to test which server is faster in case stop-servic=Y
 #[tokio::main(flavor = "current_thread")]
 async fn test_rendezvous_server_() {
-    let servers = Config::get_rendezvous_servers();
+    let servers = crate::homedesk_config::rendezvous_servers(); // HOMEDESK: 测速只访问家庭内网服务器。
     if servers.len() <= 1 {
         return;
     }
@@ -953,6 +977,10 @@ pub fn check_software_update() {
 // Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    // HOMEDESK: 家庭内网构建不访问 RustDesk 公网版本服务。
+    if crate::homedesk_config::public_services_disabled() {
+        return Ok(());
+    }
     let (request, url) =
         hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
     let proxy_conf = Config::get_socks();
@@ -1031,7 +1059,7 @@ pub fn is_setup(name: &str) -> bool {
 pub fn get_custom_rendezvous_server(custom: String) -> String {
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
-        if !lic.host.is_empty() {
+        if !crate::homedesk_config::public_services_disabled() && !lic.host.is_empty() {
             return lic.host.clone();
         }
     }
@@ -1065,13 +1093,21 @@ pub fn get_api_server(api: String, custom: String) -> String {
 fn get_api_server_(api: String, custom: String) -> String {
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
-        if !lic.api.is_empty() {
+        if !lic.api.is_empty() && !crate::homedesk_config::public_services_disabled() {
             return lic.api.clone();
         }
     }
-    if !api.is_empty() {
+    if !api.is_empty() && !crate::homedesk_config::public_services_disabled() {
         return api.to_owned();
     }
+    // HOMEDESK: 纯内网构建的 API 地址只允许从私有 rendezvous 地址派生。
+    let custom = if crate::homedesk_config::public_services_disabled()
+        && !crate::homedesk_config::is_private_rendezvous_server(&custom)
+    {
+        crate::homedesk_config::compiled_server().to_owned()
+    } else {
+        custom
+    };
     let s0 = get_custom_rendezvous_server(custom);
     if !s0.is_empty() {
         let s = crate::increase_port(&s0, -2);
@@ -1081,7 +1117,11 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.rustdesk.com".to_owned()
+    if crate::homedesk_config::public_services_disabled() {
+        String::new() // HOMEDESK: 异常情况下也不返回 RustDesk 公共 API。
+    } else {
+        "https://admin.rustdesk.com".to_owned()
+    }
 }
 
 #[inline]
@@ -1182,7 +1222,15 @@ fn tcp_proxy_log_target(url: &str) -> String {
 
 #[inline]
 fn get_tcp_proxy_addr() -> String {
-    check_port(Config::get_rendezvous_server(), RENDEZVOUS_PORT)
+    let server = if crate::homedesk_config::public_services_disabled() {
+        crate::homedesk_config::rendezvous_servers()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| crate::homedesk_config::compiled_server().to_owned())
+    } else {
+        Config::get_rendezvous_server()
+    }; // HOMEDESK: HTTP TCP 代理不连接公共 rendezvous。
+    check_port(server, RENDEZVOUS_PORT)
 }
 
 /// Send an HTTP request via the rendezvous server's TCP proxy using protobuf.
@@ -1803,6 +1851,10 @@ pub fn decode64<T: AsRef<[u8]>>(input: T) -> Result<Vec<u8>, base64::DecodeError
 }
 
 pub async fn get_key(sync: bool) -> String {
+    // HOMEDESK: 固定使用构建期 hbbs 公钥，拒绝文件名或旧 IPC 配置覆盖。
+    if crate::homedesk_config::public_services_disabled() {
+        return crate::homedesk_config::compiled_key().to_owned();
+    }
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
         if !lic.key.is_empty() {
@@ -1819,7 +1871,11 @@ pub async fn get_key(sync: bool) -> String {
         options.remove("key").unwrap_or_default()
     };
     if key.is_empty() {
-        key = config::RS_PUB_KEY.to_owned();
+        key = if crate::homedesk_config::public_services_disabled() {
+            crate::homedesk_config::compiled_key().to_owned() // HOMEDESK: 最终兜底仍使用构建期私有公钥。
+        } else {
+            config::RS_PUB_KEY.to_owned()
+        };
     }
     key
 }
@@ -2082,6 +2138,7 @@ pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
 }
 
 pub fn load_custom_client() {
+    crate::homedesk_config::apply(); // HOMEDESK: 即使没有 custom.txt，服务进程也必须加载内网默认值。
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
         read_custom_client(data.trim());
@@ -2250,6 +2307,7 @@ pub fn read_custom_client(config: &str) {
                 .insert(k, v.to_owned());
         };
     }
+    crate::homedesk_config::apply(); // HOMEDESK: 签名配置不得重新启用公网更新或覆盖固定公钥。
 }
 
 #[inline]

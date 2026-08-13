@@ -847,13 +847,15 @@ async fn handle(data: Data, stream: &mut Connection) {
                 } else if name == "salt" {
                     value = Some(Config::get_salt());
                 } else if name == "rendezvous_server" {
+                    let homedesk_servers = crate::homedesk_config::rendezvous_servers(); // HOMEDESK: IPC 只发布私有服务器。
                     value = Some(format!(
                         "{},{}",
-                        Config::get_rendezvous_server(),
-                        Config::get_rendezvous_servers().join(",")
+                        homedesk_servers.first().cloned().unwrap_or_default(),
+                        homedesk_servers.join(",")
                     ));
                 } else if name == "rendezvous_servers" {
-                    value = Some(Config::get_rendezvous_servers().join(","));
+                    value = Some(crate::homedesk_config::rendezvous_servers().join(","));
+                    // HOMEDESK: 不暴露公共回退列表。
                 } else if name == "fingerprint" {
                     value = if Config::get_key_confirmed() {
                         Some(crate::common::pk_to_fingerprint(Config::get_key_pair().1))
@@ -916,9 +918,12 @@ async fn handle(data: Data, stream: &mut Connection) {
                 let v = Config::get_options();
                 allow_err!(stream.send(&Data::Options(Some(v))).await);
             }
-            Some(value) => {
+            Some(mut value) => {
                 let _chk = CheckIfRestart::new();
                 let _nat = CheckTestNatType::new();
+                if crate::homedesk_config::public_services_disabled() {
+                    crate::homedesk_config::sanitize_options(&mut value); // HOMEDESK: IPC 入口拒绝公网服务器与安全项覆盖。
+                }
                 if let Some(v) = value.get("privacy-mode-impl-key") {
                     crate::privacy_mode::switch(v);
                 }
@@ -1709,12 +1714,24 @@ pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>) {
         let mut urls = v.split(",");
         let a = urls.next().unwrap_or_default().to_owned();
         let b: Vec<String> = urls.map(|x| x.to_owned()).collect();
-        (a, b)
+        if crate::homedesk_config::public_services_disabled() {
+            let mut private = b
+                .into_iter()
+                .filter(|server| crate::homedesk_config::is_private_rendezvous_server(server))
+                .collect::<Vec<_>>();
+            let primary = if crate::homedesk_config::is_private_rendezvous_server(&a) {
+                a
+            } else {
+                crate::homedesk_config::compiled_server().to_owned()
+            };
+            private.retain(|server| server != &primary);
+            (primary, private) // HOMEDESK: IPC 响应异常时也回退到构建期私有服务器。
+        } else {
+            (a, b)
+        }
     } else {
-        (
-            Config::get_rendezvous_server(),
-            Config::get_rendezvous_servers(),
-        )
+        let servers = crate::homedesk_config::rendezvous_servers(); // HOMEDESK: 本地兜底同样过滤公共服务器。
+        (servers.first().cloned().unwrap_or_default(), servers)
     }
 }
 
@@ -1757,7 +1774,10 @@ pub fn set_option(key: &str, value: &str) {
 }
 
 #[tokio::main(flavor = "current_thread")]
-pub async fn set_options(value: HashMap<String, String>) -> ResultType<()> {
+pub async fn set_options(mut value: HashMap<String, String>) -> ResultType<()> {
+    if crate::homedesk_config::public_services_disabled() {
+        crate::homedesk_config::sanitize_options(&mut value); // HOMEDESK: 服务未运行时的本地落盘也执行同一校验。
+    }
     let _nat = CheckTestNatType::new();
     if let Ok(mut c) = connect(1000, "").await {
         c.send(&Data::Options(Some(value.clone()))).await?;
@@ -1788,7 +1808,16 @@ pub async fn get_nat_type(ms_timeout: u64) -> i32 {
 
 pub async fn get_rendezvous_servers(ms_timeout: u64) -> Vec<String> {
     if let Ok(Some(v)) = get_config_async("rendezvous_servers", ms_timeout).await {
-        return v.split(',').map(|x| x.to_owned()).collect();
+        let mut servers = v.split(',').map(|x| x.to_owned()).collect::<Vec<_>>();
+        if crate::homedesk_config::public_services_disabled() {
+            servers.retain(|server| {
+                crate::homedesk_config::is_private_rendezvous_server(server)
+            }); // HOMEDESK: 通用 IPC 读取也不向调用方返回公共服务器。
+        }
+        return servers;
+    }
+    if crate::homedesk_config::public_services_disabled() {
+        return crate::homedesk_config::rendezvous_servers(); // HOMEDESK: IPC 失败时回退构建期私有服务器。
     }
     return Config::get_rendezvous_servers();
 }
