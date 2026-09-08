@@ -94,13 +94,21 @@ mkdir -p "$package_dir/bin" "$package_dir/lib" "$package_dir/Library/LaunchDaemo
 agent_output="$package_dir/lib/home-tunnel-agent"
 (
   cd "$frp_source"
-  CGO_ENABLED=0 GOOS=darwin GOARCH="$architecture" GOFLAGS=-buildvcs=false \
+  export CGO_ENABLED=0 GOOS=darwin GOARCH="$architecture" GOFLAGS=-buildvcs=false
+  dependency_packages=$(go list -deps -modfile="$workspace_dir/agent/frp-go.mod" -mod=readonly "./cmd/$(basename "$temporary_command")")
+    if grep -q '^golang.org/x/crypto/openpgp' <<< "$dependency_packages"; then
+      echo "Unsupported OpenPGP package must not be linked into the Agent" >&2
+      exit 1
+    fi
+    CGO_ENABLED=0 GOOS=darwin GOARCH="$architecture" GOFLAGS=-buildvcs=false \
     go build -modfile="$workspace_dir/agent/frp-go.mod" -mod=readonly -trimpath \
     -ldflags "-s -w -buildid= -X main.agentVersion=$agent_version -X main.frpVersion=$frp_version -X main.frpCommit=$frp_commit" \
     -o "$agent_output" "./cmd/$(basename "$temporary_command")"
 )
 module_version=$(go version -m "$agent_output" | awk '$1 == "dep" && $2 == "github.com/Azure/go-ntlmssp" { print $3 }')
 [[ "$module_version" == "v0.1.1" ]] || { echo "Agent did not include the reviewed NTLM security fix" >&2; exit 1; }
+crypto_version=$(go version -m "$agent_output" | awk '$1 == "dep" && $2 == "golang.org/x/crypto" { print $3 }')
+[[ "$crypto_version" == "v0.56.0" ]] || { echo "Agent did not include the reviewed SSH security fixes" >&2; exit 1; }
 agent_hash=$(hash_file "$agent_output")
 (
   cd "$client_dir"

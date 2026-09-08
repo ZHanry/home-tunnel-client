@@ -119,6 +119,10 @@ try {
     try {
         $package = "./" + [IO.Path]::GetRelativePath($frpSource.FullName, $temporaryCommand).Replace("\", "/")
         $linkerFlags = "-s -w -buildid= -X main.agentVersion=$agentVersion -X main.frpVersion=$frpVersion -X main.frpCommit=$frpCommit"
+        $dependencyPackages = & $goExe list -deps -modfile (Join-Path $agentSourceDir "frp-go.mod") -mod=readonly $package
+        if ($LASTEXITCODE -ne 0 -or @($dependencyPackages | Where-Object { $_ -like 'golang.org/x/crypto/openpgp*' }).Count -gt 0) {
+            throw "Unsupported OpenPGP package must not be linked into the managed Agent"
+        }
         & $goExe build -modfile (Join-Path $agentSourceDir "frp-go.mod") -mod=readonly -trimpath -ldflags $linkerFlags -o $output $package
     }
     finally {
@@ -144,6 +148,9 @@ if ($LASTEXITCODE -ne 0 -or $versionOutput -notlike "Home Tunnel Agent $agentVer
 $buildInfo = (& $goExe version -m $output | Out-String)
 if ($LASTEXITCODE -ne 0 -or $buildInfo -notmatch '(?m)^\s*dep\s+github\.com/Azure/go-ntlmssp\s+v0\.1\.1\s') {
     throw "Agent build did not include the reviewed NTLM security fix"
+}
+if ($buildInfo -notmatch '(?m)^\s*dep\s+golang\.org/x/crypto\s+v0\.56\.0\s') {
+    throw "Agent build did not include the reviewed SSH security fixes"
 }
 $hash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
 $versionInfo = (Get-Item -LiteralPath $output).VersionInfo

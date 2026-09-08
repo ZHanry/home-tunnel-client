@@ -69,6 +69,10 @@ type Client struct {
 	accessEnds time.Time
 }
 
+// Discover connects to the HTTPS server explicitly selected by the local owner.
+// This is a desktop/CLI connection setting, not a remote URL-fetch service.
+// The desktop entry point requires its private per-session authorization before
+// accepting settings. Redirects and canonical-origin changes are rejected here.
 func Discover(ctx context.Context, address string, transport *http.Client) (model.Profile, error) {
 	var profile model.Profile
 	requested, err := normalizeRoot(address)

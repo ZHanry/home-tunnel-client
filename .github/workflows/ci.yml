@@ -98,7 +98,7 @@ jobs:
             & (Join-Path $goBin 'go.exe') install golang.org/x/vuln/cmd/govulncheck@v1.6.0
             if ($LASTEXITCODE -ne 0) { throw 'govulncheck installation failed' }
             $goPath = & (Join-Path $goBin 'go.exe') env GOPATH
-            $env:GOFLAGS = '-buildvcs=false -mod=readonly -modfile="' + $moduleLock.Replace('\','/') + '"'
+            $env:GOFLAGS = '-buildvcs=false -mod=readonly "-modfile=' + $moduleLock.Replace('\','/') + '"'
             & (Join-Path $goPath 'bin/govulncheck.exe') ./cmd/home-tunnel-agent/
             $env:GOFLAGS = '-buildvcs=false'
             if ($LASTEXITCODE -ne 0) { throw 'agent govulncheck failed' }
