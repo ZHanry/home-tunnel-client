@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	pathpkg "path"
 	"regexp"
 	"runtime"
 	"strings"
@@ -33,8 +34,29 @@ type Error struct {
 	Message    string
 }
 
+type transportFailure struct{ cause error }
+
+func (failure *transportFailure) Error() string { return "control-center network request failed" }
+func (failure *transportFailure) Unwrap() error { return failure.cause }
+
 func (err *Error) Error() string {
-	return fmt.Sprintf("%s: %s (HTTP %d)", err.Code, err.Message, err.StatusCode)
+	// Remote error messages can reflect passwords or tokens. Callers may inspect
+	// structured fields, but routine logging must never stringify remote content.
+	return fmt.Sprintf("control-center request failed (HTTP %d)", err.StatusCode)
+}
+
+func withoutRedirects(transport *http.Client, timeout time.Duration) *http.Client {
+	client := http.Client{Timeout: timeout}
+	if transport != nil {
+		client = *transport
+		if client.Timeout == 0 {
+			client.Timeout = timeout
+		}
+	}
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &client
 }
 
 type Client struct {
@@ -53,14 +75,7 @@ func Discover(ctx context.Context, address string, transport *http.Client) (mode
 	if err != nil {
 		return profile, err
 	}
-	if transport == nil {
-		transport = &http.Client{
-			Timeout: 12 * time.Second,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-	}
+	transport = withoutRedirects(transport, 12*time.Second)
 	endpoint := requested.ResolveReference(&url.URL{Path: "/api/v1/public/config"})
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -70,7 +85,7 @@ func Discover(ctx context.Context, address string, transport *http.Client) (mode
 	request.Header.Set("User-Agent", userAgent())
 	response, err := transport.Do(request)
 	if err != nil {
-		return profile, fmt.Errorf("discover server: %w", err)
+		return profile, &transportFailure{cause: err}
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
@@ -94,7 +109,7 @@ func Discover(ctx context.Context, address string, transport *http.Client) (mode
 		FRPSTLSCertificatePEM string `json:"frps_tls_certificate_pem"`
 	}
 	if err := json.Unmarshal(data, &value); err != nil {
-		return profile, fmt.Errorf("decode server configuration: %w", err)
+		return profile, errors.New("server returned invalid configuration JSON")
 	}
 	canonical, err := normalizeRoot(value.PublicBaseURL)
 	if err != nil {
@@ -135,17 +150,11 @@ func Discover(ctx context.Context, address string, transport *http.Client) (mode
 
 func New(baseURL string, transport *http.Client) (*Client, error) {
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return nil, errors.New("API base URL must be an absolute HTTPS URL")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" || (parsed.Path != "/api/v1/" && parsed.Path != "/api/v1") {
+		return nil, errors.New("API base URL must be an HTTPS origin followed by /api/v1/")
 	}
-	if transport == nil {
-		transport = &http.Client{
-			Timeout: 15 * time.Second,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-	}
+	parsed.Path = "/api/v1/"
+	transport = withoutRedirects(transport, 15*time.Second)
 	return &Client{baseURL: parsed, http: transport, userAgent: userAgent()}, nil
 }
 
@@ -415,10 +424,13 @@ func (client *Client) sendJSON(ctx context.Context, method, path string, body, t
 		payload = bytes.NewReader(data)
 	}
 	reference, err := url.Parse(path)
-	if err != nil {
-		return 0, err
+	if err != nil || reference.IsAbs() || reference.Host != "" || reference.User != nil || reference.Fragment != "" {
+		return 0, errors.New("API request path must remain relative to the selected server")
 	}
 	endpoint := client.baseURL.ResolveReference(reference)
+	if !sameOrigin(client.baseURL, endpoint) || !strings.HasPrefix(pathpkg.Clean(endpoint.Path), "/api/v1/") {
+		return 0, errors.New("API request escaped the selected server API path")
+	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), payload)
 	if err != nil {
 		return 0, err
@@ -434,7 +446,7 @@ func (client *Client) sendJSON(ctx context.Context, method, path string, body, t
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
-		return 0, err
+		return 0, &transportFailure{cause: err}
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
@@ -460,7 +472,7 @@ func (client *Client) sendJSON(ctx context.Context, method, path string, body, t
 	}
 	if target != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, target); err != nil {
-			return response.StatusCode, fmt.Errorf("decode control-center response: %w", err)
+			return response.StatusCode, errors.New("server returned invalid control-center response JSON")
 		}
 	}
 	return response.StatusCode, nil

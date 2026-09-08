@@ -15,7 +15,7 @@ $goVersion = "1.26.6"
 $goArchive = Join-Path $toolsDir "go$goVersion.windows-amd64.zip"
 $goArchiveSha256 = "5b6c5b556525810463b5c897b50dc7a82d6a3dc0bfaf55d990a7e9f31d6b2318"
 $frpVersion = "0.70.1"
-$agentVersion = "5.0.0"
+$agentVersion = "5.0.1"
 $frpCommit = "fa3bcca2b0c4753cd4f0e2ab189dd6a5a6a15708"
 $frpArchive = Join-Path $workspaceDir ".downloads\frp-$frpCommit.zip"
 $frpArchiveSha256 = "9c6b0188a8f74e982069dc89218cc3d79bada8663cedf3b514b98847530cbf7d"
@@ -119,7 +119,7 @@ try {
     try {
         $package = "./" + [IO.Path]::GetRelativePath($frpSource.FullName, $temporaryCommand).Replace("\", "/")
         $linkerFlags = "-s -w -buildid= -X main.agentVersion=$agentVersion -X main.frpVersion=$frpVersion -X main.frpCommit=$frpCommit"
-        & $goExe build -trimpath -ldflags $linkerFlags -o $output $package
+        & $goExe build -modfile (Join-Path $agentSourceDir "frp-go.mod") -mod=readonly -trimpath -ldflags $linkerFlags -o $output $package
     }
     finally {
         Pop-Location
@@ -140,6 +140,10 @@ finally {
 $versionOutput = (& $output version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $versionOutput -notlike "Home Tunnel Agent $agentVersion*") {
     throw "Home Tunnel Agent version self-check failed: $versionOutput"
+}
+$buildInfo = (& $goExe version -m $output | Out-String)
+if ($LASTEXITCODE -ne 0 -or $buildInfo -notmatch '(?m)^\s*dep\s+github\.com/Azure/go-ntlmssp\s+v0\.1\.1\s') {
+    throw "Agent build did not include the reviewed NTLM security fix"
 }
 $hash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
 $versionInfo = (Get-Item -LiteralPath $output).VersionInfo

@@ -54,7 +54,8 @@ jobs:
         sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config gcc
     - if: matrix.target == 'client'
       name: Build Linux module-backed Go sources
-      run: go build ./...
+      run: |
+        go build ./...
     - if: matrix.target == 'agent'
       name: Download pinned FRP source for Agent analysis
       shell: pwsh
@@ -90,12 +91,18 @@ jobs:
           $env:GOOS = 'windows'
           $env:GOARCH = 'amd64'
           $env:GOFLAGS = '-buildvcs=false'
-          go test -count=1 ./cmd/home-tunnel-agent/
+          go test -modfile (Join-Path $env:GITHUB_WORKSPACE "agent/frp-go.mod") -mod=readonly -count=1 ./cmd/home-tunnel-agent/
           if ($LASTEXITCODE -ne 0) { throw 'Agent tests failed' }
-          go build ./cmd/home-tunnel-agent/
+          go build -modfile (Join-Path $env:GITHUB_WORKSPACE "agent/frp-go.mod") -mod=readonly ./cmd/home-tunnel-agent/
           if ($LASTEXITCODE -ne 0) { throw 'Agent build failed' }
         }
         finally { Pop-Location }
     - uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81
       with:
         category: /language:${{ matrix.language }}/target:${{ matrix.target || 'default' }}
+        wait-for-processing: true
+    - name: Require no open CodeQL findings
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        python scripts/check-codeql-alerts.py

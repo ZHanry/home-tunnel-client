@@ -8,3 +8,6 @@ Windows、macOS 与 Linux 客户端共用的受限 FRP 引擎，由 GUI / CLI �
 Windows CI 会比较 `expected-sha256.txt`；改变 Agent 时需要重新验证和记录哈希，不能直接跳过检查。
 
 Agent 的版本与客户端版本分别维护。FRP 许可与第三方声明位于本目录。
+
+`frp-go.mod` / `frp-go.sum` 固定实际打包的 FRP 依赖，`security-pins.json` 记录已审查的安全修复。
+当前将 `go-ntlmssp` 固定为 `v0.1.1`，修复 CVE-2026-32952。所有平台的打包脚本都使用这份锁文件，并核对产物的模块信息；开发子模块也使用相同的修复版本。

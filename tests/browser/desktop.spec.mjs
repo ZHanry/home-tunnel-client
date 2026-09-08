@@ -19,6 +19,17 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/desktop-preview");
 });
 
+test("desktop requests use the native window's private session", async ({ page }) => {
+  await page.goto("about:blank");
+  let authorization = "";
+  await page.route("**/local/state", (route) => {
+    authorization = route.request().headers().authorization ?? "";
+    return route.fulfill({ json: { enrolled: false } });
+  });
+  await page.goto("/desktop-preview#session=private-ui-test");
+  await expect.poll(() => authorization).toBe("Bearer private-ui-test");
+});
+
 test("desktop login fields have names and theme uses a readable button foreground", async ({
   page,
 }) => {

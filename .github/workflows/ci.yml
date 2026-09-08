@@ -24,7 +24,8 @@ jobs:
         go-version: 1.26.6
         cache-dependency-path: go.mod
     - name: Test shared Go client
-      run: go test ./...
+      run: |
+        go test ./...
     - name: Build unified desktop GUI
       run: |
         go build ./cmd/home-tunnel-client
@@ -75,6 +76,7 @@ jobs:
       shell: pwsh
       run: |
         $env:GOFLAGS = '-buildvcs=false'
+        $moduleLock = Join-Path $env:GITHUB_WORKSPACE 'agent/frp-go.mod'
         $goBin = Join-Path (Get-Location) '.downloads\go-toolchain\go\bin'
         $frpRoot = Get-ChildItem (Join-Path '.downloads' 'frp-api-*') -Directory |
           ForEach-Object { Get-ChildItem $_.FullName -Directory } |
@@ -89,11 +91,16 @@ jobs:
           if ($unformatted) { throw "gofmt found unformatted agent files: $unformatted" }
           Push-Location $frpRoot.FullName
           try {
-            & (Join-Path $goBin 'go.exe') vet ./cmd/home-tunnel-agent/
+            & (Join-Path $goBin 'go.exe') vet -modfile $moduleLock -mod=readonly ./cmd/home-tunnel-agent/
             if ($LASTEXITCODE -ne 0) { throw 'agent go vet failed' }
-            & (Join-Path $goBin 'go.exe') test -count=1 ./cmd/home-tunnel-agent/
+            & (Join-Path $goBin 'go.exe') test -modfile $moduleLock -mod=readonly -count=1 ./cmd/home-tunnel-agent/
             if ($LASTEXITCODE -ne 0) { throw 'agent go test failed' }
-            & (Join-Path $goBin 'go.exe') run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./cmd/home-tunnel-agent/
+            & (Join-Path $goBin 'go.exe') install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+            if ($LASTEXITCODE -ne 0) { throw 'govulncheck installation failed' }
+            $goPath = & (Join-Path $goBin 'go.exe') env GOPATH
+            $env:GOFLAGS = '-buildvcs=false -mod=readonly -modfile="' + $moduleLock.Replace('\','/') + '"'
+            & (Join-Path $goPath 'bin/govulncheck.exe') ./cmd/home-tunnel-agent/
+            $env:GOFLAGS = '-buildvcs=false'
             if ($LASTEXITCODE -ne 0) { throw 'agent govulncheck failed' }
           }
           finally {
@@ -121,9 +128,11 @@ jobs:
         go-version: 1.26.6
         cache-dependency-path: go.mod
     - name: Test shared Go client
-      run: go test ./...
+      run: |
+        go test ./...
     - name: Build native macOS GUI
-      run: CGO_ENABLED=1 go build ./cmd/home-tunnel-gui ./cmd/home-tunnel-client
+      run: |
+        CGO_ENABLED=1 go build ./cmd/home-tunnel-gui ./cmd/home-tunnel-client
   dependency-review:
     name: Dependency Review
     if: ${{ github.event_name == 'pull_request' }}
@@ -152,17 +161,23 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config gcc
     - name: Test Linux client
-      run: go test -race ./...
+      run: |
+        go test -race ./...
     - name: Vet Linux client
-      run: go vet ./...
+      run: |
+        go vet ./...
     - name: Staticcheck Linux client
-      run: staticcheck ./...
+      run: |
+        staticcheck ./...
     - name: Audit Linux client vulnerabilities
-      run: govulncheck ./...
+      run: |
+        govulncheck ./...
     - name: Build Linux client controller
-      run: CGO_ENABLED=0 go build ./cmd/home-tunnel-client
+      run: |
+        CGO_ENABLED=0 go build ./cmd/home-tunnel-client
     - name: Build Linux graphical client
-      run: CGO_ENABLED=1 go build ./cmd/home-tunnel-gui
+      run: |
+        CGO_ENABLED=1 go build ./cmd/home-tunnel-gui
     - name: Check release packaging scripts
       run: |
         bash -n \
@@ -183,7 +198,7 @@ jobs:
     - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
       with:
         version: 11.16.0
-    - run: |-
+    - run: |
         pnpm install --frozen-lockfile
         pnpm run lint
         pnpm exec playwright install --with-deps chromium
@@ -193,9 +208,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - run: python3 scripts/check-repository.py
+    - run: |
+        python3 scripts/check-repository.py
     - name: Check test-release policy
-      run: python3 -m unittest discover -s scripts -p "test_release_policy.py"
+      run: |
+        python3 -m unittest discover -s scripts -p "test_release_policy.py"
+    - name: Verify the patched FRP build dependency locks
+      run: |
+        python3 scripts/verify-frp-security.py
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest

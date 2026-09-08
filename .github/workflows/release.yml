@@ -31,7 +31,8 @@ jobs:
     - id: version
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: python3 scripts/release.py metadata
+      run: |
+        python3 scripts/release.py metadata
   agent-evidence:
     name: Windows x64 GUI package and Agent evidence
     if: needs.metadata.outputs.stable != 'true'
@@ -95,13 +96,14 @@ jobs:
           frp_commit = $env:FRP_COMMIT
           sha256 = $env:AGENT_SHA256
           repository_revision = $env:GITHUB_SHA
-          build_identity = "https://github.com/$env:GITHUB_REPOSITORY/.github/workflows/release-images.yml@refs/tags/$env:GITHUB_REF_NAME"
+          security_dependencies = Get-Content -Raw agent/security-pins.json | ConvertFrom-Json
+          build_identity = "https://github.com/$env:GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$env:GITHUB_REF_NAME"
           distribution = "bundled in HomeTunnel-Windows-<version>-x64.zip with home-tunnel-gui"
           authenticode = "not used; Windows GUI is an unsigned Go zip"
         }
         [IO.File]::WriteAllText(
           (Join-Path (Get-Location) 'agent-provenance.json'),
-          ($evidence | ConvertTo-Json -Depth 3) + "`n",
+          ($evidence | ConvertTo-Json -Depth 6) + "`n",
           [Text.UTF8Encoding]::new($false)
         )
     - id: windows
@@ -109,6 +111,7 @@ jobs:
       shell: pwsh
       env:
         VERSION: ${{ needs.metadata.outputs.base-version }}
+        AGENT_VERSION: ${{ steps.agent.outputs.agent_version }}
       run: |
         $lines = & .\packaging\windows\build-release.ps1 -Version $env:VERSION -WindRes $env:HOME_TUNNEL_WINDRES
         $lines | Write-Output
@@ -126,7 +129,7 @@ jobs:
           if (-not (Test-Path -LiteralPath (Join-Path $inspect $name))) { throw "Missing packaged file: $name" }
         }
         $agentVersionText = (& (Join-Path $inspect 'home-tunnel-agent.exe') version | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $agentVersionText -notlike "Home Tunnel Agent $env:VERSION*") { throw 'Packaged Agent version mismatch' }
+        if ($LASTEXITCODE -ne 0 -or $agentVersionText -notlike "Home Tunnel Agent $env:AGENT_VERSION*") { throw 'Packaged Agent version mismatch' }
         $smoke = [ordered]@{
           schema_version = 1
           status = 'passed'
@@ -239,7 +242,8 @@ jobs:
       env:
         VERSION: ${{ needs.metadata.outputs.base-version }}
         ARCH: ${{ matrix.arch }}
-      run: ${{ matrix.script }}
+      run: |
+        ${{ matrix.script }}
     - id: artifact
       name: Verify package layout and select outputs
       shell: bash
@@ -330,7 +334,8 @@ jobs:
         merge-multiple: true
     - env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: python3 scripts/release.py seal
+      run: |
+        python3 scripts/release.py seal
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: candidate-assets
@@ -353,7 +358,7 @@ jobs:
     - name: Seal and publish verified RC
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |-
+      run: |
         python3 scripts/release.py seal
         cosign sign-blob --yes --bundle release/SHA256SUMS.txt.sigstore.json release/SHA256SUMS.txt
         python3 scripts/release.py rc
@@ -368,4 +373,5 @@ jobs:
     - env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         RC_TAG: ${{ needs.metadata.outputs.rc-tag }}
-      run: python3 scripts/release.py stable
+      run: |
+        python3 scripts/release.py stable

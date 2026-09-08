@@ -30,9 +30,39 @@ var (
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.LUTC)
 	if err := execute(os.Args[1:]); err != nil {
-		log.Printf("error: %v", err)
+		log.Print(publicCommandError(err))
 		os.Exit(1)
 	}
+}
+
+// Errors can wrap server-supplied text or private password-file paths. Choose
+// actionable messages from fixed categories instead of logging the raw chain.
+func publicCommandError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "request timed out; check the server address and network connection"
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return "a required file is missing; check the state, Agent and password-file settings"
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return "file access was denied; check ownership and permissions"
+	}
+	var remote *api.Error
+	if errors.As(err, &remote) {
+		switch remote.Code {
+		case "AUTH_INVALID":
+			return "authentication failed; verify the account and password"
+		case "PASSWORD_CHANGE_REQUIRED":
+			return "a password change is required; provide --new-password-file"
+		case "RATE_LIMITED":
+			return "the server rate limit was reached; wait before retrying"
+		case "USER_DISABLED", "DEVICE_REVOKED", "SESSION_REVOKED":
+			return "the account, device or session is unavailable; check its server-side status"
+		default:
+			return "the control center rejected the request; check account permissions and connection settings"
+		}
+	}
+	return "command failed; check arguments, device state and network settings; run home-tunnel-client help"
 }
 
 func execute(arguments []string) error {

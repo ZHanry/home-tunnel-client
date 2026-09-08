@@ -74,9 +74,9 @@ func TestUpdateCheckUsesReleaseAsset(t *testing.T) {
 	githubLatestRelease = upstream.URL
 	t.Cleanup(func() { githubLatestRelease = previous })
 
-	server := New(Options{AgentVersion: "5.0.0", StatePath: filepath.Join(t.TempDir(), "state.json")})
+	server := New(Options{LocalToken: testLocalToken, AgentVersion: "5.0.0", StatePath: filepath.Join(t.TempDir(), "state.json")})
 	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/local/update", nil))
+	server.Handler().ServeHTTP(rec, trustedLocalRequest(http.MethodGet, "/local/update", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -145,9 +145,9 @@ func TestDownloadUpdateVerifiesSHA256(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME_TUNNEL_DOWNLOAD_DIR", dir)
 
-	server := New(Options{AgentVersion: model.Version, StatePath: filepath.Join(t.TempDir(), "state.json")})
+	server := New(Options{LocalToken: testLocalToken, AgentVersion: model.Version, StatePath: filepath.Join(t.TempDir(), "state.json")})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/local/update/download", nil)
+	req := trustedLocalRequest(http.MethodPost, "/local/update/download", nil)
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
@@ -207,9 +207,9 @@ func TestDownloadUpdateRejectsBadChecksum(t *testing.T) {
 	t.Cleanup(func() { githubLatestRelease = previous })
 	dir := t.TempDir()
 	t.Setenv("HOME_TUNNEL_DOWNLOAD_DIR", dir)
-	server := New(Options{StatePath: filepath.Join(t.TempDir(), "state.json")})
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "state.json")})
 	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/local/update/download", nil))
+	server.Handler().ServeHTTP(rec, trustedLocalRequest(http.MethodPost, "/local/update/download", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}

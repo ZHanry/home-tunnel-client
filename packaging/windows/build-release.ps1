@@ -1,6 +1,6 @@
 # Builds the unified Windows x64 desktop package: home-tunnel-gui.exe + Agent.
 param(
-    [string]$Version = "5.0.0",
+    [string]$Version = "5.0.1",
     [string]$WindRes = "",
     [string]$OutputDir = ""
 )

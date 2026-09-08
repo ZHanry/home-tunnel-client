@@ -26,6 +26,7 @@ var webFiles embed.FS
 
 type Options struct {
 	Version           string
+	LocalToken        string
 	StatePath         string
 	AgentPath         string
 	ExpectedAgentHash string
@@ -44,6 +45,9 @@ type Server struct {
 }
 
 func New(options Options) *Server {
+	if options.LocalToken == "" {
+		options.LocalToken = newLocalToken()
+	}
 	return &Server{options: options, parent: context.Background()}
 }
 
@@ -83,7 +87,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/update", server.update)
 	mux.HandleFunc("/local/update/download", server.downloadUpdate)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
-	return mux
+	return protectLocalUI(mux, server.options.LocalToken)
 }
 
 func ListenLoopback() (net.Listener, error) {

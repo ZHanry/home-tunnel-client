@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-version=${VERSION:-5.0.0}
+version=${VERSION:-5.0.1}
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "VERSION must be X.Y.Z or X.Y.Z-rc.N" >&2; exit 2; }
 architecture=${ARCH:-$(go env GOARCH)}
 case "$architecture" in
@@ -72,10 +72,12 @@ agent_output="$package_dir/lib/home-tunnel-agent"
 (
   cd "$frp_source"
   CGO_ENABLED=0 GOOS=linux GOARCH="$architecture" GOFLAGS=-buildvcs=false \
-    go build -trimpath \
+    go build -modfile="$workspace_dir/agent/frp-go.mod" -mod=readonly -trimpath \
     -ldflags "-s -w -buildid= -X main.agentVersion=$agent_version -X main.frpVersion=$frp_version -X main.frpCommit=$frp_commit" \
     -o "$agent_output" "./cmd/$(basename "$temporary_command")"
 )
+module_version=$(go version -m "$agent_output" | awk '$1 == "dep" && $2 == "github.com/Azure/go-ntlmssp" { print $3 }')
+[[ "$module_version" == "v0.1.1" ]] || { echo "Agent did not include the reviewed NTLM security fix" >&2; exit 1; }
 agent_hash=$(sha256sum "$agent_output" | awk '{print $1}')
 (
   cd "$client_dir"

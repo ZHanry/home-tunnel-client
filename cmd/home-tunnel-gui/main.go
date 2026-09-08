@@ -47,6 +47,12 @@ func main() {
 		}
 		log.Fatal(err)
 	}
+	cleanupSession, err := server.PublishLocalSession()
+	if err != nil {
+		listener.Close()
+		log.Fatal("cannot prepare the private desktop session")
+	}
+	defer cleanupSession()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server.Attach(ctx)
@@ -56,20 +62,24 @@ func main() {
 	if state, err := (statepkg.Store{Path: statePath}).Load(); err == nil && state.Enrolled() {
 		server.StartAgent(ctx)
 	}
-	httpServer := &http.Server{Handler: server.Handler()}
+	httpServer := &http.Server{
+		Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024,
+	}
 	go func() {
 		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Print(err)
 		}
 	}()
-	url := "http://" + gui.UIAddress + "/"
-	log.Printf("Home Tunnel GUI %s window %s", version, url)
+	url := "http://" + gui.UIAddress + "/#session=" + server.LocalToken()
+	log.Printf("Home Tunnel GUI %s window http://%s/", version, gui.UIAddress)
 	go func() {
 		<-ctx.Done()
 		desktop.Quit()
 	}()
 	runErr := desktop.Run(url, host, stop)
 	server.StopAgent()
+	cleanupSession()
 	shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdown)

@@ -95,10 +95,12 @@ agent_output="$package_dir/lib/home-tunnel-agent"
 (
   cd "$frp_source"
   CGO_ENABLED=0 GOOS=darwin GOARCH="$architecture" GOFLAGS=-buildvcs=false \
-    go build -trimpath \
+    go build -modfile="$workspace_dir/agent/frp-go.mod" -mod=readonly -trimpath \
     -ldflags "-s -w -buildid= -X main.agentVersion=$agent_version -X main.frpVersion=$frp_version -X main.frpCommit=$frp_commit" \
     -o "$agent_output" "./cmd/$(basename "$temporary_command")"
 )
+module_version=$(go version -m "$agent_output" | awk '$1 == "dep" && $2 == "github.com/Azure/go-ntlmssp" { print $3 }')
+[[ "$module_version" == "v0.1.1" ]] || { echo "Agent did not include the reviewed NTLM security fix" >&2; exit 1; }
 agent_hash=$(hash_file "$agent_output")
 (
   cd "$client_dir"

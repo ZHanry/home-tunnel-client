@@ -51,8 +51,9 @@
     $("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     $("server").value = localStorage.getItem("ht_server") || "";
     $("username").value = localStorage.getItem("ht_username") || "";
+    const localSessionToken = new URLSearchParams(location.hash.slice(1)).get("session") || "";
     async function api(path, options = {}) {
-      const response = await fetch(path, { headers: { "content-type": "application/json", ...(options.headers || {}) }, ...options });
+      const response = await fetch(path, { ...options, headers: { "content-type": "application/json", ...(options.headers || {}), ...(localSessionToken ? { authorization: `Bearer ${localSessionToken}` } : {}) } });
       const text = await response.text();
       const data = text ? JSON.parse(text) : null;
       if (!response.ok) { const error = new Error(data?.message || text || response.statusText); error.code = data?.error_code; throw error; }

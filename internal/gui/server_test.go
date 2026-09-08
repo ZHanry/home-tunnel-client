@@ -13,10 +13,10 @@ import (
 )
 
 func TestHandlerPingAndIndex(t *testing.T) {
-	server := New(Options{StatePath: filepath.Join(t.TempDir(), "state.json")})
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "state.json")})
 	handler := server.Handler()
 
-	index := httptest.NewRequest(http.MethodGet, "/", nil)
+	index := trustedLocalRequest(http.MethodGet, "/", nil)
 	indexRec := httptest.NewRecorder()
 	handler.ServeHTTP(indexRec, index)
 	if indexRec.Code != http.StatusOK {
@@ -27,7 +27,7 @@ func TestHandlerPingAndIndex(t *testing.T) {
 		t.Fatal("index page missing title")
 	}
 
-	ping := httptest.NewRequest(http.MethodGet, "/local/ping", nil)
+	ping := trustedLocalRequest(http.MethodGet, "/local/ping", nil)
 	pingRec := httptest.NewRecorder()
 	handler.ServeHTTP(pingRec, ping)
 	if pingRec.Code != http.StatusOK {
@@ -37,9 +37,9 @@ func TestHandlerPingAndIndex(t *testing.T) {
 
 func TestStateWithoutEnrollment(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
-	server := New(Options{StatePath: statePath})
+	server := New(Options{LocalToken: testLocalToken, StatePath: statePath})
 	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/local/state", nil))
+	server.Handler().ServeHTTP(rec, trustedLocalRequest(http.MethodGet, "/local/state", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -53,9 +53,9 @@ func TestStateWithoutEnrollment(t *testing.T) {
 }
 
 func TestConnectionsRequireLogin(t *testing.T) {
-	server := New(Options{StatePath: filepath.Join(t.TempDir(), "missing.json")})
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "missing.json")})
 	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/local/connections", nil))
+	server.Handler().ServeHTTP(rec, trustedLocalRequest(http.MethodGet, "/local/connections", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -74,9 +74,9 @@ func TestLogoutClearsStateAfterStop(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runtimeDir, "keep.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	server := New(Options{StatePath: statePath})
+	server := New(Options{LocalToken: testLocalToken, StatePath: statePath})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/local/logout", nil)
+	req := trustedLocalRequest(http.MethodPost, "/local/logout", nil)
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
@@ -90,11 +90,11 @@ func TestLogoutClearsStateAfterStop(t *testing.T) {
 }
 
 func TestShowInvokesCallback(t *testing.T) {
-	server := New(Options{StatePath: filepath.Join(t.TempDir(), "state.json")})
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "state.json")})
 	called := make(chan struct{}, 1)
 	server.SetShow(func() { called <- struct{}{} })
 	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/local/show", nil))
+	server.Handler().ServeHTTP(rec, trustedLocalRequest(http.MethodPost, "/local/show", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -106,11 +106,11 @@ func TestShowInvokesCallback(t *testing.T) {
 }
 
 func TestQuitInvokesCallbackAfterStop(t *testing.T) {
-	server := New(Options{StatePath: filepath.Join(t.TempDir(), "state.json")})
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "state.json")})
 	called := make(chan struct{}, 1)
 	server.SetQuit(func() { called <- struct{}{} })
 	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/local/quit", nil))
+	server.Handler().ServeHTTP(rec, trustedLocalRequest(http.MethodPost, "/local/quit", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -122,15 +122,29 @@ func TestQuitInvokesCallbackAfterStop(t *testing.T) {
 }
 
 func TestStopAgentWhenIdle(t *testing.T) {
-	server := New(Options{StatePath: filepath.Join(t.TempDir(), "state.json")})
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "state.json")})
 	server.StopAgent()
 }
 
 func TestConnectionItemRejectsUnknownID(t *testing.T) {
-	server := New(Options{StatePath: filepath.Join(t.TempDir(), "missing.json")})
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "missing.json")})
 	rec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/local/connections/missing", nil))
+	server.Handler().ServeHTTP(rec, trustedLocalRequest(http.MethodDelete, "/local/connections/missing", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status %d", rec.Code)
 	}
+}
+
+const testLocalToken = "local-ui-test"
+
+func trustedLocalRequest(method, target string, body io.Reader) *http.Request {
+	request := httptest.NewRequest(method, target, body)
+	request.Host = UIAddress
+	request.Header.Set("Authorization", "Bearer "+testLocalToken)
+	request.RemoteAddr = "127.0.0.1:12345"
+	if method != http.MethodGet && method != http.MethodHead {
+		request.Header.Set("Origin", "http://"+UIAddress)
+		request.Header.Set("Content-Type", "application/json")
+	}
+	return request
 }
