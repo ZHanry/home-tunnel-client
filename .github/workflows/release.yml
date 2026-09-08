@@ -220,11 +220,11 @@ jobs:
           script: ./packaging/build-release.sh
         - platform: macos
           arch: amd64
-          runner: macos-latest
+          runner: macos-15-intel
           script: ./packaging/macos/build-release.sh
         - platform: macos
           arch: arm64
-          runner: macos-latest
+          runner: macos-15
           script: ./packaging/macos/build-release.sh
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -243,6 +243,7 @@ jobs:
         VERSION: ${{ needs.metadata.outputs.base-version }}
         ARCH: ${{ matrix.arch }}
       run: |
+        test "$(go env GOARCH)" = "$ARCH"
         ${{ matrix.script }}
     - id: artifact
       name: Verify package layout and select outputs
@@ -259,6 +260,7 @@ jobs:
         (cd "$(dirname "$archive")" && shasum -a 256 -c "$(basename "$checksum")")
         listing=$(tar -tzf "$archive")
         grep -q '/bin/home-tunnel-client$' <<< "$listing"
+        grep -q '/bin/home-tunnel-gui$' <<< "$listing"
         grep -q '/lib/home-tunnel-agent$' <<< "$listing"
         if [ "$PLATFORM" = linux ]; then
           grep -q '/lib/systemd/system/home-tunnel-client.service$' <<< "$listing"
