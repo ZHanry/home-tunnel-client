@@ -301,6 +301,8 @@ impl TerminalUserToken {
     }
 }
 pub struct Connection {
+    homedesk_relay: bool, // HOMEDESK: 从本地创建连接的入口继承类型。
+    homedesk_session: Option<crate::homedesk_console::SessionGuard>, // HOMEDESK: 仅认证成功后记录会话，释放时自动结束。
     inner: ConnInner,
     display_idx: usize,
     stream: super::Stream,
@@ -457,6 +459,7 @@ impl Connection {
         meta: super::ConnectionMeta,
     ) {
         let super::ConnectionMeta {
+            homedesk_relay, // HOMEDESK: 不通过对端 IP 猜测直连/中继。
             control_permissions,
             controlled_context,
         } = meta;
@@ -497,6 +500,8 @@ impl Connection {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let tx_cloned = tx.clone();
         let mut conn = Self {
+            homedesk_relay, // HOMEDESK: 在认证成功后用于上报。
+            homedesk_session: None, // HOMEDESK: 握手失败不产生会话记录。
             inner: ConnInner {
                 id,
                 tx: Some(tx),
@@ -1690,6 +1695,9 @@ impl Connection {
         self.post_conn_audit(audit);
         #[allow(unused_mut)]
         let mut username = crate::platform::get_active_username();
+        if self.homedesk_session.is_none() { // HOMEDESK: 仅成功认证后上报，队列操作不等待网络。
+            self.homedesk_session = crate::homedesk_console::SessionGuard::new(&self.lr.my_id, &self.ip, self.homedesk_relay);
+        }
         let mut res = LoginResponse::new();
         let mut pi = PeerInfo {
             username: username.clone(),

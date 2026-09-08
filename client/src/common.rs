@@ -1445,6 +1445,9 @@ where
 /// - 4xx responses are returned as-is (server is reachable, business logic error).
 /// - If fallback also fails, returns the original HTTP result (text or error).
 pub async fn post_request(url: String, body: String, header: &str) -> ResultType<String> {
+    if !crate::homedesk_config::allows_http(&url) { // HOMEDESK: 公网 HTTP 请求在 DNS 和连接之前被拒绝。
+        bail!("纯内网模式已阻止家庭网段以外的请求");
+    }
     with_tcp_proxy_fallback(
         &url,
         "POST",
@@ -2377,6 +2380,7 @@ pub fn is_udp_disabled() -> bool {
 
 // this crate https://github.com/yoshd/stun-client supports nat type
 async fn stun_ipv6_test(stun_server: &str) -> ResultType<(SocketAddr, String)> {
+    if crate::homedesk_config::pure_lan_enabled() { bail!("纯内网模式不访问公网 STUN 服务"); } // HOMEDESK: 阻止公网地址探测与 DNS。
     use std::net::ToSocketAddrs;
     use stunclient::StunClient;
     let local_addr = SocketAddr::from(([0u16; 8], 0)); // [::]:0
@@ -2401,6 +2405,7 @@ async fn stun_ipv6_test(stun_server: &str) -> ResultType<(SocketAddr, String)> {
 }
 
 async fn stun_ipv4_test(stun_server: &str) -> ResultType<(SocketAddr, String)> {
+    if crate::homedesk_config::pure_lan_enabled() { bail!("纯内网模式不访问公网 STUN 服务"); } // HOMEDESK: 阻止公网地址探测与 DNS。
     use std::net::ToSocketAddrs;
     use stunclient::StunClient;
     let local_addr = SocketAddr::from(([0u8; 4], 0));

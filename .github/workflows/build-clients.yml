@@ -1,0 +1,30 @@
+name: HomeDesk 原生客户端构建
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  clients:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: win-x64
+            runner: '["self-hosted","Windows","X64","homedesk-build"]'
+          - target: linux-x64
+            runner: '["self-hosted","Linux","X64","homedesk-build"]'
+          - target: linux-arm64
+            runner: '["self-hosted","Linux","ARM64","homedesk-build"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+      - name: 构建（配置预置于私有 Runner）
+        run: python build/ci/build-client.py --target ${{ matrix.target }} --config "${{ vars.HOMEDESK_CONFIG_PATH }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: homedesk-${{ matrix.target }}
+          path: |
+            client/*.exe
+            client/*.deb
+          if-no-files-found: error

@@ -6,6 +6,7 @@ import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/homedesk_devices.dart'; // HOMEDESK: 独立家庭设备墙。
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -183,7 +184,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   buildRightPane(BuildContext context) {
     return Container(
       color: Theme.of(context).scaffoldBackgroundColor,
-      child: ConnectionPage(),
+      // HOMEDESK: 上报关闭时保持原页面；管理台不承载远控连接。
+      child: bind.mainGetLocalOption(key: 'homedesk-console-url').isEmpty
+          ? ConnectionPage()
+          : Column(children: [
+              SizedBox( // HOMEDESK: 字体放大时为设备卡片增加高度。
+                height: HomeDeskDevices.heightForTextScale(MediaQuery.textScalerOf(context).scale(1)),
+                child: const HomeDeskDevices(),
+              ),
+              Expanded(child: ConnectionPage()),
+            ]),
     );
   }
 

@@ -131,3 +131,18 @@
 - [ ] 恢复私有 hbbs/hbbr 后，客户端无需重新配置即可恢复注册与连接。
 
 T-02 结论：通过 / 不通过 / 待安装包实测
+
+## 2026-09-08 阶段版本验证记录
+
+以下是开发环境验证，与上方家庭双机实测分开记录。
+
+- [x] Windows Rust（flutter、hwcodec）、Flutter Release 和 portable 外壳构建通过，产出测试配置验证包。
+- [x] Console 9 项测试、发送器 4 项测试、Rust 配置 8 项与网络边界 3 项通过。
+- [x] WSL Python 配置和真实 deb staging 测试 10 项通过。
+- [x] 原生设备墙 3 项 Flutter 组件测试及独立 Dart HTTP 探针通过。
+- [x] Console musl 静态镜像在非 root、只读容器中启动，心跳及重启持久化通过。
+- [x] gitleaks 精确上游示例基线检查无新增疑似密钥，差异空白检查通过。
+- [ ] 使用真实 NAS 配置重新生成并安装正式 Windows 包，完成双机验收。
+- [ ] ARM64 定制包构建及飞腾麒麟实机验收。
+
+本阶段结论：保存开发阶段版本；P0、T-02 实机门禁仍待验证。详见 `docs/IMPLEMENTATION_STATUS.md`。

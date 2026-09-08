@@ -1,0 +1,71 @@
+name: HomeDesk 仓库验证
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+      - name: 管理台与上报模块测试
+        run: |
+          cargo test --locked --manifest-path server/console/Cargo.toml
+          cargo test --locked --manifest-path tests/reporter/Cargo.toml
+      - name: 客户端配置和打包验证
+        run: |
+          python3 -m unittest discover -s tests -v
+          rustc --test client/homedesk_build.rs -o /tmp/homedesk-build-tests
+          /tmp/homedesk-build-tests
+          rustc --test client/src/homedesk_net.rs -o /tmp/homedesk-net-tests
+          /tmp/homedesk-net-tests
+          bash -n server/verify.sh build/ci/prepare-offline.sh build/ci/install-offline.sh
+          git diff --check
+      - name: 固定版本密钥扫描
+        run: |
+          curl --fail --location --output /tmp/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb /tmp/gitleaks.tar.gz | sha256sum --check
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          python3 build/ci/scan-secrets.py --gitleaks /tmp/gitleaks
+      - name: 静态管理台镜像与重启验证
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends musl-tools
+          bash build/ci/build-console.sh
+          python3 server/console/tests/container-smoke.py
+  flutter:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+          components: rustfmt
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.24.5
+          cache: true
+      - name: 生成固定版本桥接文件
+        env:
+          RUST_LOG: info
+          FLUTTER_SUPPRESS_ANALYTICS: 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libclang-14-dev
+          cargo install cargo-expand --version 1.0.95 --locked
+          cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
+          cd client/flutter
+          flutter pub get --enforce-lockfile
+          cd ..
+          flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h --llvm-path /usr/lib/llvm-14/lib/libclang.so.1
+      - name: 设备墙与内网请求测试
+        run: |
+          dart --enable-asserts tests/dart/console_api_test.dart
+          cd client/flutter
+          flutter analyze --no-pub lib/homedesk_console_api.dart lib/homedesk_devices.dart
+          flutter test --no-pub test/homedesk_devices_test.dart

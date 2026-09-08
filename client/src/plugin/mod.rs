@@ -99,6 +99,7 @@ fn is_server_running() -> bool {
 }
 
 pub fn init() {
+    if crate::homedesk_config::public_services_disabled() { return; } // HOMEDESK: 家庭版不执行已安装插件的联网代码。
     if !is_server_running() {
         std::thread::spawn(move || manager::start_ipc());
     } else {

@@ -257,6 +257,10 @@ impl Client {
         }
         // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
+            // HOMEDESK: 在域名解析和 TCP 建连前限制直接输入的网络地址。
+            if crate::homedesk_config::pure_lan_enabled() && !crate::homedesk_net::address_in_whitelist(peer, &Config::get_option(keys::OPTION_WHITELIST)) {
+                bail!("纯内网模式仅允许家庭白名单内的地址，请检查设备 IP");
+            }
             return Ok((
                 (
                     connect_tcp_local(check_port(peer, RELAY_PORT + 1), None, CONNECT_TIMEOUT)
@@ -272,6 +276,10 @@ impl Client {
         }
         // Allow connect to {domain}:{port}
         if hbb_common::is_domain_port_str(peer) {
+            // HOMEDESK: 纯内网模式不解析任意域名，仅允许白名单内 IPv4 加端口。
+            if crate::homedesk_config::pure_lan_enabled() && !peer.rsplit_once(':').map_or(false, |(ip, _)| crate::homedesk_net::address_in_whitelist(ip, &Config::get_option(keys::OPTION_WHITELIST))) {
+                bail!("纯内网模式请使用家庭设备 ID 或内网 IP");
+            }
             return Ok((
                 (
                     connect_tcp_local(peer, None, CONNECT_TIMEOUT).await?,

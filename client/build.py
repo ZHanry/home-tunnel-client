@@ -28,7 +28,9 @@ if windows:
 elif osx:
     flutter_build_dir = 'build/macos/Build/Products/Release/'
 else:
-    flutter_build_dir = 'build/linux/x64/release/bundle/'
+    # HOMEDESK: 原生 ARM64 构建使用真实 bundle 路径，不再用 sed 改写上游脚本。
+    linux_arch = 'arm64' if platform.machine().lower() in ('aarch64', 'arm64') else 'x64'
+    flutter_build_dir = f'build/linux/{linux_arch}/release/bundle/'
 flutter_build_dir_2 = f'flutter/{flutter_build_dir}'
 skip_cargo = False
 
@@ -36,7 +38,7 @@ skip_cargo = False
 def get_deb_arch() -> str:
     custom_arch = os.environ.get("DEB_ARCH")
     if custom_arch is None:
-        return "amd64"
+        return "arm64" if platform.machine().lower() in ('aarch64', 'arm64') else "amd64" # HOMEDESK: 自动识别飞腾 ARM64。
     # HOMEDESK: Reject path/shell metacharacters before the architecture reaches package commands or names.
     return validate_deb_arch(custom_arch)
 
@@ -327,7 +329,8 @@ def build_flutter_deb(version, features):
         system2(f'cargo build --locked --features {features} --lib --release')
         ffi_bindgen_function_refactor()
     os.chdir('flutter')
-    system2('flutter build linux --release')
+    # HOMEDESK: ARM64 使用上游已采用的 Flutter eLinux 构建入口。
+    system2('flutter-elinux build linux --release' if linux_arch == 'arm64' else 'flutter build linux --release')
     stage_linux_package(Path('../res'), Path('tmpdeb'), HOMEDESK_BRAND, Path(flutter_build_dir))
     generate_control_file(version, Path('tmpdeb/DEBIAN/control'))
     md5_file_folder("tmpdeb/")
@@ -398,16 +401,16 @@ def build_flutter_windows(version, features, skip_portable_pack):
             print("cargo build failed, please check rust source code.")
             exit(-1)
     os.chdir('flutter')
-    system2('flutter build windows --release')
+    system2('flutter build windows --release --no-pub') # HOMEDESK: 依赖由构建入口锁定并准备，避免重新生成插件链接。
     os.chdir('..')
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
                  flutter_build_dir_2)
     if skip_portable_pack:
         return
     os.chdir('libs/portable')
-    system2('pip3 install -r requirements.txt')
+    system2(f'"{sys.executable}" -m pip install -r requirements.txt') # HOMEDESK: 使用当前构建 Python，避免 Windows Store 别名。
     system2(
-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/{HOMEDESK_BRAND.executable_name}.exe')
+        f'"{sys.executable}" ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/{HOMEDESK_BRAND.executable_name}.exe') # HOMEDESK: 保持打包解释器一致。
     os.chdir('../..')
     if os.path.exists('./rustdesk_portable.exe'):
         os.replace('./target/release/rustdesk-portable-packer.exe',

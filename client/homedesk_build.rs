@@ -15,12 +15,25 @@ struct BuildConfig {
     server_key: String,
     whitelist_cidr: String,
     pure_lan_default: bool,
+    console_enabled: bool,
+    console_url: String,
+    console_token: String,
 }
 
 pub fn configure() {
     if let Err(error) = configure_inner() {
         panic!("HomeDesk 构建配置无效：{}", error);
     }
+}
+
+// HOMEDESK: 安装包外壳也从同一配置读取品牌，不重复硬编码资源字符串。
+pub fn resource_brand() -> Result<(String, String), String> {
+    println!("cargo:rerun-if-env-changed=HOMEDESK_CONFIG_PATH");
+    let source = resolve_config_path()?;
+    println!("cargo:rerun-if-changed={}", source.display());
+    let content = fs::read_to_string(&source).map_err(|_| "无法读取品牌构建配置".to_owned())?;
+    let config = parse_config(&content)?;
+    Ok((config.brand.app_name, config.brand.executable_name))
 }
 
 fn configure_inner() -> Result<(), String> {
@@ -56,6 +69,9 @@ fn configure_inner() -> Result<(), String> {
         "cargo:rustc-env=HOMEDESK_PURE_LAN_DEFAULT={}",
         config.pure_lan_default
     );
+    println!("cargo:rustc-env=HOMEDESK_CONSOLE_ENABLED={}", config.console_enabled);
+    println!("cargo:rustc-env=HOMEDESK_CONSOLE_URL={}", config.console_url);
+    println!("cargo:rustc-env=HOMEDESK_CONSOLE_TOKEN={}", config.console_token);
     Ok(())
 }
 
@@ -66,9 +82,10 @@ fn resolve_config_path() -> Result<PathBuf, String> {
     let manifest_dir = env::var_os("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .ok_or_else(|| "未设置 CARGO_MANIFEST_DIR".to_owned())?;
-    let root = manifest_dir
-        .parent()
-        .ok_or_else(|| format!("{} 没有父目录", manifest_dir.display()))?;
+    // HOMEDESK: 支持主 crate 与嵌套的 portable crate 共用单仓库构建配置。
+    let root = manifest_dir.ancestors()
+        .find(|path| path.join("build/config.toml.example").is_file())
+        .ok_or_else(|| "未找到 HomeDesk 单仓库配置目录".to_owned())?;
     let local = root.join("build/config.toml");
     if local.is_file() {
         return Ok(local);
@@ -88,7 +105,7 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
             section = line[1..line.len() - 1].trim();
             continue;
         }
-        if !matches!(section, "brand" | "server" | "net") {
+        if !matches!(section, "brand" | "server" | "net" | "console") {
             continue;
         }
         let Some((key, raw_value)) = line.split_once('=') else {
@@ -96,7 +113,7 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
         };
         let key = key.trim();
         let full_key = format!("{section}.{key}");
-        let value = if full_key == "net.pure_lan_default" {
+        let value = if matches!(full_key.as_str(), "net.pure_lan_default" | "console.enabled") {
             match raw_value.trim() {
                 "true" | "false" => raw_value.trim().to_owned(),
                 _ => return Err(format!("第 {} 行必须为布尔值", index + 1)),
@@ -114,6 +131,9 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
                 | "server.key"
                 | "net.whitelist_cidr"
                 | "net.pure_lan_default"
+                | "console.enabled"
+                | "console.url"
+                | "console.token"
         ) {
             return Err(format!("第 {} 行包含未知配置 {full_key}", index + 1));
         }
@@ -132,9 +152,23 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
         server_key: required(&values, "server.key")?,
         whitelist_cidr: required(&values, "net.whitelist_cidr")?,
         pure_lan_default: required(&values, "net.pure_lan_default")? == "true",
+        console_enabled: values.get("console.enabled").map_or(false, |v| v == "true"),
+        console_url: if values.get("console.enabled").map_or(false, |v| v == "true") { required(&values, "console.url")? } else { String::new() },
+        console_token: if values.get("console.enabled").map_or(false, |v| v == "true") { required(&values, "console.token")? } else { String::new() },
     };
     validate_brand(&config.brand)?;
     validate_server_net(&config)?;
+    if config.console_enabled {
+        let address = config.console_url.strip_prefix("http://").ok_or("console.url 必须为内网 HTTP 地址")?.trim_end_matches('/');
+        let (host, port) = address.rsplit_once(':').ok_or("console.url 必须显式设置端口")?;
+        let ip: Ipv4Addr = host.parse().map_err(|_| "console.url 必须使用内网 IPv4，不能使用域名")?;
+        if !is_rfc1918(ip) || port.parse::<u16>().map_or(true, |v| v == 0) {
+            return Err("console.url 地址或端口无效".into());
+        }
+        if !(32..=256).contains(&config.console_token.len()) || !config.console_token.bytes().all(|c| c.is_ascii_graphic()) || config.console_token.contains("REPLACE_WITH") {
+            return Err("console.token 必须为 32 至 256 位有效访问口令".into());
+        }
+    }
     Ok(config)
 }
 
@@ -392,5 +426,21 @@ mod tests {
             "executable_name = \"../../home\"",
         );
         assert!(parse_config(&content).is_err());
+    }
+
+    #[test]
+    fn console_disabled_has_no_embedded_credentials() {
+        let config=parse_config(&format!("{VALID_CONFIG}\n[console]\nenabled = false\nurl = \"placeholder\"\ntoken = \"placeholder\"\n")).unwrap();
+        assert!(!config.console_enabled);
+        assert!(config.console_token.is_empty());
+        assert!(config.console_url.is_empty());
+    }
+
+    #[test]
+    fn console_rejects_public_hosts_and_unsafe_tokens() {
+        let valid=format!("{VALID_CONFIG}\n[console]\nenabled = true\nurl = \"http://192.168.50.10:8080\"\ntoken = \"test-only-token-00000000000000000000\"\n");
+        assert!(parse_config(&valid).is_ok());
+        assert!(parse_config(&valid.replace("http://192.168.50.10:8080","http://example.com:8080")).is_err());
+        assert!(parse_config(&valid.replace("test-only-token-00000000000000000000","short")).is_err());
     }
 }

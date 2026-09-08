@@ -74,13 +74,7 @@ class DesktopSettingPage extends StatefulWidget {
     if (!bind.isDisableSettings() &&
         bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) != 'Y')
       SettingsTabKey.network,
-    if (!bind.isIncomingOnly()) SettingsTabKey.display,
-    if (!isWeb && !bind.isIncomingOnly() && bind.pluginFeatureIsEnabled())
-      SettingsTabKey.plugin,
-    if (!bind.isDisableAccount()) SettingsTabKey.account,
-    if (isWindows &&
-        bind.mainGetBuildinOption(key: kOptionHideRemotePrinterSetting) != 'Y')
-      SettingsTabKey.printer,
+    // HOMEDESK: 家庭设置只保留常规、安全、网络和关于；画质在会话工具栏调整。
     SettingsTabKey.about,
   ];
 
@@ -489,6 +483,8 @@ class _GeneralState extends State<_General> {
     final outgoingOnly = bind.isOutgoingOnly();
     final showAutoUpdate = isWindows && bind.mainIsInstalled();
     final children = <Widget>[
+      // HOMEDESK: 使用已有配置 IPC 保存开关；关闭后仍保留自建服务器安全基线。
+      _OptionCheckBox(context, '纯内网模式', 'homedesk-pure-lan', isServer: true),
       if (!isWeb && !incomingOnly)
         _OptionCheckBox(context, 'Confirm before closing multiple tabs',
             kOptionEnableConfirmClosingTabs,

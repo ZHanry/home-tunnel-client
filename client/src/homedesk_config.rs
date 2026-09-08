@@ -24,6 +24,12 @@ pub fn apply() {
     defaults.insert(keys::OPTION_WHITELIST.to_owned(), WHITELIST_CIDR.to_owned());
     drop(defaults);
 
+    config::DEFAULT_SETTINGS.write().unwrap().insert("homedesk-pure-lan".into(), "Y".into());
+    config::DEFAULT_LOCAL_SETTINGS.write().unwrap().insert(keys::OPTION_LANGUAGE.into(), "zh-cn".into());
+    let mut hard = config::HARD_SETTINGS.write().unwrap();
+    for key in ["disable-account", "disable-ab"] { hard.insert(key.into(), "Y".into()); }
+    drop(hard);
+
     let saved_server = config::Config::get_option(keys::OPTION_CUSTOM_RENDEZVOUS_SERVER);
     if !is_private_rendezvous_server(&saved_server) {
         config::Config::set_option(
@@ -45,6 +51,9 @@ pub fn apply() {
     enforced.insert(keys::OPTION_API_SERVER.to_owned(), String::new());
     enforced.insert(keys::OPTION_RELAY_SERVER.to_owned(), String::new());
     enforced.insert(keys::OPTION_ALLOW_AUTO_UPDATE.to_owned(), "N".to_owned());
+    for key in ["hide-help-cards", "hide-proxy-settings", "hide-websocket-settings", "hide-remote-printer-settings"] {
+        enforced.insert(key.into(), "Y".into());
+    }
     enforced.insert(
         keys::OPTION_ALLOW_INSECURE_TLS_FALLBACK.to_owned(),
         "N".to_owned(),
@@ -55,10 +64,24 @@ pub fn apply() {
         .write()
         .unwrap()
         .insert(keys::OPTION_ENABLE_CHECK_UPDATE.to_owned(), "N".to_owned());
+    // 家庭设备墙通过现有只读配置桥读取编译期值，避免新增生成式 FFI 接口。
+    // 访问口令仅保存在内存覆盖项，不写入用户配置文件或日志。
+    let mut local = config::OVERWRITE_LOCAL_SETTINGS.write().unwrap();
+    local.insert("homedesk-console-url".into(), option_env!("HOMEDESK_CONSOLE_URL").unwrap_or_default().into());
+    local.insert("homedesk-console-token".into(), option_env!("HOMEDESK_CONSOLE_TOKEN").unwrap_or_default().into());
 }
 
 pub fn public_services_disabled() -> bool {
     PURE_LAN_DEFAULT == "true"
+}
+
+pub fn pure_lan_enabled() -> bool { config::Config::get_option("homedesk-pure-lan") != "N" }
+
+pub fn allows_http(url: &str) -> bool {
+    if !pure_lan_enabled() { return true; }
+    let Ok(url) = reqwest::Url::parse(url) else { return false; };
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() { return false; }
+    url.host_str().map_or(false, |host| crate::homedesk_net::address_in_whitelist(host, &config::Config::get_option(keys::OPTION_WHITELIST)))
 }
 
 pub const fn compiled_server() -> &'static str {

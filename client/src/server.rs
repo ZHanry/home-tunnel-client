@@ -83,6 +83,7 @@ type ConnMap = HashMap<i32, ConnInner>;
 
 #[derive(Clone, Default)]
 pub struct ConnectionMeta {
+    pub homedesk_relay: bool, // HOMEDESK: 仅记录本地连接来源，不进入传输协议。
     pub control_permissions: Option<ControlPermissions>,
     pub controlled_context: Option<ControlledContext>,
 }
@@ -289,8 +290,9 @@ pub async fn create_relay_connection(
     peer_addr: SocketAddr,
     secure: bool,
     ipv4: bool,
-    meta: ConnectionMeta,
+    mut meta: ConnectionMeta, // HOMEDESK: 中继入口设置审计元数据。
 ) {
+    meta.homedesk_relay = true; // HOMEDESK: 实际走中继才标记，直连保持默认 false。
     if let Err(err) = create_relay_connection_(
         server,
         relay_server,
@@ -609,6 +611,7 @@ pub async fn start_server(is_server: bool, no_server: bool) {
         crate::platform::try_kill_broker();
         #[cfg(feature = "hwcodec")]
         scrap::hwcodec::start_check_process();
+        crate::homedesk_console::start(); // HOMEDESK: 在服务配置同步后启动独立心跳任务。
         crate::RendezvousMediator::start_all().await;
     } else {
         match crate::ipc::connect(1000, "").await {

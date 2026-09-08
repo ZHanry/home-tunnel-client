@@ -70,9 +70,29 @@ fn private_block(raw_address: u32) -> Option<u8> {
     }
 }
 
+pub fn address_in_whitelist(address: &str, whitelist: &str) -> bool {
+    let address = address.rsplit_once(':').filter(|(_,port)|port.parse::<u16>().map_or(false,|p|p>0)).map_or(address,|(ip,_)|ip);
+    let Ok(address) = address.parse::<Ipv4Addr>() else { return false; };
+    if normalize_private_whitelist(whitelist).is_none() { return false; }
+    whitelist.split(|c: char| c == ',' || c == ';' || c.is_whitespace()).any(|entry| {
+        let (ip, prefix) = entry.split_once('/').unwrap_or((entry, "32"));
+        let (Ok(ip), Ok(prefix)) = (ip.parse::<Ipv4Addr>(), prefix.parse::<u32>()) else { return false; };
+        let mask = if prefix == 0 { 0 } else { u32::MAX << (32-prefix) };
+        u32::from(address) & mask == u32::from(ip) & mask
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_addresses_and_ports_respect_the_family_subnet() {
+        assert!(address_in_whitelist("192.168.50.2:21118","192.168.50.0/24"));
+        assert!(!address_in_whitelist("192.168.51.2:21118","192.168.50.0/24"));
+        assert!(!address_in_whitelist("192.168.50.2:65536","192.168.50.0/24"));
+        assert!(!address_in_whitelist("example.com","192.168.50.0/24"));
+    }
 
     #[test]
     fn only_rfc1918_rendezvous_servers_are_accepted() {

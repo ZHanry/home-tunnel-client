@@ -12,6 +12,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 _VALUE_RE = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("(?:\\.|[^"\\])*")\s*$')
@@ -208,6 +209,24 @@ def load_config(path: Path | None = None, repo_root: Path | None = None) -> Buil
         pure_lan_default=pure_lan_default,
     )
     _validate_server_net(server, net, source)
+    console = _read_sections(source, {"console"})["console"]
+    enabled = console.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("console.enabled 必须为布尔值")
+    if enabled:
+        url = urlsplit(_required_string(console, "console", "url", source))
+        try:
+            address = ipaddress.ip_address(url.hostname or "")
+            valid = isinstance(address, ipaddress.IPv4Address) and any(address in n for n in _PRIVATE_NETWORKS)
+            valid = valid and url.scheme == "http" and url.port is not None and url.port > 0
+            valid = valid and not url.username and not url.password and url.path in ("", "/") and not url.query and not url.fragment
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("console.url 必须是显式端口的内网 HTTP 地址")
+        token = _required_string(console, "console", "token", source)
+        if not 32 <= len(token) <= 256 or not all(33 <= ord(c) <= 126 for c in token) or "REPLACE_WITH" in token:
+            raise ValueError("console.token 必须为 32 至 256 位有效访问口令")
     return BuildConfig(brand=brand, server=server, net=net, source=source)
 
 

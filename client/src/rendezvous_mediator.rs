@@ -38,6 +38,7 @@ fn connection_meta(
     controlled_context: Option<ControlledContext>,
 ) -> ConnectionMeta {
     ConnectionMeta {
+        homedesk_relay: false, // HOMEDESK: 后续若进入中继入口，再设置真实连接类型。
         control_permissions,
         controlled_context,
     }

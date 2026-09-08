@@ -1,0 +1,4 @@
+# 使用经本机测试的 musl 静态产物；不下载基础镜像。
+FROM scratch
+COPY homedesk-console /homedesk-console
+ENTRYPOINT ["/homedesk-console"]

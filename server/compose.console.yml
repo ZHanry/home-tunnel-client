@@ -1,0 +1,21 @@
+# 在 Linux NAS 使用 host 网络，让 WOL 广播到达家庭网卡。
+# docker compose -f compose.yml -f compose.console.yml up -d --build
+services:
+  console:
+    build: ./console
+    image: homedesk/console:0.1.0
+    container_name: homedesk-console
+    network_mode: host
+    environment:
+      BIND_IP: ${HOMEDESK_BIND_IP:?请设置 NAS 内网地址}
+      PORT: "8080"
+      TOKEN: ${HOMEDESK_CONSOLE_TOKEN:?请设置 Console Token}
+      NET_CIDR: ${HOMEDESK_NET_CIDR:?请设置家庭网段}
+      RETENTION_DAYS: "90"
+      DB_PATH: /data/homedesk.sqlite3
+    volumes:
+      - ./console-data:/data
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

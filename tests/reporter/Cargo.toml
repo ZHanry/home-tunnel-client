@@ -1,0 +1,15 @@
+[package]
+name = "homedesk-reporter-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+reqwest = { version = "=0.12.24", default-features = false, features = ["json"] }
+serde_json = "=1.0.143"
+tokio = { version = "=1.47.1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "test-util"] }
+log = "=0.4.28"
+axum = "=0.8.4"
+
+[lib]
+path = "lib.rs"

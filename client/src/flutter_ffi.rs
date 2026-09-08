@@ -2645,6 +2645,7 @@ pub fn plugin_is_enabled(_id: String) -> SyncReturn<bool> {
 }
 
 pub fn plugin_feature_is_enabled() -> SyncReturn<bool> {
+    if crate::homedesk_config::public_services_disabled() { return SyncReturn(false); } // HOMEDESK: 家庭版不加载联网插件入口。
     #[cfg(feature = "plugin_framework")]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
