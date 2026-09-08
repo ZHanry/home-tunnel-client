@@ -78,6 +78,7 @@ jobs:
         $env:GOFLAGS = '-buildvcs=false'
         $moduleLock = Join-Path $env:GITHUB_WORKSPACE 'agent/frp-go.mod'
         $goBin = Join-Path (Get-Location) '.downloads\go-toolchain\go\bin'
+        $env:PATH = $goBin + [IO.Path]::PathSeparator + $env:PATH
         $frpRoot = Get-ChildItem (Join-Path '.downloads' 'frp-api-*') -Directory |
           ForEach-Object { Get-ChildItem $_.FullName -Directory } |
           Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'go.mod') } |
