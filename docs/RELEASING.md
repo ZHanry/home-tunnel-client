@@ -1,35 +1,28 @@
-# Independent client releases
+# 内部测试构建与发布
 
-Published 5.0.0 artifacts remain in the original project. The first release from this
-repository must use a new version greater than 5.0.0. Do not overwrite historical tags
-or replace already distributed binaries.
+当前阶段在 `compatibility.json` 中记录为 `internal-testing`。
+只在本仓库分发预发布测试包，不承担旧构建的长期升级桥接，也不要求沿用其他仓库的版本号。
+数字版本用于识别源码和产物；版本编号的大小不代表项目成熟度。
 
-## Release steps
+## 准备测试版本
 
-1. Update this component's source version and changelog. Leave sibling component versions alone.
-2. Update the compatibility record when new version pairs have passed integration tests.
-3. Merge to `main` and wait for its **Quality Gate** and security checks to pass.
-4. Tag that commit `vX.Y.Z-rc.N` and push the tag. `release.yml` builds the complete component
-   matrix once, retaining existing checksums, SBOMs and signing/provenance steps.
-5. Verify the published RC on supported real devices. Tag the exact same commit `vX.Y.Z`.
-   Stable verifies the RC manifest's identity, revision and every asset checksum, then
-   publishes those identical bytes. It does not rebuild or replace an existing release.
+1. 更新 `internal/model/model.go` 与打包脚本的客户端版本默认值。Agent 版本独立维护；修改 Agent 时重新验证资源版本和哈希。
+2. 更新开发记录，说明功能、接口或配置变化以及测试环境要求。
+3. 合入 `main`，等待相同提交的 Quality Gate、CodeQL 和秘密扫描通过。
+4. 给该提交创建 `vX.Y.Z-rc.N` 标签并推送。标签的基础版本需与本组件源码一致。
+5. 工作流构建、校验和签名完整产物，以 Pre-release 发布。真实设备验证后记录结果，需要修改时使用新标签。
 
-The aggregate checksum manifest is signed with GitHub OIDC. Verify it against this
-repository's `release.yml` identity and the **RC tag** recorded in `release-manifest.json`,
-including when downloading a stable release. Do not verify against the former monorepo
-workflow identity for newly built artifacts.
+源码中的基础版本可以从项目自己的起点规划；发布脚本没有“必须大于 5.0.0”的限制。
+不要为了调整展示编号直接复用已存在的标签或覆盖同名产物。
 
-Component versions are independent. API v1 is the current protocol boundary, not a
-guarantee that arbitrary future versions interoperate. Record and test supported pairs.
+## 产物校验
 
-## Client specifics
+保留每个产物的校验值、SBOM 和构建来源，聚合清单通过 GitHub OIDC 签名。
+验证时使用本仓库 `release.yml` 和清单中记录的 RC 标签身份。
+测试构建仍然执行权限、Agent 哈希和签名检查。
 
-Update `internal/model/model.go` and packaging version defaults together. The managed
-Agent has its own reviewed version in `agent/build-agent.ps1`; only change it when
-changing/rebuilding the Agent and verify its resource version and expected hash.
+## 正式发布准备
 
-The client updater now reads `ZHanry/home-tunnel-client/releases/latest`. After a stable
-client release, run the hub's `Mirror stable client release` workflow with the new version
-to preserve updates for installed 5.0.0 clients. The mirror keeps legacy 5.0.0 assets
-available for servers that link to fixed filenames under the old latest endpoint.
+当前状态会拒绝普通的 `vX.Y.Z` 稳定发布标签。只有完成真实环境验证、确定支持范围和更新方式后，
+才在经过审核的变更中将状态改为 `public-release`。
+届时稳定版本仍需提升相同提交、相同字节的已验证 RC，不能临时重建另一套产物。
