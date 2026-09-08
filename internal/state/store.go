@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
 )
 
 // ErrStateDamaged reports that the persisted state file could not be decoded

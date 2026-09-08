@@ -12,8 +12,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
 )
+
+func TestClientUpdateVersionIsIndependentOfAgent(t *testing.T) {
+	if got := currentVersion(Options{Version: "5.1.2", AgentVersion: "5.0.0"}); got != "5.1.2" {
+		t.Fatalf("client update used Agent version: %s", got)
+	}
+	if got := currentVersion(Options{AgentVersion: "4.0.0"}); got != model.Version {
+		t.Fatalf("default client version: %s", got)
+	}
+}
 
 func TestParseChecksum(t *testing.T) {
 	got := parseChecksum("abc123  HomeTunnel-Setup-5.0.0-x64.exe\n", "HomeTunnel-Setup-5.0.0-x64.exe")

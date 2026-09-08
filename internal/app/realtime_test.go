@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/api"
+	"github.com/ZHanry/home-tunnel-client/internal/api"
 )
 
 // Run itself needs a real agent binary (supervisor.Apply spawns it), so the

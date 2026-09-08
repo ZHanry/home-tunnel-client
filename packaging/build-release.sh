@@ -18,13 +18,13 @@ fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 client_dir=$(cd -- "$script_dir/.." && pwd)
-workspace_dir=$(cd -- "$client_dir/.." && pwd)
+workspace_dir="$client_dir"
 source_version=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' "$client_dir/internal/model/model.go")
 [[ "${version%%-rc.*}" == "$source_version" ]] || { echo "Linux client source version $source_version does not match release version $version" >&2; exit 1; }
 downloads_dir="$workspace_dir/.downloads"
 output_dir="$workspace_dir/outputs/linux"
 frp_version=0.70.1
-agent_version=$(tr -d '\r' < "$workspace_dir/windows-agent/build-agent.ps1" | sed -n 's/^\$agentVersion = "\([^"]*\)"$/\1/p')
+agent_version=$(tr -d '\r' < "$workspace_dir/agent/build-agent.ps1" | sed -n 's/^\$agentVersion = "\([^"]*\)"$/\1/p')
 [[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unable to read the independent Agent version" >&2; exit 1; }
 frp_commit=fa3bcca2b0c4753cd4f0e2ab189dd6a5a6a15708
 frp_archive="$downloads_dir/frp-$frp_commit.zip"
@@ -63,7 +63,7 @@ cleanup() {
   rm -rf -- "$temporary_command" "$stage"
 }
 trap cleanup EXIT INT TERM
-cp "$workspace_dir/windows-agent/main.go" "$temporary_command/main.go"
+cp "$workspace_dir/agent/main.go" "$temporary_command/main.go"
 
 mkdir -p "$stage/bin" "$stage/lib/systemd/system" "$stage/libexec"
 package_dir="$stage/home-tunnel-linux-$version-$architecture"

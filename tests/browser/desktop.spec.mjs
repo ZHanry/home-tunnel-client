@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
-  const root = new URL("../../linux-client/internal/gui/web/", import.meta.url);
+  const root = new URL("../../internal/gui/web/", import.meta.url);
   await page.route("**/desktop-preview", async (route) =>
     route.fulfill({
       contentType: "text/html",

@@ -12,10 +12,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
 )
 
-var githubLatestRelease = "https://api.github.com/repos/ZHanry/home-tunnel/releases/latest"
+var githubLatestRelease = "https://api.github.com/repos/ZHanry/home-tunnel-client/releases/latest"
 
 type githubRelease struct {
 	TagName string `json:"tag_name"`
@@ -27,8 +27,8 @@ type githubRelease struct {
 }
 
 func currentVersion(options Options) string {
-	if options.AgentVersion != "" && options.AgentVersion != "development" {
-		return options.AgentVersion
+	if options.Version != "" && options.Version != "development" {
+		return options.Version
 	}
 	return model.Version
 }

@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/desktop"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/gui"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/paths"
-	statepkg "github.com/ZHanry/home-tunnel/linux-client/internal/state"
+	"github.com/ZHanry/home-tunnel-client/internal/desktop"
+	"github.com/ZHanry/home-tunnel-client/internal/gui"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/paths"
+	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
 )
 
 var (
@@ -34,6 +34,7 @@ func main() {
 		log.Fatal(err)
 	}
 	server := gui.New(gui.Options{
+		Version:           version,
 		StatePath:         statePath,
 		AgentPath:         agentPath,
 		ExpectedAgentHash: expectedAgentSHA256,

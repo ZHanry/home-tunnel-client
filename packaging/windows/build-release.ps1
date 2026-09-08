@@ -10,24 +10,28 @@ Set-StrictMode -Version Latest
 
 $packagingDir = $PSScriptRoot
 $clientDir = Split-Path -Parent (Split-Path -Parent $packagingDir)
-$workspace = Split-Path -Parent $clientDir
+$workspace = $clientDir
 if (-not $OutputDir) {
     $OutputDir = Join-Path $workspace "outputs\windows"
 }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
-$agentScript = Join-Path $workspace "windows-agent\build-agent.ps1"
+$agentScript = Join-Path $workspace "agent\build-agent.ps1"
 $agentLines = if ($WindRes) {
     & $agentScript -WindRes $WindRes
 } else {
     & $agentScript
 }
 $agentLines | ForEach-Object { Write-Host $_ }
+$agentVersion = ($agentLines | Where-Object { $_ -like "AGENT_VERSION=*" } | Select-Object -First 1) -replace "^AGENT_VERSION=", ""
+if ($agentVersion -notmatch "^\d+\.\d+\.\d+$") {
+    throw "Agent version missing from build-agent.ps1"
+}
 $agentSha = ($agentLines | Where-Object { $_ -like "AGENT_SHA256=*" } | Select-Object -First 1) -replace "^AGENT_SHA256=", ""
 if ($agentSha -notmatch "^[0-9a-f]{64}$") {
     throw "Agent SHA-256 missing from build-agent.ps1"
 }
-$agentSource = Join-Path $workspace "windows-agent\assets\HomeTunnel.Agent.exe"
+$agentSource = Join-Path $workspace "agent\assets\HomeTunnel.Agent.exe"
 if (-not (Test-Path -LiteralPath $agentSource -PathType Leaf)) {
     throw "Agent executable was not produced"
 }
@@ -41,14 +45,14 @@ $agent = Join-Path $OutputDir "home-tunnel-agent.exe"
 Push-Location $clientDir
 try {
     go build -trimpath `
-        -ldflags "-s -w -H windowsgui -buildid= -X main.version=$Version -X main.expectedAgentSHA256=$agentSha" `
+        -ldflags "-s -w -H windowsgui -buildid= -X main.version=$Version -X main.agentVersion=$agentVersion -X main.expectedAgentSHA256=$agentSha" `
         -o $gui ./cmd/home-tunnel-gui
 }
 finally {
     Pop-Location
 }
 Copy-Item -LiteralPath $agentSource -Destination $agent -Force
-$icon = Join-Path $workspace "windows-agent\assets\HomeTunnel.ico"
+$icon = Join-Path $workspace "agent\assets\HomeTunnel.ico"
 Copy-Item -LiteralPath $icon -Destination (Join-Path $OutputDir "HomeTunnel.ico") -Force
 
 $payloadDir = Join-Path $clientDir "cmd\home-tunnel-setup\payload"

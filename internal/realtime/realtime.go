@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
 )
 
 const (

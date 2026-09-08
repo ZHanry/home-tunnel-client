@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 
 $clientDir = $PSScriptRoot
 $workspaceDir = Split-Path -Parent $clientDir
-$agentSourceDir = Join-Path $workspaceDir "windows-agent"
+$agentSourceDir = Join-Path $workspaceDir "agent"
 $toolsDir = Join-Path $workspaceDir ".downloads\go-toolchain"
 $goExe = Join-Path $toolsDir "go\bin\go.exe"
 $goVersion = "1.26.6"

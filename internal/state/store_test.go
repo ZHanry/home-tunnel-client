@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
 )
 
 func TestStoreRoundTripProtectsCredentialFile(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
 )
 
 func TestRenderConfigMatchesManagedSurface(t *testing.T) {
@@ -22,7 +22,7 @@ func TestRenderConfigMatchesManagedSurface(t *testing.T) {
 			MustNotContain []string `json:"must_not_contain"`
 		} `json:"frpc_render"`
 	}
-	contractPath := filepath.Join("..", "..", "..", "contracts", "home-tunnel.v1.json")
+	contractPath := filepath.Join("..", "..", "contracts", "home-tunnel.v1.json")
 	fixture, err := os.ReadFile(contractPath)
 	if err != nil {
 		t.Fatalf("read shared contract fixture: %v", err)

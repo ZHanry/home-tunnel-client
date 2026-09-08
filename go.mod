@@ -1,4 +1,4 @@
-module github.com/ZHanry/home-tunnel/linux-client
+module github.com/ZHanry/home-tunnel-client
 
 go 1.26.0
 

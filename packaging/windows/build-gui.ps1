@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $clientDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $OutputDir) {
-    $OutputDir = Join-Path (Split-Path -Parent $clientDir) "outputs\windows"
+    $OutputDir = Join-Path $clientDir "outputs\windows"
 }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $env:CGO_ENABLED = "0"

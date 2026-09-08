@@ -3,13 +3,13 @@ set -Eeuo pipefail
 
 # Builds the macOS (darwin) release archive of the headless client. Mirrors
 # ../build-release.sh: it cross-compiles both the client and the managed
-# Agent (from the pinned FRP source plus windows-agent/main.go) for darwin,
+# Agent (from the pinned FRP source plus agent/main.go) for darwin,
 # so it runs on any build host with Go; only the optional version self-check
 # requires a matching macOS host.
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 client_dir=$(cd -- "$script_dir/../.." && pwd)
-workspace_dir=$(cd -- "$client_dir/.." && pwd)
+workspace_dir="$client_dir"
 source_version=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' "$client_dir/internal/model/model.go")
 [[ -n "$source_version" ]] || { echo "unable to read Version from internal/model/model.go" >&2; exit 1; }
 # The default comes straight from the source of truth so this script adds no
@@ -48,7 +48,7 @@ hash_file() {
 downloads_dir="$workspace_dir/.downloads"
 output_dir="$workspace_dir/outputs/macos"
 frp_version=0.70.1
-agent_version=$(tr -d '\r' < "$workspace_dir/windows-agent/build-agent.ps1" | sed -n 's/^\$agentVersion = "\([^"]*\)"$/\1/p')
+agent_version=$(tr -d '\r' < "$workspace_dir/agent/build-agent.ps1" | sed -n 's/^\$agentVersion = "\([^"]*\)"$/\1/p')
 [[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unable to read the independent Agent version" >&2; exit 1; }
 frp_commit=fa3bcca2b0c4753cd4f0e2ab189dd6a5a6a15708
 frp_archive="$downloads_dir/frp-$frp_commit.zip"
@@ -87,7 +87,7 @@ cleanup() {
   rm -rf -- "$temporary_command" "$stage"
 }
 trap cleanup EXIT INT TERM
-cp "$workspace_dir/windows-agent/main.go" "$temporary_command/main.go"
+cp "$workspace_dir/agent/main.go" "$temporary_command/main.go"
 
 package_dir="$stage/home-tunnel-macos-$version-$architecture"
 mkdir -p "$package_dir/bin" "$package_dir/lib" "$package_dir/Library/LaunchDaemons" "$package_dir/libexec"

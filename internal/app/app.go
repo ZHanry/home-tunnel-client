@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/agent"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/api"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
-	statepkg "github.com/ZHanry/home-tunnel/linux-client/internal/state"
+	"github.com/ZHanry/home-tunnel-client/internal/agent"
+	"github.com/ZHanry/home-tunnel-client/internal/api"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
+	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
 )
 
 var ErrRevoked = errors.New("account or device was revoked")

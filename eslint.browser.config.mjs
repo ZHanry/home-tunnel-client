@@ -1,5 +1,5 @@
-import eslint from "./control-center/node_modules/@eslint/js/src/index.js";
-import globals from "./control-center/node_modules/globals/index.js";
+import eslint from "@eslint/js";
+import globals from "globals";
 
 export default [{
   files: ["**/*.js"],

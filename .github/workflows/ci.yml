@@ -1,0 +1,220 @@
+name: Client CI
+'on':
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  merge_group: null
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-client:
+    name: Desktop GUI client
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+        cache-dependency-path: go.mod
+    - name: Test shared Go client
+      run: go test ./...
+    - name: Build unified desktop GUI
+      run: |
+        go build ./cmd/home-tunnel-client
+        go build -ldflags "-H windowsgui" ./cmd/home-tunnel-gui
+  windows-agent:
+    name: Windows agent official baseline
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Install pinned windres (mingw binutils)
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $archive = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0.7z'
+        $extract = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0'
+        Invoke-WebRequest -Headers @{
+          Accept = 'application/octet-stream'
+          Authorization = "Bearer $env:GH_TOKEN"
+          'X-GitHub-Api-Version' = '2022-11-28'
+        } -Uri 'https://api.github.com/repos/niXman/mingw-builds-binaries/releases/assets/412720050' -OutFile $archive
+        $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $expected = 'ecaceb42639d21c695f875800a29b2dea76bbb05eb2a1cca3049b65499b8d867'
+        if ($actual -ne $expected) { throw "MinGW archive checksum mismatch: $actual" }
+        & 7z x $archive "-o$extract" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'MinGW extraction failed' }
+        $windres = Get-ChildItem -LiteralPath $extract -Recurse -Filter windres.exe -File |
+          Select-Object -First 1 -ExpandProperty FullName
+        if (-not $windres) { throw 'windres.exe not found in the pinned MinGW archive' }
+        "HOME_TUNNEL_WINDRES=$windres" >> $env:GITHUB_ENV
+    - name: Build official agent baseline
+      shell: pwsh
+      run: |
+        $lines = & .\agent\build-agent.ps1 -WindRes $env:HOME_TUNNEL_WINDRES
+        $lines | Write-Output
+        $sha = ($lines | Where-Object { $_ -like 'AGENT_SHA256=*' } | Select-Object -First 1) -replace '^AGENT_SHA256=', ''
+        if ($sha -notmatch '^[0-9a-f]{64}$') { throw 'AGENT_SHA256 line missing from build-agent.ps1 output' }
+        $expectedSha = (Get-Content -Raw -LiteralPath .\agent\expected-sha256.txt).Trim()
+        if ($sha -ne $expectedSha) { throw "Agent baseline hash mismatch: built=$sha expected=$expectedSha" }
+        $lines | Where-Object { $_ -match '^(AGENT_VERSION|FRP_VERSION|FRP_COMMIT|AGENT_SHA256)=' } |
+          Set-Content -LiteralPath agent-baseline.txt
+        '## Home Tunnel Agent official baseline' >> $env:GITHUB_STEP_SUMMARY
+        '' >> $env:GITHUB_STEP_SUMMARY
+        "``AGENT_SHA256=$sha``" >> $env:GITHUB_STEP_SUMMARY
+        '' >> $env:GITHUB_STEP_SUMMARY
+        '该哈希已与 agent/expected-sha256.txt 核验一致。' >> $env:GITHUB_STEP_SUMMARY
+    - name: Run Agent Go and vulnerability checks inside the pinned FRP tree
+      shell: pwsh
+      run: |
+        $env:GOFLAGS = '-buildvcs=false'
+        $goBin = Join-Path (Get-Location) '.downloads\go-toolchain\go\bin'
+        $frpRoot = Get-ChildItem (Join-Path '.downloads' 'frp-api-*') -Directory |
+          ForEach-Object { Get-ChildItem $_.FullName -Directory } |
+          Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'go.mod') } |
+          Select-Object -First 1
+        if (-not $frpRoot) { throw 'pinned FRP source tree not found under .downloads' }
+        $agentCmd = Join-Path $frpRoot.FullName 'cmd\home-tunnel-agent'
+        New-Item -ItemType Directory -Force $agentCmd | Out-Null
+        Copy-Item agent\main.go, agent\main_test.go $agentCmd
+        try {
+          $unformatted = & (Join-Path $goBin 'gofmt.exe') -l (Join-Path $agentCmd 'main.go') (Join-Path $agentCmd 'main_test.go')
+          if ($unformatted) { throw "gofmt found unformatted agent files: $unformatted" }
+          Push-Location $frpRoot.FullName
+          try {
+            & (Join-Path $goBin 'go.exe') vet ./cmd/home-tunnel-agent/
+            if ($LASTEXITCODE -ne 0) { throw 'agent go vet failed' }
+            & (Join-Path $goBin 'go.exe') test -count=1 ./cmd/home-tunnel-agent/
+            if ($LASTEXITCODE -ne 0) { throw 'agent go test failed' }
+            & (Join-Path $goBin 'go.exe') run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./cmd/home-tunnel-agent/
+            if ($LASTEXITCODE -ne 0) { throw 'agent govulncheck failed' }
+          }
+          finally {
+            Pop-Location
+          }
+        }
+        finally {
+          Remove-Item -LiteralPath $agentCmd -Recurse -Force
+        }
+    - name: Upload agent baseline artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: home-tunnel-agent-baseline
+        path: |
+          agent/assets/HomeTunnel.Agent.exe
+          agent-baseline.txt
+        if-no-files-found: error
+  macos-gui:
+    name: macOS graphical client
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+        cache-dependency-path: go.mod
+    - name: Test shared Go client
+      run: go test ./...
+    - name: Build native macOS GUI
+      run: CGO_ENABLED=1 go build ./cmd/home-tunnel-gui ./cmd/home-tunnel-client
+  dependency-review:
+    name: Dependency Review
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+      with:
+        fail-on-severity: moderate
+  linux:
+    name: Linux GUI and CLI
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+        cache-dependency-path: go.mod
+    - name: Install pinned Go analysis tools
+      run: |
+        go install honnef.co/go/tools/cmd/staticcheck@2026.1
+        go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+    - name: Install desktop GUI libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config gcc
+    - name: Test Linux client
+      run: go test -race ./...
+    - name: Vet Linux client
+      run: go vet ./...
+    - name: Staticcheck Linux client
+      run: staticcheck ./...
+    - name: Audit Linux client vulnerabilities
+      run: govulncheck ./...
+    - name: Build Linux client controller
+      run: CGO_ENABLED=0 go build ./cmd/home-tunnel-client
+    - name: Build Linux graphical client
+      run: CGO_ENABLED=1 go build ./cmd/home-tunnel-gui
+    - name: Check release packaging scripts
+      run: |
+        bash -n \
+          packaging/build-release.sh \
+          packaging/install.sh \
+          packaging/home-tunnel-enroll \
+          packaging/macos/build-release.sh \
+          packaging/macos/install.sh \
+          packaging/macos/home-tunnel-enroll
+  browser:
+    name: Desktop browser tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.19.0
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      with:
+        version: 11.16.0
+    - run: |-
+        pnpm install --frozen-lockfile
+        pnpm run lint
+        pnpm exec playwright install --with-deps chromium
+        pnpm run test:browser
+  repository:
+    name: Repository boundaries
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - run: python3 scripts/check-repository.py
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs:
+    - windows-client
+    - windows-agent
+    - macos-gui
+    - dependency-review
+    - linux
+    - browser
+    - repository
+    steps:
+    - name: Require all component checks
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: |
+        python3 - <<'PY'
+        import json, os
+        results = json.loads(os.environ['RESULTS'])
+        failed = {k:v['result'] for k,v in results.items() if v['result'] != 'success' and not (k == 'dependency-review' and v['result'] == 'skipped')}
+        if failed: raise SystemExit(str(failed))
+        print('All component checks passed')
+        PY

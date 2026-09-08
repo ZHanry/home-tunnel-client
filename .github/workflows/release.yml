@@ -1,0 +1,371 @@
+name: Release client
+'on':
+  push:
+    tags:
+    - v*
+permissions:
+  contents: write
+  checks: read
+  packages: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+  actions: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  metadata:
+    name: Validate component tag and CI
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      base-version: ${{ steps.version.outputs.base-version }}
+      stable: ${{ steps.version.outputs.stable }}
+      rc-version: ${{ steps.version.outputs.rc-version }}
+      rc-tag: ${{ steps.version.outputs.rc-tag }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+    - id: version
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python3 scripts/release.py metadata
+  agent-evidence:
+    name: Windows x64 GUI package and Agent evidence
+    if: needs.metadata.outputs.stable != 'true'
+    needs: metadata
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+    - name: Install pinned windres (mingw binutils)
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $archive = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0.7z'
+        $extract = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0'
+        Invoke-WebRequest -Headers @{
+          Accept = 'application/octet-stream'
+          Authorization = "Bearer $env:GH_TOKEN"
+          'X-GitHub-Api-Version' = '2022-11-28'
+        } -Uri 'https://api.github.com/repos/niXman/mingw-builds-binaries/releases/assets/412720050' -OutFile $archive
+        $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $expected = 'ecaceb42639d21c695f875800a29b2dea76bbb05eb2a1cca3049b65499b8d867'
+        if ($actual -ne $expected) { throw "MinGW archive checksum mismatch: $actual" }
+        & 7z x $archive "-o$extract" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'MinGW extraction failed' }
+        $windres = Get-ChildItem -LiteralPath $extract -Recurse -Filter windres.exe -File |
+          Select-Object -First 1 -ExpandProperty FullName
+        if (-not $windres) { throw 'windres.exe not found in the pinned MinGW archive' }
+        "HOME_TUNNEL_WINDRES=$windres" >> $env:GITHUB_ENV
+    - id: agent
+      name: Reproduce the reviewed Agent baseline
+      shell: pwsh
+      run: |
+        $lines = & .\agent\build-agent.ps1 -WindRes $env:HOME_TUNNEL_WINDRES
+        $lines | Write-Output
+        $agentVersion = ($lines | Where-Object { $_ -like 'AGENT_VERSION=*' } | Select-Object -First 1) -replace '^AGENT_VERSION=', ''
+        $frpVersion = ($lines | Where-Object { $_ -like 'FRP_VERSION=*' } | Select-Object -First 1) -replace '^FRP_VERSION=', ''
+        $frpCommit = ($lines | Where-Object { $_ -like 'FRP_COMMIT=*' } | Select-Object -First 1) -replace '^FRP_COMMIT=', ''
+        $sha = ($lines | Where-Object { $_ -like 'AGENT_SHA256=*' } | Select-Object -First 1) -replace '^AGENT_SHA256=', ''
+        if ($sha -notmatch '^[0-9a-f]{64}$') { throw 'Agent SHA-256 is missing' }
+        $expectedSha = (Get-Content -Raw -LiteralPath .\agent\expected-sha256.txt).Trim()
+        if ($sha -ne $expectedSha) { throw "Agent baseline hash mismatch: built=$sha expected=$expectedSha" }
+        "agent_version=$agentVersion" >> $env:GITHUB_OUTPUT
+        "frp_version=$frpVersion" >> $env:GITHUB_OUTPUT
+        "frp_commit=$frpCommit" >> $env:GITHUB_OUTPUT
+        "sha256=$sha" >> $env:GITHUB_OUTPUT
+    - name: Write protected build evidence
+      shell: pwsh
+      env:
+        AGENT_VERSION: ${{ steps.agent.outputs.agent_version }}
+        FRP_VERSION: ${{ steps.agent.outputs.frp_version }}
+        FRP_COMMIT: ${{ steps.agent.outputs.frp_commit }}
+        AGENT_SHA256: ${{ steps.agent.outputs.sha256 }}
+      run: |
+        $evidence = [ordered]@{
+          schema_version = 1
+          agent_version = $env:AGENT_VERSION
+          frp_version = $env:FRP_VERSION
+          frp_commit = $env:FRP_COMMIT
+          sha256 = $env:AGENT_SHA256
+          repository_revision = $env:GITHUB_SHA
+          build_identity = "https://github.com/$env:GITHUB_REPOSITORY/.github/workflows/release-images.yml@refs/tags/$env:GITHUB_REF_NAME"
+          distribution = "bundled in HomeTunnel-Windows-<version>-x64.zip with home-tunnel-gui"
+          authenticode = "not used; Windows GUI is an unsigned Go zip"
+        }
+        [IO.File]::WriteAllText(
+          (Join-Path (Get-Location) 'agent-provenance.json'),
+          ($evidence | ConvertTo-Json -Depth 3) + "`n",
+          [Text.UTF8Encoding]::new($false)
+        )
+    - id: windows
+      name: Build the unified Windows GUI zip
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.base-version }}
+      run: |
+        $lines = & .\packaging\windows\build-release.ps1 -Version $env:VERSION -WindRes $env:HOME_TUNNEL_WINDRES
+        $lines | Write-Output
+        $zip = ($lines | Where-Object { $_ -like 'ZIP=*' } |
+          Select-Object -First 1) -replace '^ZIP=', ''
+        $sha = ($lines | Where-Object { $_ -like 'ZIP_SHA256=*' } |
+          Select-Object -First 1) -replace '^ZIP_SHA256=', ''
+        if (-not (Test-Path -LiteralPath $zip -PathType Leaf) -or
+            $sha -notmatch '^[0-9a-f]{64}$') {
+          throw 'Windows GUI zip or SHA-256 is missing'
+        }
+        $inspect = Join-Path $env:RUNNER_TEMP 'home-tunnel-package-smoke'
+        Expand-Archive -LiteralPath $zip -DestinationPath $inspect -Force
+        foreach ($name in @('home-tunnel-gui.exe','home-tunnel-agent.exe','HomeTunnel.ico')) {
+          if (-not (Test-Path -LiteralPath (Join-Path $inspect $name))) { throw "Missing packaged file: $name" }
+        }
+        $agentVersionText = (& (Join-Path $inspect 'home-tunnel-agent.exe') version | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $agentVersionText -notlike "Home Tunnel Agent $env:VERSION*") { throw 'Packaged Agent version mismatch' }
+        $smoke = [ordered]@{
+          schema_version = 1
+          status = 'passed'
+          version = $env:VERSION
+          platform = 'windows'
+          architecture = 'x64'
+          package_sha256 = $sha
+          archive_layout = 'passed'
+          agent_version_checked = $true
+          client = 'home-tunnel-gui'
+          repository_revision = $env:GITHUB_SHA
+        }
+        [IO.File]::WriteAllText(
+          (Join-Path (Get-Location) 'windows-exe-smoke.json'),
+          ($smoke | ConvertTo-Json -Depth 3) + [Environment]::NewLine,
+          [Text.UTF8Encoding]::new($false)
+        )
+        "installer=$zip" >> $env:GITHUB_OUTPUT
+        "checksum=$zip.sha256" >> $env:GITHUB_OUTPUT
+        "sbom=$zip.spdx.json" >> $env:GITHUB_OUTPUT
+    - name: Generate Windows SPDX SBOM
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+      with:
+        path: outputs/windows
+        format: spdx-json
+        output-file: ${{ steps.windows.outputs.sbom }}
+        upload-artifact: false
+        upload-release-assets: false
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - name: Keyless-sign Windows package evidence
+      shell: pwsh
+      env:
+        INSTALLER: ${{ steps.windows.outputs.installer }}
+        CHECKSUM: ${{ steps.windows.outputs.checksum }}
+        SBOM: ${{ steps.windows.outputs.sbom }}
+      run: |
+        cosign sign-blob --yes --bundle agent-provenance.json.sigstore.json agent-provenance.json
+        foreach ($subject in @($env:INSTALLER, $env:CHECKSUM, $env:SBOM)) {
+          cosign sign-blob --yes --bundle "$subject.sigstore.json" "$subject"
+          if ($LASTEXITCODE -ne 0) { throw "Sigstore signing failed for $subject" }
+        }
+    - name: Attest the reproduced Agent executable
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: agent/assets/HomeTunnel.Agent.exe
+    - name: Attest the public Agent evidence
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: agent-provenance.json
+    - name: Publish GitHub Windows EXE provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.windows.outputs.installer }}
+    - name: Publish GitHub Windows EXE SBOM attestation
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.windows.outputs.installer }}
+        sbom-path: ${{ steps.windows.outputs.sbom }}
+    - name: Stage the public Windows asset set
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force release-windows | Out-Null
+        Get-ChildItem -LiteralPath outputs\windows -File |
+          Where-Object { $_.Name -like '*.zip*' -or $_.Name -like 'HomeTunnel-Setup-*' } |
+          Copy-Item -Destination release-windows
+        Copy-Item windows-exe-smoke.json, agent-provenance.json, agent-provenance.json.sigstore.json release-windows
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-release
+        path: release-windows/*
+        if-no-files-found: error
+  client-packages:
+    name: Client package (${{ matrix.platform }}-${{ matrix.arch }})
+    if: needs.metadata.outputs.stable != 'true'
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - platform: linux
+          arch: amd64
+          runner: ubuntu-latest
+          script: ./packaging/build-release.sh
+        - platform: linux
+          arch: arm64
+          runner: ubuntu-24.04-arm
+          script: ./packaging/build-release.sh
+        - platform: macos
+          arch: amd64
+          runner: macos-latest
+          script: ./packaging/macos/build-release.sh
+        - platform: macos
+          arch: arm64
+          runner: macos-latest
+          script: ./packaging/macos/build-release.sh
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+        cache-dependency-path: go.mod
+    - name: Install Linux graphical client libraries
+      if: matrix.platform == 'linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config gcc
+    - name: Build package once from the tagged commit
+      shell: bash
+      env:
+        VERSION: ${{ needs.metadata.outputs.base-version }}
+        ARCH: ${{ matrix.arch }}
+      run: ${{ matrix.script }}
+    - id: artifact
+      name: Verify package layout and select outputs
+      shell: bash
+      env:
+        PLATFORM: ${{ matrix.platform }}
+        VERSION: ${{ needs.metadata.outputs.base-version }}
+        ARCH: ${{ matrix.arch }}
+      run: |
+        set -euo pipefail
+        archive="outputs/$PLATFORM/home-tunnel-$PLATFORM-$VERSION-$ARCH.tar.gz"
+        checksum="outputs/$PLATFORM/home-tunnel-$PLATFORM-$VERSION-$ARCH.sha256"
+        test -s "$archive" && test -s "$checksum"
+        (cd "$(dirname "$archive")" && shasum -a 256 -c "$(basename "$checksum")")
+        listing=$(tar -tzf "$archive")
+        grep -q '/bin/home-tunnel-client$' <<< "$listing"
+        grep -q '/lib/home-tunnel-agent$' <<< "$listing"
+        if [ "$PLATFORM" = linux ]; then
+          grep -q '/lib/systemd/system/home-tunnel-client.service$' <<< "$listing"
+        else
+          grep -q '/Library/LaunchDaemons/com.hometunnel.client.plist$' <<< "$listing"
+        fi
+        mkdir -p package-scan
+        tar -xzf "$archive" -C package-scan
+        {
+          echo "archive=$archive"
+          echo "checksum=$checksum"
+          echo "sbom=$archive.spdx.json"
+        } >> "$GITHUB_OUTPUT"
+    - name: Generate SPDX SBOM
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+      with:
+        path: package-scan
+        format: spdx-json
+        output-file: ${{ steps.artifact.outputs.sbom }}
+        upload-artifact: false
+        upload-release-assets: false
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - name: Keyless-sign package, checksum, and SBOM
+      shell: bash
+      env:
+        ARCHIVE: ${{ steps.artifact.outputs.archive }}
+        CHECKSUM: ${{ steps.artifact.outputs.checksum }}
+        SBOM: ${{ steps.artifact.outputs.sbom }}
+      run: |
+        set -euo pipefail
+        for subject in "$ARCHIVE" "$CHECKSUM" "$SBOM"; do
+          cosign sign-blob --yes --bundle "$subject.sigstore.json" "$subject"
+        done
+    - name: Publish GitHub package provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.artifact.outputs.archive }}
+    - name: Publish GitHub package SBOM attestation
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.artifact.outputs.archive }}
+        sbom-path: ${{ steps.artifact.outputs.sbom }}
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: client-${{ matrix.platform }}-${{ matrix.arch }}
+        path: |
+          ${{ steps.artifact.outputs.archive }}
+          ${{ steps.artifact.outputs.checksum }}
+          ${{ steps.artifact.outputs.sbom }}
+          ${{ steps.artifact.outputs.archive }}.sigstore.json
+          ${{ steps.artifact.outputs.checksum }}.sigstore.json
+          ${{ steps.artifact.outputs.sbom }}.sigstore.json
+        if-no-files-found: error
+  collect:
+    name: Collect complete component artifact set
+    runs-on: ubuntu-latest
+    if: needs.metadata.outputs.stable != 'true'
+    needs:
+    - metadata
+    - agent-evidence
+    - client-packages
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: windows-release
+        path: release
+        merge-multiple: true
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: client-*
+        path: release
+        merge-multiple: true
+    - env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python3 scripts/release.py seal
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: candidate-assets
+        path: release/*
+        if-no-files-found: error
+  rc-release:
+    name: Publish component RC
+    runs-on: ubuntu-latest
+    if: needs.metadata.outputs.stable != 'true'
+    needs:
+    - metadata
+    - collect
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: candidate-assets
+        path: release
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - name: Seal and publish verified RC
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |-
+        python3 scripts/release.py seal
+        cosign sign-blob --yes --bundle release/SHA256SUMS.txt.sigstore.json release/SHA256SUMS.txt
+        python3 scripts/release.py rc
+  stable-release:
+    name: Promote identical signed RC bytes
+    runs-on: ubuntu-latest
+    if: needs.metadata.outputs.stable == 'true'
+    needs: metadata
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RC_TAG: ${{ needs.metadata.outputs.rc-tag }}
+      run: python3 scripts/release.py stable

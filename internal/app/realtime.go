@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/api"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/realtime"
+	"github.com/ZHanry/home-tunnel-client/internal/api"
+	"github.com/ZHanry/home-tunnel-client/internal/realtime"
 )
 
 const (

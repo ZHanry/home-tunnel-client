@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/api"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/app"
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
-	statepkg "github.com/ZHanry/home-tunnel/linux-client/internal/state"
+	"github.com/ZHanry/home-tunnel-client/internal/api"
+	"github.com/ZHanry/home-tunnel-client/internal/app"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
+	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
 )
 
 var (

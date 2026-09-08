@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ZHanry/home-tunnel/linux-client/internal/model"
-	statepkg "github.com/ZHanry/home-tunnel/linux-client/internal/state"
+	"github.com/ZHanry/home-tunnel-client/internal/model"
+	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
 )
 
 func TestEnrollPersistsDeviceCredentialWithoutPassword(t *testing.T) {
