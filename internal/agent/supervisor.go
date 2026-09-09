@@ -144,6 +144,7 @@ func (supervisor *Supervisor) Apply(ctx context.Context, state *model.State, syn
 	verifyContext, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	verify := exec.CommandContext(verifyContext, supervisor.agentPath, supervisor.arguments("verify", pending)...)
+	configureAgentProcess(verify)
 	output, err := verify.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("agent rejected configuration: %w: %s", err, sanitizeOutput(output))
@@ -299,9 +300,10 @@ func (supervisor *Supervisor) stopProcess() error {
 
 func (supervisor *Supervisor) start(configPath string, applying bool) (*processRecord, error) {
 	command := exec.Command(supervisor.agentPath, supervisor.arguments("run", configPath)...)
+	configureAgentProcess(command)
 	command.Dir = supervisor.runtimeDir
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
+	command.Stdout = log.Writer()
+	command.Stderr = log.Writer()
 	if err := command.Start(); err != nil {
 		return nil, err
 	}

@@ -27,6 +27,7 @@ var (
 	procSetWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
 	procCallWindowProc   = user32.NewProc("CallWindowProcW")
 	procMessageBoxW      = user32.NewProc("MessageBoxW")
+	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
 )
 
 var (
@@ -36,12 +37,22 @@ var (
 )
 
 func createNativeWindow(url string) error {
+	screenWidth, _, _ := procGetSystemMetrics.Call(0)
+	screenHeight, _, _ := procGetSystemMetrics.Call(1)
+	width, height := uint(1120), uint(780)
+	if screenWidth > 128 {
+		width = min(width, uint(screenWidth)-64)
+	}
+	if screenHeight > 192 {
+		height = min(height, uint(screenHeight)-96)
+	}
 	view := webview2.NewWithOptions(webview2.WebViewOptions{
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "Home Tunnel",
-			Width:  520,
-			Height: 820,
+			Width:  width,
+			Height: height,
+			IconId: 1,
 			Center: true,
 		},
 	})

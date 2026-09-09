@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -32,6 +33,18 @@ func main() {
 	agentPath := paths.DesktopAgentPath()
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
 		log.Fatal(err)
+	}
+	// GUI builds do not have console handles. Keep diagnostics in a private file
+	// instead of asking Windows to allocate a terminal for the managed child.
+	log.SetOutput(io.Discard)
+	logPath := filepath.Join(filepath.Dir(statePath), "desktop.log")
+	if info, err := os.Stat(logPath); err == nil && info.Size() > 4*1024*1024 {
+		_ = os.Remove(logPath + ".previous")
+		_ = os.Rename(logPath, logPath+".previous")
+	}
+	if logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+		log.SetOutput(logFile)
+		defer logFile.Close()
 	}
 	server := gui.New(gui.Options{
 		Version:           version,

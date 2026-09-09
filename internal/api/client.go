@@ -274,9 +274,14 @@ func (client *Client) ListDevices(ctx context.Context) ([]model.Device, error) {
 }
 
 func (client *Client) ListConnections(ctx context.Context) ([]model.Connection, error) {
+	catalog, err := client.ListConnectionCatalog(ctx)
+	return catalog.Items, err
+}
+
+func (client *Client) ListConnectionCatalog(ctx context.Context) (model.ConnectionCatalog, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	var payload itemList[model.Connection]
+	var payload model.ConnectionCatalog
 	err := client.authJSON(ctx, http.MethodGet, "client/connections", nil, &payload)
 	if err == nil && client.deviceID != "" {
 		local := make([]model.Connection, 0, len(payload.Items))
@@ -285,19 +290,30 @@ func (client *Client) ListConnections(ctx context.Context) ([]model.Connection, 
 				local = append(local, item)
 			}
 		}
-		return local, nil
+		payload.Items = local
 	}
-	return payload.Items, err
+	return payload, err
 }
 
 func (client *Client) CreateHTTPConnection(ctx context.Context, deviceID, name, subdomain, scheme, host string, port int, enabled bool) (model.Connection, error) {
+	return client.CreateConnection(ctx, deviceID, name, subdomain, scheme, host, port, enabled, "http", "")
+}
+
+func (client *Client) CreateConnection(ctx context.Context, deviceID, name, subdomain, scheme, host string, port int, enabled bool, proxyType, applicationProtocol string) (model.Connection, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	var created model.Connection
-	err := client.authJSON(ctx, http.MethodPost, "client/connections", map[string]any{
-		"device_id": deviceID, "name": name, "subdomain": subdomain, "proxy_type": "http",
+	payload := map[string]any{
+		"device_id": deviceID, "name": name, "proxy_type": proxyType,
 		"local_scheme": scheme, "local_host": host, "local_port": port, "enabled": enabled,
-	}, &created)
+	}
+	if proxyType == "http" {
+		payload["subdomain"] = subdomain
+	}
+	if applicationProtocol != "" {
+		payload["application_protocol"] = applicationProtocol
+	}
+	err := client.authJSON(ctx, http.MethodPost, "client/connections", payload, &created)
 	return created, err
 }
 

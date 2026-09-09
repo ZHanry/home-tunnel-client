@@ -2,9 +2,11 @@
   <img src="docs/assets/HomeTunnel.svg" alt="Home Tunnel" width="72" height="72">
   <h1>Home Tunnel Client</h1>
   <p><strong>专注于本机服务的桌面与命令行客户端</strong></p>
-  <p><a href="https://github.com/ZHanry/home-tunnel-client/releases/latest"><img src="https://img.shields.io/badge/release-6.0.1-176653" alt="Release 6.0.1"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a></p>
+  <p><a href="https://github.com/ZHanry/home-tunnel-client/releases/latest"><img src="https://img.shields.io/badge/release-6.1.0-176653" alt="Release 6.1.0"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a></p>
   <p><a href="README.en.md">English</a> · <a href="https://zhanry.github.io/home-tunnel/">项目网站</a></p>
 </div>
+
+6.1.0 补齐 Windows 无控制台启动、程序图标和 TCP/UDP／RTSP 创建流程。[连接类型与使用条件](docs/CONNECTION_TYPES.md)。
 
 Windows 6.0.0 EXE 已因 Defender 告警撤下。6.0.1 改用标准安装器并增加实际杀毒扫描与安装验证；说明见 [Windows 发布检查](docs/WINDOWS_RELEASE_CHECKS.md)。
 
@@ -16,9 +18,9 @@ Windows 6.0.0 EXE 已因 Defender 告警撤下。6.0.1 改用标准安装器并�
 
 | 平台 | 文件 |
 | --- | --- |
-| Windows x64 | `HomeTunnel-Setup-6.0.1-x64.exe`；便携版为 `.zip` |
-| Linux amd64 / arm64 | `home-tunnel-linux-6.0.1-<架构>.tar.gz` |
-| macOS Intel / Apple Silicon | `home-tunnel-macos-6.0.1-amd64.tar.gz` / `arm64.tar.gz` |
+| Windows x64 | `HomeTunnel-Setup-6.1.0-x64.exe`；便携版为 `.zip` |
+| Linux amd64 / arm64 | `home-tunnel-linux-6.1.0-<架构>.tar.gz` |
+| macOS Intel / Apple Silicon | `home-tunnel-macos-6.1.0-amd64.tar.gz` / `arm64.tar.gz` |
 
 安装器或解压后的安装脚本会部署完整客户端及 Agent。`SHA256SUMS.txt` 提供安装文件校验值。首次运行填写自己的控制台地址、用户名与密码，设备会自动登记。
 

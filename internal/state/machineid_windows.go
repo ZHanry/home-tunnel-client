@@ -3,20 +3,20 @@
 package state
 
 import (
-	"os/exec"
 	"strings"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 func readMachineID() string {
-	output, err := exec.Command("reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid").Output()
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Cryptography`, registry.QUERY_VALUE|registry.WOW64_64KEY)
 	if err != nil {
 		return "machine-id-unavailable"
 	}
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 3 && strings.EqualFold(fields[0], "MachineGuid") {
-			return strings.TrimSpace(fields[len(fields)-1])
-		}
+	defer key.Close()
+	value, _, err := key.GetStringValue("MachineGuid")
+	if err != nil || strings.TrimSpace(value) == "" {
+		return "machine-id-unavailable"
 	}
-	return "machine-id-unavailable"
+	return strings.TrimSpace(value)
 }

@@ -111,7 +111,7 @@ def verify_windows_evidence(directory, version, revision):
         for name in ("home-tunnel-gui.exe", "home-tunnel-agent.exe"):
             if hashlib.sha256(bundle.read(name)).hexdigest() != records[name].get("sha256"):
                 raise SystemExit("Windows archive payload differs from the scanned files")
-    if install.get("installer_sha256") != records[setup]["sha256"] or any(install.get(check) != "passed" for check in ("install", "payload_hashes", "uninstall")):
+    if install.get("installer_sha256") != records[setup]["sha256"] or any(install.get(check) != "passed" for check in ("install", "payload_hashes", "uninstall", "embedded_icon", "gui_subsystem", "native_window_icon")):
         raise SystemExit("Windows installer lifecycle checks do not match this installer")
 
 def seal():

@@ -1,13 +1,11 @@
-# Home Tunnel Client 6.0.1
+# Home Tunnel Client 6.1.0
 
-修订 Windows 安装器与发布验证流程。原 6.0.0 EXE 被 Microsoft Defender 报告为 `Trojan:Win32/Sabsik.FL.A!ml`，已经撤下；请使用本版本的安装包。
+- 修复 Windows 启动时额外控制台窗口：直接读取机器标识，不再调用 reg.exe；受管 Agent 的启动和配置校验均不创建控制台，日志保留在本地文件。
+- 为 GUI EXE 嵌入图标和版本资源，并为原生窗口绑定图标。桌面窗口默认尺寸调整为适合服务工作区的大小。
+- 新建连接提供 Web（HTTP/HTTPS）、RTSP、SSH、RDP、通用 TCP 和 UDP。公网端口在服务端已开放范围内自动分配，RTSP 使用 TCP 交错传输。
+- 显示服务端版本、端口开放和账号权限限制；保留版本冲突与端口耗尽等可恢复错误。
+- Windows 发布继续执行 Defender 扫描、安装／卸载检查，并新增 EXE 图标、GUI 子系统和实际窗口图标验证。
 
-- 用固定版本的官方 Inno Setup 生成标准安装器和原生卸载程序，移除自制 Go 自解压安装器、PowerShell 快捷方式生成和批处理卸载方式。
-- EXE、ZIP、GUI、Agent 均需通过 Microsoft Defender 扫描；缺少扫描、命中威胁、病毒库过期或文件哈希改变会阻止发布。
-- 增加实际安装、已安装文件哈希和卸载检查。
-- 分别记录 EXE 与 ZIP 的 GitHub 构建来源，扫描记录与发布文件哈希逐项绑定。
-- 安装包和便携包补齐项目与第三方许可文件。
+TCP/UDP 创建需要服务端 6.1.0。管理员需启用实际公网端口范围；普通用户还需获得控制台中的自助创建授权。[连接类型说明](https://github.com/ZHanry/home-tunnel-client/blob/v6.1.0/docs/CONNECTION_TYPES.md)。
 
-检测报告仅说明所记录的引擎、病毒库与扫描时间下的结果，不代替其他安全产品的判断或 Microsoft 的误报复核。Windows 代码签名与 SmartScreen 信誉提示是另外的检查；本版本未配置 Authenticode 证书。
-
-下载附件继续只提供各平台安装包与 `SHA256SUMS.txt`，完整验证记录在对应 Actions 工作流中。[Windows 发布检查说明](https://github.com/ZHanry/home-tunnel-client/blob/v6.0.1/docs/WINDOWS_RELEASE_CHECKS.md)。
+Windows 使用标准 Inno Setup 安装器。未配置 Authenticode 代码签名，系统的发布者／信誉提示与 Defender 恶意软件扫描是不同检查。原 6.0.0 EXE 保持撤回。

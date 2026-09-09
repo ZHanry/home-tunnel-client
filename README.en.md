@@ -2,9 +2,11 @@
   <img src="docs/assets/HomeTunnel.svg" alt="Home Tunnel" width="72" height="72">
   <h1>Home Tunnel Client</h1>
   <p><strong>Desktop and command-line clients focused on this computer</strong></p>
-  <p><a href="https://github.com/ZHanry/home-tunnel-client/releases/latest"><img src="https://img.shields.io/badge/release-6.0.1-176653" alt="Release 6.0.1"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a></p>
+  <p><a href="https://github.com/ZHanry/home-tunnel-client/releases/latest"><img src="https://img.shields.io/badge/release-6.1.0-176653" alt="Release 6.1.0"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a></p>
   <p><a href="README.md">简体中文</a> · <a href="https://zhanry.github.io/home-tunnel/">Website</a></p>
 </div>
+
+6.1.0 fixes Windows console windows and icons and adds TCP/UDP creation with RTSP, SSH and RDP presets. See [connection types](docs/CONNECTION_TYPES.md).
 
 The Windows 6.0.0 EXE was withdrawn after a Defender detection. Version 6.0.1 uses a standard installer with antivirus and installation checks; see [Windows release checks](docs/WINDOWS_RELEASE_CHECKS.md).
 
@@ -16,9 +18,9 @@ Choose a package from [Releases](https://github.com/ZHanry/home-tunnel-client/re
 
 | Platform | Package |
 | --- | --- |
-| Windows x64 | `HomeTunnel-Setup-6.0.1-x64.exe`, or the portable `.zip` |
-| Linux amd64 / arm64 | `home-tunnel-linux-6.0.1-<arch>.tar.gz` |
-| macOS Intel / Apple Silicon | `home-tunnel-macos-6.0.1-amd64.tar.gz` / `arm64.tar.gz` |
+| Windows x64 | `HomeTunnel-Setup-6.1.0-x64.exe`, or the portable `.zip` |
+| Linux amd64 / arm64 | `home-tunnel-linux-6.1.0-<arch>.tar.gz` |
+| macOS Intel / Apple Silicon | `home-tunnel-macos-6.1.0-amd64.tar.gz` / `arm64.tar.gz` |
 
 Packages include the client and managed Agent. Use the installer or included installation script, then enter your console URL and account. `SHA256SUMS.txt` contains package checksums.
 

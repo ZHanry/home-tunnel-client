@@ -32,7 +32,7 @@ class ReleasePolicyTests(unittest.TestCase):
         payload.update({setup:(directory/setup).read_bytes(), archive:(directory/archive).read_bytes()})
         now = datetime.now(timezone.utc)
         scan = {"status":"passed", "version":version, "repository_revision":"revision", "engine":"Microsoft Defender", "engine_version":"engine", "signature_version":"signature", "scanned_at":now.isoformat(), "signature_updated_at":now.isoformat(), "files":[{"name":name,"sha256":hashlib.sha256(data).hexdigest(),"exit_code":0} for name,data in payload.items()]}
-        install = {"status":"passed","version":version,"repository_revision":"revision","installer_sha256":hashlib.sha256(b"installer").hexdigest(),"install":"passed","payload_hashes":"passed","uninstall":"passed"}
+        install = {"status":"passed","version":version,"repository_revision":"revision","installer_sha256":hashlib.sha256(b"installer").hexdigest(),"install":"passed","payload_hashes":"passed","uninstall":"passed","embedded_icon":"passed","gui_subsystem":"passed","native_window_icon":"passed"}
         (directory/'windows-defender-scan.json').write_text(json.dumps(scan))
         (directory/'windows-installer-smoke.json').write_text(json.dumps(install))
         return scan

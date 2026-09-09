@@ -1,5 +1,24 @@
     const strings = {
       "zh-CN": {
+        connectionType: "连接类型",
+        typeWeb: "Web · HTTP / HTTPS",
+        typeRtsp: "RTSP 摄像头 · TCP",
+        typeSsh: "SSH · TCP",
+        typeRdp: "远程桌面 RDP · TCP",
+        typeTcp: "通用 TCP",
+        typeUdp: "通用 UDP",
+        rawPortNote: "公网端口由服务端自动分配，限于管理员已开放的范围。TCP/UDP 的认证与加密由目标应用提供。",
+        rtspNote: "播放器必须使用 RTSP over TCP（交错传输）。复制地址后补上摄像头的流路径，例如 /Streaming/Channels/101。",
+        udpNote: "适用于固定端口 UDP 服务。动态媒体端口协商需要额外配置。",
+        serverUpgrade: "此服务端尚未提供客户端 TCP/UDP 创建能力，请升级服务端至 6.1.0 或以上。",
+        transportDisabled: "服务端未开放此传输类型。请管理员启用对应的 TCP/UDP 端口范围和防火墙。",
+        rawNotAllowed: "管理员尚未允许普通用户自行创建 TCP/UDP 连接。请在控制台的系统设置中授权。",
+        rawUnavailableOffline: "无法确认服务器的端口能力，请恢复连接后重试。",
+        assignedAddress: "已分配的公网地址：",
+        rtspDefaultName: "摄像头",
+        sshDefaultName: "SSH 终端",
+        rdpDefaultName: "远程桌面",
+
         copyAddress: "复制访问地址",
         agentOnline: "本机连接正常",
         agentOffline: "本机尚未连接，请检查网络",
@@ -45,6 +64,25 @@
         download: "下载到「下载」文件夹并校验", openRelease: "打开 Release", downloading: "正在下载…"
       },
       en: {
+        connectionType: "Connection type",
+        typeWeb: "Web · HTTP / HTTPS",
+        typeRtsp: "RTSP camera · TCP",
+        typeSsh: "SSH · TCP",
+        typeRdp: "Remote desktop RDP · TCP",
+        typeTcp: "General TCP",
+        typeUdp: "General UDP",
+        rawPortNote: "The server assigns a public port from the administrator’s configured range. The target application provides authentication and encryption.",
+        rtspNote: "Use RTSP over TCP (interleaved mode) in your player. Append the camera stream path, such as /Streaming/Channels/101, to the copied address.",
+        udpNote: "For fixed-port UDP services. Dynamic media-port negotiation needs additional configuration.",
+        serverUpgrade: "Upgrade the server to 6.1.0 or later to create TCP/UDP connections here.",
+        transportDisabled: "The server has not enabled this transport. Ask the administrator to configure the matching TCP/UDP port range and firewall.",
+        rawNotAllowed: "The administrator has not enabled TCP/UDP self-service for regular users. Permission is managed in console settings.",
+        rawUnavailableOffline: "Reconnect to the server to check port availability.",
+        assignedAddress: "Assigned public address: ",
+        rtspDefaultName: "Camera",
+        sshDefaultName: "SSH terminal",
+        rdpDefaultName: "Remote desktop",
+
         copyAddress: "Copy public address",
         agentOnline: "This computer is connected",
         agentOffline: "This computer is offline. Check the network.",
@@ -107,7 +145,7 @@
     }
     applyLocale();
     applyTheme(document.documentElement.dataset.theme || "light");
-    $("locale-toggle").onclick = () => { locale = locale === "en" ? "zh-CN" : "en"; applyLocale(); renderServices(); };
+    $("locale-toggle").onclick = () => { locale = locale === "en" ? "zh-CN" : "en"; applyLocale(); renderServices(); if (!$("editor").classList.contains("hidden")) applyProtocol(); };
     $("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     $("server").value = localStorage.getItem("ht_server") || "";
     $("username").value = localStorage.getItem("ht_username") || "";
@@ -116,7 +154,10 @@
       const response = await fetch(path, { ...options, headers: { "content-type": "application/json", ...(options.headers || {}), ...(localSessionToken ? { authorization: `Bearer ${localSessionToken}` } : {}) } });
       const text = await response.text();
       const data = text ? JSON.parse(text) : null;
-      if (!response.ok) { const error = new Error(data?.message || text || response.statusText); error.code = data?.error_code; throw error; }
+      if (!response.ok) {
+        const descriptions = { CLIENT_RAW_TUNNELS_DISABLED: t("rawNotAllowed"), TCP_TUNNELS_DISABLED: t("transportDisabled"), UDP_TUNNELS_DISABLED: t("transportDisabled"), PORT_POOL_EXHAUSTED: locale === "en" ? "The server has no available public ports. Ask the administrator to expand the range." : "服务端公网端口已用完，请联系管理员扩容。", VERSION_CONFLICT: t("conflict") };
+        const error = new Error(descriptions[data?.error_code] || data?.message || text || response.statusText); error.code = data?.error_code; throw error;
+      }
       return data;
     }
     function escapeHtml(value) {
@@ -124,6 +165,44 @@
     }
     let consoleUrl = "";
     let connections = [];
+    let capabilities = {};
+    let serverStale = false;
+    const protocols = {
+      http: { transport: "http", port: 8080 }, tcp: { transport: "tcp", port: 8080 },
+      udp: { transport: "udp", port: 51820 }, rtsp: { transport: "tcp", port: 554, app: "rtsp" },
+      ssh: { transport: "tcp", port: 22, app: "ssh" }, rdp: { transport: "tcp", port: 3389, app: "rdp" }
+    };
+    function creationBlock(preset) {
+      if (preset.transport === "http" || $("edit-id").value) return "";
+      if (serverStale) return t("rawUnavailableOffline");
+      if (!capabilities.supported) return t("serverUpgrade");
+      const transport = capabilities[preset.transport] || {};
+      if (!transport.enabled) return t("transportDisabled");
+      return transport.can_create ? "" : t("rawNotAllowed");
+    }
+    function applyProtocol(useDefaults = false) {
+      const kind = $("protocol").value;
+      const preset = protocols[kind] || protocols.http;
+      const raw = preset.transport !== "http";
+      $("web-address").classList.toggle("hidden", raw);
+      $("web-scheme").classList.toggle("hidden", raw);
+      $("subdomain").required = !raw;
+      $("subdomain").disabled = raw;
+      $("scheme").disabled = raw;
+      if (useDefaults && !$("edit-id").value) {
+        $("port").value = preset.port;
+        if (!$("name").value && preset.app) $("name").value = t(preset.app + "DefaultName");
+      }
+      const blocked = creationBlock(preset);
+      const details = [blocked || (raw ? t("rawPortNote") : "")];
+      if (kind === "rtsp") details.push(t("rtspNote"));
+      if (kind === "udp") details.push(t("udpNote"));
+      if (raw && editBaseline?.public_endpoint) details.push(t("assignedAddress") + (editBaseline.access_url || editBaseline.public_endpoint));
+      $("transport-note").textContent = details.filter(Boolean).join("\n");
+      $("transport-note").classList.toggle("unavailable", Boolean(blocked));
+      $("save").disabled = Boolean(blocked);
+    }
+    $("protocol").onchange = () => applyProtocol(true);
     let editBaseline = null;
     let editVersion = null;
     let lastUpdateCheck = 0;
@@ -138,6 +217,7 @@
 
     function resetEditor() {
       editBaseline = null; editVersion = null;
+      $("protocol").value = "http"; $("protocol").disabled = false;
       $("edit-id").value = "";
       $("editor-title").textContent = t("createTitle");
       $("name").value = "";
@@ -149,6 +229,7 @@
       $("availability").textContent = "";
       $("suggestions").replaceChildren();
       $("edit-error").textContent = "";
+      applyProtocol();
     }
     function fillEditor(item) {
       editBaseline = { ...item }; editVersion = item.version;
@@ -160,9 +241,9 @@
       $("host").value = item.local_host || "127.0.0.1";
       $("port").value = String(item.local_port || 8080);
       $("enabled").checked = item.enabled !== false;
-      const raw = ["tcp", "udp"].includes(item.proxy_type);
-      $("scheme").disabled = raw; $("scheme").closest("form").querySelector('label[for="scheme"]').classList.toggle("hidden", raw);
-      $("scheme").classList.toggle("hidden", raw);
+      $("protocol").value = item.application_protocol || item.proxy_type || "http";
+      $("protocol").disabled = true;
+      applyProtocol();
       $("edit-error").textContent = "";
       $("subdomain").dispatchEvent(new Event("input"));
     }
@@ -181,9 +262,10 @@
       $("home").classList.remove("hidden");
       const state = await api("/local/state");
       consoleUrl = state.console_url || "";
+      capabilities = state.capabilities || {}; serverStale = Boolean(state.stale);
       if (!state.enrolled) { $("home").classList.add("hidden"); $("login").classList.remove("hidden"); return; }
       $("machine-name").textContent = state.device_name || t("unnamedComputer");
-      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.0.1");
+      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.1.0");
       $("settings-server").textContent = consoleUrl;
       $("count-total").textContent = (state.connections || []).length;
       $("count-online").textContent = (state.connections || []).filter(c => c.enabled && c.state === "Online").length;
@@ -232,9 +314,9 @@
       const filter = $("service-filter").value;
       const items = connections.filter(item => (!search || `${item.name} ${item.subdomain} ${item.local_host}`.toLowerCase().includes(search)) && (filter === "all" || filter === "paused" && !item.enabled || filter === "online" && item.enabled && item.state === "Online"));
       $("connections").innerHTML = items.length ? items.map(item => {
-        const publicUrl = item.public_url || item.public_endpoint || "";
+        const publicUrl = item.public_url || item.access_url || item.public_endpoint || "";
         const status = !item.enabled ? t("paused") : item.state === "Online" ? t("online") : item.state || "—";
-        return `<article class="service-row"><div class="service-identity"><span class="service-protocol">${escapeHtml((item.proxy_type || "http").toUpperCase())}</span><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.local_host)}:${escapeHtml(item.local_port)}</small></div></div><span class="state-badge ${item.enabled && item.state === "Online" ? "online" : ""}">${escapeHtml(status)}</span><button type="button" class="url" data-copy="${escapeHtml(publicUrl)}" aria-label="${escapeHtml(t("copyAddress"))}">${escapeHtml(publicUrl || item.subdomain)}</button><div class="actions"><button class="secondary" data-edit="${escapeHtml(item.id)}">${escapeHtml(t("edit"))}</button><button class="secondary" data-toggle="${escapeHtml(item.id)}" data-enabled="${item.enabled}">${escapeHtml(t(item.enabled ? "pause" : "enable"))}</button><details><summary>${escapeHtml(t("more"))}</summary><button class="danger" data-delete="${escapeHtml(item.id)}">${escapeHtml(t("remove"))}</button></details></div></article>`;
+        return `<article class="service-row"><div class="service-identity"><span class="service-protocol">${escapeHtml((item.application_protocol || item.proxy_type || "http").toUpperCase())}</span><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.local_host)}:${escapeHtml(item.local_port)}</small></div></div><span class="state-badge ${item.enabled && item.state === "Online" ? "online" : ""}">${escapeHtml(status)}</span><button type="button" class="url" data-copy="${escapeHtml(publicUrl)}" aria-label="${escapeHtml(t("copyAddress"))}">${escapeHtml(publicUrl || item.subdomain)}</button><div class="actions"><button class="secondary" data-edit="${escapeHtml(item.id)}">${escapeHtml(t("edit"))}</button><button class="secondary" data-toggle="${escapeHtml(item.id)}" data-enabled="${item.enabled}">${escapeHtml(t(item.enabled ? "pause" : "enable"))}</button><details><summary>${escapeHtml(t("more"))}</summary><button class="danger" data-delete="${escapeHtml(item.id)}">${escapeHtml(t("remove"))}</button></details></div></article>`;
       }).join("") : `<div class="empty-state"><strong>${escapeHtml(t(items.length || connections.length ? "noMatch" : "empty"))}</strong>${!connections.length ? `<button id="empty-add">${escapeHtml(t("add"))}</button>` : ""}</div>`;
       $("empty-add")?.addEventListener("click", () => $("add").click());
       document.querySelectorAll("[data-copy]").forEach((node) => node.addEventListener("click", async () => {
@@ -295,6 +377,7 @@
     $("cancel").onclick = () => runAction($("cancel"), () => showHome());
     let availabilityRequest = 0, availabilityTimer;
     $("subdomain").addEventListener("input", () => {
+      if ($("protocol").value !== "http") return;
       const requestId = ++availabilityRequest;
       clearTimeout(availabilityTimer);
       availabilityTimer = setTimeout(async () => {
@@ -318,6 +401,9 @@
     });
     $("editor-form").onsubmit = async (event) => {
       event.preventDefault();
+      const selected = protocols[$("protocol").value] || protocols.http;
+      const blocked = creationBlock(selected);
+      if (blocked) { $("edit-error").textContent = blocked; return; }
       if (!$("editor-form").reportValidity()) return;
       await runAction($("save"), async () => {
       $("edit-error").textContent = "";
@@ -329,11 +415,16 @@
           if ($("scheme").disabled) delete patch.local_scheme;
           await api("/local/connections/" + id, { method: "PATCH", body: JSON.stringify({ ...patch, expected_version: editVersion }) });
         }
-        else await api("/local/connections", { method: "POST", body: JSON.stringify(payload) });
+        else {
+          payload.proxy_type = selected.transport;
+          if (selected.app) payload.application_protocol = selected.app;
+          if (selected.transport !== "http") { delete payload.subdomain; payload.local_scheme = "http"; }
+          await api("/local/connections", { method: "POST", body: JSON.stringify(payload) });
+        }
         await showHome();
       } catch (error) {
         $("edit-error").textContent = error.message;
-        if (/VERSION_CONFLICT/.test(error.message)) {
+        if (error.code === "VERSION_CONFLICT" || /VERSION_CONFLICT/.test(error.message)) {
           $("edit-error").textContent = t("conflict");
           const latest = document.createElement("button"); latest.type = "button"; latest.className = "secondary"; latest.textContent = t("retryLatest");
           latest.onclick = () => runAction(latest, async () => {

@@ -1,6 +1,6 @@
 # Builds the unified Windows x64 desktop package: home-tunnel-gui.exe + Agent.
 param(
-    [string]$Version = "6.0.1",
+    [string]$Version = "6.1.0",
     [string]$WindRes = "",
     [string]$OutputDir = "",
     [string]$IsccPath = $env:HOME_TUNNEL_ISCC
@@ -38,22 +38,9 @@ if (-not (Test-Path -LiteralPath $agentSource -PathType Leaf)) {
     throw "Agent executable was not produced"
 }
 
-$env:CGO_ENABLED = "0"
-$env:GOOS = "windows"
-$env:GOARCH = "amd64"
-$env:GOFLAGS = "-buildvcs=false"
 $gui = Join-Path $OutputDir "home-tunnel-gui.exe"
 $agent = Join-Path $OutputDir "home-tunnel-agent.exe"
-Push-Location $clientDir
-try {
-    go build -trimpath `
-        -ldflags "-s -w -H windowsgui -buildid= -X main.version=$Version -X main.agentVersion=$agentVersion -X main.expectedAgentSHA256=$agentSha" `
-        -o $gui ./cmd/home-tunnel-gui
-    if ($LASTEXITCODE -ne 0) { throw 'Windows GUI build failed' }
-}
-finally {
-    Pop-Location
-}
+& (Join-Path $PSScriptRoot 'build-gui.ps1') -Version $Version -OutputDir $OutputDir -WindRes $WindRes -AgentVersion $agentVersion -ExpectedAgentSHA256 $agentSha
 Copy-Item -LiteralPath $agentSource -Destination $agent -Force
 $icon = Join-Path $workspace "agent\assets\HomeTunnel.ico"
 Copy-Item -LiteralPath $icon -Destination (Join-Path $OutputDir "HomeTunnel.ico") -Force

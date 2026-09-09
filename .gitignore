@@ -95,3 +95,4 @@ release-notes.md
 
 /windows-defender-scan.json
 /windows-installer-smoke.json
+/cmd/home-tunnel-gui/*.syso

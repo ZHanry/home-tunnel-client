@@ -160,15 +160,17 @@ func (server *Server) state(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	stale := false
+	capabilities := model.ConnectionCapabilities{}
 	connections := localConnections(state.CachedConnections, state.DeviceID)
 	console := state.Profile.PublicBaseURL
 	if state.Enrolled() {
 		if client, _, clientErr := server.client(); clientErr == nil {
 			ctx, cancel := context.WithTimeout(request.Context(), 12*time.Second)
-			items, listErr := client.ListConnections(ctx)
+			catalog, listErr := client.ListConnectionCatalog(ctx)
 			cancel()
 			if listErr == nil {
-				connections = localConnections(items, state.DeviceID)
+				connections = localConnections(catalog.Items, state.DeviceID)
+				capabilities = catalog.Capabilities
 			} else {
 				stale = true
 			}
@@ -187,6 +189,7 @@ func (server *Server) state(writer http.ResponseWriter, request *http.Request) {
 		"device_name":    app.DefaultDeviceName(),
 		"version":        currentVersion(server.options),
 		"connections":    connections,
+		"capabilities":   capabilities,
 	})
 }
 
@@ -244,20 +247,32 @@ func (server *Server) connections(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	var body struct {
-		Name        string `json:"name"`
-		Subdomain   string `json:"subdomain"`
-		LocalHost   string `json:"local_host"`
-		LocalPort   int    `json:"local_port"`
-		LocalScheme string `json:"local_scheme"`
-		Enabled     bool   `json:"enabled"`
+		Name                string `json:"name"`
+		Subdomain           string `json:"subdomain"`
+		LocalHost           string `json:"local_host"`
+		LocalPort           int    `json:"local_port"`
+		LocalScheme         string `json:"local_scheme"`
+		Enabled             bool   `json:"enabled"`
+		ProxyType           string `json:"proxy_type"`
+		ApplicationProtocol string `json:"application_protocol"`
 	}
 	if err := readJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	created, err := client.CreateHTTPConnection(ctx, state.DeviceID, body.Name, body.Subdomain, body.LocalScheme, body.LocalHost, body.LocalPort, body.Enabled)
+	if body.ProxyType == "" {
+		body.ProxyType = "http"
+	}
+	if body.LocalScheme == "" {
+		body.LocalScheme = "http"
+	}
+	if body.ProxyType != "http" && body.ProxyType != "tcp" && body.ProxyType != "udp" {
+		writeError(writer, http.StatusBadRequest, "请选择 HTTP、TCP 或 UDP 传输")
+		return
+	}
+	created, err := client.CreateConnection(ctx, state.DeviceID, body.Name, body.Subdomain, body.LocalScheme, body.LocalHost, body.LocalPort, body.Enabled, body.ProxyType, body.ApplicationProtocol)
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, err.Error())
+		writeClientError(writer, err)
 		return
 	}
 	writeJSON(writer, created)
@@ -338,7 +353,7 @@ func (server *Server) connectionItem(writer http.ResponseWriter, request *http.R
 		}
 		updated, err := client.UpdateConnection(ctx, current.ID, expectedVersion, patch)
 		if err != nil {
-			writeError(writer, http.StatusBadRequest, err.Error())
+			writeClientError(writer, err)
 			return
 		}
 		writeJSON(writer, updated)

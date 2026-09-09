@@ -30,6 +30,50 @@ test("desktop requests use the native window's private session", async ({ page }
   await expect.poll(() => authorization).toBe("Bearer private-ui-test");
 });
 
+async function services(page, capabilities, connections = []) {
+  await page.route("**/local/state", route => route.fulfill({json:{enrolled:true,agent_state:"Online",capabilities,connections}}));
+  await page.route("**/local/update", route => route.fulfill({json:{newer:false}}));
+  await page.reload();
+  await expect(page.locator("#home")).toBeVisible();
+}
+
+test("RTSP preset creates TCP with an automatic port and no required web subdomain", async ({page}) => {
+  await services(page,{supported:true,tcp:{enabled:true,can_create:true},udp:{enabled:true,can_create:true}});
+  await page.route("**/local/connections", route => route.fulfill({json:{id:"camera"}}));
+  await page.locator("#add").click();
+  await page.locator("#protocol").selectOption("rtsp");
+  await expect(page.locator("#port")).toHaveValue("554");
+  await expect(page.locator("#web-address")).not.toBeVisible();
+  await expect(page.locator("#transport-note")).toContainText("RTSP over TCP");
+  const request=page.waitForRequest(r=>r.method()==="POST"&&r.url().endsWith("/local/connections"));
+  await page.locator("#save").click();
+  const body=(await request).postDataJSON();
+  expect(body.proxy_type).toBe("tcp");expect(body.application_protocol).toBe("rtsp");
+  expect(body.local_port).toBe(554);expect(body).not.toHaveProperty("remote_port");expect(body).not.toHaveProperty("subdomain");
+});
+
+test("old servers explain the upgrade and retain HTTP creation", async ({page}) => {
+  await services(page,undefined);
+  await page.locator("#add").click();await page.locator("#protocol").selectOption("tcp");
+  await expect(page.locator("#transport-note")).toContainText("升级服务端");await expect(page.locator("#save")).toBeDisabled();
+  await page.locator("#protocol").selectOption("http");await expect(page.locator("#save")).toBeEnabled();await expect(page.locator("#subdomain")).toBeVisible();
+});
+
+test("transport deployment and user permission failures are explained separately", async ({page}) => {
+  await services(page,{supported:true,tcp:{enabled:true,can_create:false},udp:{enabled:false,can_create:false}});
+  await page.locator("#add").click();await page.locator("#protocol").selectOption("ssh");
+  await expect(page.locator("#port")).toHaveValue("22");await expect(page.locator("#transport-note")).toContainText("尚未允许普通用户");await expect(page.locator("#save")).toBeDisabled();
+  await page.locator("#protocol").selectOption("udp");await expect(page.locator("#transport-note")).toContainText("未开放此传输类型");
+});
+
+test("an existing RTSP connection keeps its URI and remains editable after self-service is disabled", async ({page}) => {
+  const item={id:"camera",name:"Camera",proxy_type:"tcp",application_protocol:"rtsp",public_endpoint:"camera.example:12000",access_url:"rtsp://camera.example:12000",local_scheme:"http",local_host:"127.0.0.1",local_port:554,enabled:true,version:3,subdomain:"generated-camera"};
+  await services(page,{supported:true,tcp:{enabled:true,can_create:false}},[item]);
+  await expect(page.locator(".url")).toHaveText("rtsp://camera.example:12000");
+  await page.locator('[data-edit="camera"]').click();await expect(page.locator("#protocol")).toHaveValue("rtsp");
+  await expect(page.locator("#protocol")).toBeDisabled();await expect(page.locator("#save")).toBeEnabled();await expect(page.locator("#subdomain")).not.toBeVisible();
+});
+
 test("desktop login fields have names and theme uses a readable button foreground", async ({
   page,
 }) => {
