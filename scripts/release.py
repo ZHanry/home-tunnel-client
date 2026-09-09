@@ -66,7 +66,7 @@ def required_assets(directory):
     if COMPONENT == "client":
         expected = [f"HomeTunnel-Setup-{version}-x64.exe", f"HomeTunnel-Windows-{version}-x64.zip"]
         expected += [f"home-tunnel-{platform}-{version}-{arch}.tar.gz" for platform in ("linux","macos") for arch in ("amd64","arm64")]
-        expected += ["agent-provenance.json"]
+        expected += ["agent-provenance.json", "windows-defender-scan.json", "windows-installer-smoke.json"]
     elif COMPONENT == "android":
         expected = [f"HomeTunnel-Android-{version}-arm64-v8a.apk", f"HomeTunnel-Android-{version}.aab", "android-release-evidence.json"]
     else:
@@ -78,6 +78,41 @@ def required_assets(directory):
     for name in expected:
         if not (directory/name).is_file() or not (directory/name).stat().st_size:
             raise SystemExit(f"Missing release asset: {name}")
+    if COMPONENT == "client":
+        verify_windows_evidence(directory, version, SHA)
+
+def verify_windows_evidence(directory, version, revision):
+    """Bind real antivirus and installer checks to the exact bytes being published."""
+    from datetime import datetime, timedelta, timezone
+    import zipfile
+    scan = json.loads((directory / "windows-defender-scan.json").read_text())
+    install = json.loads((directory / "windows-installer-smoke.json").read_text())
+    for report in (scan, install):
+        if report.get("status") != "passed" or report.get("version") != version or report.get("repository_revision") != revision:
+            raise SystemExit("Windows release evidence is missing, failed or belongs to another build")
+    if scan.get("engine") != "Microsoft Defender" or not scan.get("signature_version") or not scan.get("engine_version"):
+        raise SystemExit("Windows antivirus engine identity is missing")
+    now = datetime.now(timezone.utc)
+    scanned = datetime.fromisoformat(scan["scanned_at"].replace("Z", "+00:00"))
+    updated = datetime.fromisoformat(scan["signature_updated_at"].replace("Z", "+00:00"))
+    if scanned.tzinfo is None or updated.tzinfo is None or not now - timedelta(days=1) <= scanned <= now + timedelta(minutes=5) or not scanned - timedelta(days=2) <= updated <= scanned + timedelta(minutes=5):
+        raise SystemExit("Windows antivirus scan or signatures are stale")
+    setup = f"HomeTunnel-Setup-{version}-x64.exe"
+    archive = f"HomeTunnel-Windows-{version}-x64.zip"
+    files = scan.get("files", [])
+    records = {item["name"]: item for item in files}
+    expected = {setup, archive, "home-tunnel-gui.exe", "home-tunnel-agent.exe"}
+    if set(records) != expected or len(files) != 4 or any(item.get("exit_code") != 0 for item in files):
+        raise SystemExit("Windows antivirus scan did not pass for every release component")
+    for name in (setup, archive):
+        if hashlib.sha256((directory / name).read_bytes()).hexdigest() != records[name].get("sha256"):
+            raise SystemExit("Windows release bytes differ from the scanned files")
+    with zipfile.ZipFile(directory / archive) as bundle:
+        for name in ("home-tunnel-gui.exe", "home-tunnel-agent.exe"):
+            if hashlib.sha256(bundle.read(name)).hexdigest() != records[name].get("sha256"):
+                raise SystemExit("Windows archive payload differs from the scanned files")
+    if install.get("installer_sha256") != records[setup]["sha256"] or any(install.get(check) != "passed" for check in ("install", "payload_hashes", "uninstall")):
+        raise SystemExit("Windows installer lifecycle checks do not match this installer")
 
 def seal():
     directory = ROOT / "release"

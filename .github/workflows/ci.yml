@@ -111,6 +111,29 @@ jobs:
         finally {
           Remove-Item -LiteralPath $agentCmd -Recurse -Force
         }
+    - name: Install the pinned Inno Setup compiler
+      shell: pwsh
+      run: |
+        $lines = & .\packaging\windows\install-inno-setup.ps1
+        $compiler = ($lines | Where-Object { $_ -like 'ISCC=*' } | Select-Object -First 1) -replace '^ISCC=', ''
+        if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler is missing' }
+        "HOME_TUNNEL_ISCC=$compiler" >> $env:GITHUB_ENV
+    - name: Build and scan the Windows installer before tagging
+      shell: pwsh
+      run: |
+        $version = (Select-String -Path internal/model/model.go -Pattern '^const Version = "([^"]+)"$').Matches.Groups[1].Value
+        .\packaging\windows\build-release.ps1 -Version $version -WindRes $env:HOME_TUNNEL_WINDRES
+        .\packaging\windows\scan-release.ps1 -Directory outputs/windows -Version $version -ReportPath windows-defender-scan.json -UpdateSignatures
+        .\packaging\windows\test-installer.ps1 -Installer "$PWD/outputs/windows/HomeTunnel-Setup-$version-x64.exe" -PayloadDirectory "$PWD/outputs/windows" -Version $version -ReportPath windows-installer-smoke.json
+    - name: Preserve Windows verification reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-installation-and-antivirus
+        path: |
+          windows-defender-scan.json
+          windows-installer-smoke.json
+        if-no-files-found: warn
     - name: Upload agent baseline artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:

@@ -105,8 +105,15 @@ jobs:
           ($evidence | ConvertTo-Json -Depth 6) + "`n",
           [Text.UTF8Encoding]::new($false)
         )
+    - name: Install the pinned Inno Setup compiler
+      shell: pwsh
+      run: |
+        $lines = & .\packaging\windows\install-inno-setup.ps1
+        $compiler = ($lines | Where-Object { $_ -like 'ISCC=*' } | Select-Object -First 1) -replace '^ISCC=', ''
+        if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler is missing' }
+        "HOME_TUNNEL_ISCC=$compiler" >> $env:GITHUB_ENV
     - id: windows
-      name: Build the unified Windows GUI zip
+      name: Build the native Windows installer and portable archive
       shell: pwsh
       env:
         VERSION: ${{ needs.metadata.outputs.base-version }}
@@ -146,9 +153,24 @@ jobs:
           ($smoke | ConvertTo-Json -Depth 3) + [Environment]::NewLine,
           [Text.UTF8Encoding]::new($false)
         )
-        "installer=$zip" >> $env:GITHUB_OUTPUT
+        $setup = Join-Path (Split-Path -Parent $zip) "HomeTunnel-Setup-$env:VERSION-x64.exe"
+        if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'EXE installer is missing' }
+        "installer=$setup" >> $env:GITHUB_OUTPUT
+        "archive=$zip" >> $env:GITHUB_OUTPUT
         "checksum=$zip.sha256" >> $env:GITHUB_OUTPUT
         "sbom=$zip.spdx.json" >> $env:GITHUB_OUTPUT
+    - name: Scan the actual Windows release files with Microsoft Defender
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.base-version }}
+      run: |
+        .\packaging\windows\scan-release.ps1 -Directory outputs/windows -Version $env:VERSION -ReportPath windows-defender-scan.json -UpdateSignatures
+    - name: Verify native installation and uninstallation
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.base-version }}
+      run: |
+        .\packaging\windows\test-installer.ps1 -Installer "$PWD/outputs/windows/HomeTunnel-Setup-$env:VERSION-x64.exe" -PayloadDirectory "$PWD/outputs/windows" -Version $env:VERSION -ReportPath windows-installer-smoke.json
     - name: Generate Windows SPDX SBOM
       uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
       with:
@@ -162,11 +184,12 @@ jobs:
       shell: pwsh
       env:
         INSTALLER: ${{ steps.windows.outputs.installer }}
+        ARCHIVE: ${{ steps.windows.outputs.archive }}
         CHECKSUM: ${{ steps.windows.outputs.checksum }}
         SBOM: ${{ steps.windows.outputs.sbom }}
       run: |
         cosign sign-blob --yes --bundle agent-provenance.json.sigstore.json agent-provenance.json
-        foreach ($subject in @($env:INSTALLER, $env:CHECKSUM, $env:SBOM)) {
+        foreach ($subject in @($env:INSTALLER, $env:ARCHIVE, $env:CHECKSUM, $env:SBOM)) {
           cosign sign-blob --yes --bundle "$subject.sigstore.json" "$subject"
           if ($LASTEXITCODE -ne 0) { throw "Sigstore signing failed for $subject" }
         }
@@ -187,6 +210,14 @@ jobs:
       with:
         subject-path: ${{ steps.windows.outputs.installer }}
         sbom-path: ${{ steps.windows.outputs.sbom }}
+    - name: Publish GitHub Windows portable archive provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.windows.outputs.archive }}
+    - name: Attest Windows antivirus scan results
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: windows-defender-scan.json
     - name: Stage the public Windows asset set
       shell: pwsh
       run: |
@@ -194,7 +225,7 @@ jobs:
         Get-ChildItem -LiteralPath outputs\windows -File |
           Where-Object { $_.Name -like '*.zip*' -or $_.Name -like 'HomeTunnel-Setup-*' } |
           Copy-Item -Destination release-windows
-        Copy-Item windows-exe-smoke.json, agent-provenance.json, agent-provenance.json.sigstore.json release-windows
+        Copy-Item windows-exe-smoke.json, windows-defender-scan.json, windows-installer-smoke.json, agent-provenance.json, agent-provenance.json.sigstore.json release-windows
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: windows-release

@@ -183,7 +183,7 @@
       consoleUrl = state.console_url || "";
       if (!state.enrolled) { $("home").classList.add("hidden"); $("login").classList.remove("hidden"); return; }
       $("machine-name").textContent = state.device_name || t("unnamedComputer");
-      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.0.0");
+      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.0.1");
       $("settings-server").textContent = consoleUrl;
       $("count-total").textContent = (state.connections || []).length;
       $("count-online").textContent = (state.connections || []).filter(c => c.enabled && c.state === "Online").length;

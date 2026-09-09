@@ -92,3 +92,6 @@ tests/frpc-https.toml
 release/
 release-public/
 release-notes.md
+
+/windows-defender-scan.json
+/windows-installer-smoke.json

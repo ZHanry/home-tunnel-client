@@ -1,5 +1,9 @@
 # Changelog
 
+## 6.0.1 — 2026-09-09
+
+Replace the flagged custom Windows self-extractor with the native Inno Setup installer. Scan final Windows artifacts with Defender, exercise installation/uninstallation, and require matching evidence before publication. The 6.0.0 EXE has been withdrawn.
+
 ## 6.0.0 — 2026-09-09
 
 Home Tunnel 6.0 正式发布。Web、桌面与手机端采用全新的页面结构，统一使用清晰的设备与账号边界。

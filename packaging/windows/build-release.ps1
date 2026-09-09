@@ -1,8 +1,9 @@
 # Builds the unified Windows x64 desktop package: home-tunnel-gui.exe + Agent.
 param(
-    [string]$Version = "6.0.0",
+    [string]$Version = "6.0.1",
     [string]$WindRes = "",
-    [string]$OutputDir = ""
+    [string]$OutputDir = "",
+    [string]$IsccPath = $env:HOME_TUNNEL_ISCC
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,7 @@ Set-StrictMode -Version Latest
 $packagingDir = $PSScriptRoot
 $clientDir = Split-Path -Parent (Split-Path -Parent $packagingDir)
 $workspace = $clientDir
+if (-not $IsccPath) { throw 'Set HOME_TUNNEL_ISCC or pass -IsccPath from install-inno-setup.ps1' }
 if (-not $OutputDir) {
     $OutputDir = Join-Path $workspace "outputs\windows"
 }
@@ -47,6 +49,7 @@ try {
     go build -trimpath `
         -ldflags "-s -w -H windowsgui -buildid= -X main.version=$Version -X main.agentVersion=$agentVersion -X main.expectedAgentSHA256=$agentSha" `
         -o $gui ./cmd/home-tunnel-gui
+    if ($LASTEXITCODE -ne 0) { throw 'Windows GUI build failed' }
 }
 finally {
     Pop-Location
@@ -55,21 +58,10 @@ Copy-Item -LiteralPath $agentSource -Destination $agent -Force
 $icon = Join-Path $workspace "agent\assets\HomeTunnel.ico"
 Copy-Item -LiteralPath $icon -Destination (Join-Path $OutputDir "HomeTunnel.ico") -Force
 
-$payloadDir = Join-Path $clientDir "cmd\home-tunnel-setup\payload"
-New-Item -ItemType Directory -Force -Path $payloadDir | Out-Null
-Copy-Item -LiteralPath $gui, $agent, $icon -Destination $payloadDir -Force
 $setupName = "HomeTunnel-Setup-$Version-x64.exe"
 $setup = Join-Path $OutputDir $setupName
 if (Test-Path -LiteralPath $setup) { Remove-Item -LiteralPath $setup -Force }
-Push-Location $clientDir
-try {
-    go build -trimpath `
-        -ldflags "-s -w -H windowsgui -buildid= -X main.version=$Version" `
-        -o $setup ./cmd/home-tunnel-setup
-}
-finally {
-    Pop-Location
-}
+& (Join-Path $PSScriptRoot 'build-installer.ps1') -Version $Version -SourceDir $OutputDir -IsccPath $IsccPath
 if (-not (Test-Path -LiteralPath $setup)) {
     throw "failed to produce $setup"
 }
@@ -86,7 +78,8 @@ Write-Host "AGENT_SHA256=$agentSha"
 
 $zipName = "HomeTunnel-Windows-$Version-x64.zip"
 $zip = Join-Path $OutputDir $zipName
-Compress-Archive -LiteralPath $gui, $agent, (Join-Path $OutputDir "HomeTunnel.ico") -DestinationPath $zip -Force
+$packageFiles = @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt') | ForEach-Object { Join-Path $OutputDir $_ }
+Compress-Archive -LiteralPath $packageFiles -DestinationPath $zip -Force
 $zipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$zip.sha256", "$zipSha  $zipName" + [char]10, [Text.UTF8Encoding]::new($false))
 Write-Output "ZIP=$zip"

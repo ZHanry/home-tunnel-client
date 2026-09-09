@@ -1,6 +1,6 @@
 #define AppName "Home Tunnel"
 #ifndef AppVersion
-  #define AppVersion "6.0.0"
+  #define AppVersion "6.0.1"
 #endif
 #ifndef SourceDir
   #define SourceDir "."
@@ -11,9 +11,12 @@ AppId={{8F3C1B2A-7D54-4E19-9A6C-2B0E5D8F4A11}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Home Tunnel
+AppPublisherURL=https://github.com/ZHanry/home-tunnel-client
+AppSupportURL=https://github.com/ZHanry/home-tunnel-client/issues
 DefaultDirName={localappdata}\Home Tunnel
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+LicenseFile={#SourceDir}\LICENSE.txt
 OutputDir={#SourceDir}
 OutputBaseFilename=HomeTunnel-Setup-{#AppVersion}-x64
 SetupIconFile={#SourceDir}\HomeTunnel.ico
@@ -25,17 +28,26 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\home-tunnel-gui.exe
 WizardStyle=modern
 CloseApplications=yes
+CloseApplicationsFilter=home-tunnel-gui.exe,home-tunnel-agent.exe
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\home-tunnel-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\home-tunnel-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\HomeTunnel.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\FRP-LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: files; Name: "{app}\uninstall.cmd"
 
 [Icons]
 Name: "{group}\Home Tunnel"; Filename: "{app}\home-tunnel-gui.exe"; IconFilename: "{app}\HomeTunnel.ico"
@@ -43,4 +55,15 @@ Name: "{group}\Uninstall Home Tunnel"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Home Tunnel"; Filename: "{app}\home-tunnel-gui.exe"; IconFilename: "{app}\HomeTunnel.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\home-tunnel-gui.exe"; Description: "Launch Home Tunnel"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\home-tunnel-gui.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  PreviousLocation: String;
+begin
+  if CurStep = ssPostInstall then
+    if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\HomeTunnel', 'InstallLocation', PreviousLocation) then
+      if CompareText(RemoveBackslashUnlessRoot(PreviousLocation), RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) = 0 then
+        RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\HomeTunnel');
+end;
