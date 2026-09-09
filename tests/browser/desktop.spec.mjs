@@ -56,7 +56,7 @@ test("RTSP preset creates TCP with an automatic port and no required web subdoma
 test("old servers explain the upgrade and retain HTTP creation", async ({page}) => {
   await services(page,undefined);
   await page.locator("#add").click();await page.locator("#protocol").selectOption("tcp");
-  await expect(page.locator("#transport-note")).toContainText("升级服务端");await expect(page.locator("#save")).toBeDisabled();
+  await expect(page.locator("#transport-note")).toContainText("升级服务端至 6.1.0");await expect(page.locator("#save")).toBeDisabled();
   await page.locator("#protocol").selectOption("http");await expect(page.locator("#save")).toBeEnabled();await expect(page.locator("#subdomain")).toBeVisible();
 });
 
