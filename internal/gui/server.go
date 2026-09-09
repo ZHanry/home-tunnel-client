@@ -139,6 +139,20 @@ func (server *Server) StopAgent() {
 	}
 }
 
+// Filter both live and cached results, including results from older servers.
+func localConnections(items []model.Connection, deviceID string) []model.Connection {
+	local := make([]model.Connection, 0, len(items))
+	if deviceID == "" {
+		return local
+	}
+	for _, item := range items {
+		if item.DeviceID == deviceID {
+			local = append(local, item)
+		}
+	}
+	return local
+}
+
 func (server *Server) state(writer http.ResponseWriter, request *http.Request) {
 	state, err := (statepkg.Store{Path: server.options.StatePath}).Load()
 	if err != nil && !errors.Is(err, statepkg.ErrStateDamaged) {
@@ -146,7 +160,7 @@ func (server *Server) state(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	stale := false
-	connections := state.CachedConnections
+	connections := localConnections(state.CachedConnections, state.DeviceID)
 	console := state.Profile.PublicBaseURL
 	if state.Enrolled() {
 		if client, _, clientErr := server.client(); clientErr == nil {
@@ -154,7 +168,7 @@ func (server *Server) state(writer http.ResponseWriter, request *http.Request) {
 			items, listErr := client.ListConnections(ctx)
 			cancel()
 			if listErr == nil {
-				connections = items
+				connections = localConnections(items, state.DeviceID)
 			} else {
 				stale = true
 			}
@@ -169,6 +183,9 @@ func (server *Server) state(writer http.ResponseWriter, request *http.Request) {
 		"agent_state":    state.AgentState,
 		"agent_message":  state.AgentMessage,
 		"console_url":    console,
+		"device_id":      state.DeviceID,
+		"device_name":    app.DefaultDeviceName(),
+		"version":        currentVersion(server.options),
 		"connections":    connections,
 	})
 }
@@ -219,7 +236,7 @@ func (server *Server) connections(writer http.ResponseWriter, request *http.Requ
 			writeError(writer, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(writer, map[string]any{"items": items})
+		writeJSON(writer, map[string]any{"items": localConnections(items, state.DeviceID)})
 		return
 	}
 	if request.Method != http.MethodPost {
@@ -252,7 +269,7 @@ func (server *Server) connectionItem(writer http.ResponseWriter, request *http.R
 		writer.WriteHeader(http.StatusNotFound)
 		return
 	}
-	client, _, err := server.client()
+	client, state, err := server.client()
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err.Error())
 		return
@@ -266,7 +283,7 @@ func (server *Server) connectionItem(writer http.ResponseWriter, request *http.R
 	}
 	var current *model.Connection
 	for index := range items {
-		if items[index].ID == id {
+		if items[index].ID == id && items[index].DeviceID == state.DeviceID {
 			current = &items[index]
 			break
 		}

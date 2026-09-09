@@ -67,6 +67,7 @@ type Client struct {
 	access     string
 	refresh    string
 	accessEnds time.Time
+	deviceID   string
 }
 
 // Discover connects to the HTTPS server explicitly selected by the local owner.
@@ -192,6 +193,7 @@ func (client *Client) Login(ctx context.Context, username, password string) (mod
 		"username": username, "password": password, "client_type": clientType(),
 	}, &session)
 	if err == nil {
+		client.deviceID = ""
 		client.setSession(session.AccessToken, session.RefreshToken, session.AccessExpiresAt)
 	}
 	return session, err
@@ -205,6 +207,7 @@ func (client *Client) DeviceLogin(ctx context.Context, deviceID, credential stri
 		"device_id": deviceID, "device_credential": credential,
 	}, &session)
 	if err == nil {
+		client.deviceID = deviceID
 		client.setSession(session.AccessToken, session.RefreshToken, session.AccessExpiresAt)
 	}
 	return session, err
@@ -275,6 +278,15 @@ func (client *Client) ListConnections(ctx context.Context) ([]model.Connection, 
 	defer client.mu.Unlock()
 	var payload itemList[model.Connection]
 	err := client.authJSON(ctx, http.MethodGet, "client/connections", nil, &payload)
+	if err == nil && client.deviceID != "" {
+		local := make([]model.Connection, 0, len(payload.Items))
+		for _, item := range payload.Items {
+			if item.DeviceID == client.deviceID {
+				local = append(local, item)
+			}
+		}
+		return local, nil
+	}
 	return payload.Items, err
 }
 

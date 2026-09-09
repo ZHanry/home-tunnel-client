@@ -1,5 +1,35 @@
     const strings = {
       "zh-CN": {
+        copyAddress: "复制访问地址",
+        agentOnline: "本机连接正常",
+        agentOffline: "本机尚未连接，请检查网络",
+        agentStarting: "正在连接服务器",
+        welcomeTitle: "把这台电脑，连接到家。",
+        welcomeDetail: "让你的本地服务随时可达。登录自己的服务器，接下来的连接由 Home Tunnel 照顾。",
+        stepSignIn: "登录并登记本机",
+        stepService: "选择想要发布的本地服务",
+        stepShare: "复制地址，随时访问",
+        connectComputer: "连接这台电脑",
+        thisComputer: "当前设备",
+        scopeNote: "这里只显示此设备上的服务。要管理其他设备，请打开控制台或使用手机端。",
+        settings: "设置",
+        myServices: "本机服务",
+        allServices: "全部服务",
+        online: "在线",
+        paused: "已暂停",
+        searchServices: "查找服务",
+        statusFilter: "状态",
+        all: "全部状态",
+        identity: "01 · 服务与访问地址",
+        destination: "02 · 本地目标",
+        hostHelp: "填写这台电脑能够访问的服务地址。服务运行在本机时使用 127.0.0.1。",
+        publishService: "发布本机服务",
+        backServices: "返回本机服务",
+        sessionTitle: "登录与运行",
+        sessionHelp: "关闭窗口后服务仍在后台运行。退出程序会停止本机隧道，退出登录还会清除本机凭据。",
+        noMatch: "没有匹配的服务，请调整搜索条件。",
+        more: "更多",
+        unnamedComputer: "这台电脑",
         loginLead: "这是 Windows、macOS 和 Linux 共用的窗口客户端。关闭窗口会缩到托盘，隧道继续跑；要结束请用托盘或下面的「退出程序」。",
         server: "服务器地址", username: "用户名", password: "密码", newPassword: "请设置新密码（至少 12 个字符）", confirmPassword: "确认新密码", showPassword: "显示", hidePassword: "隐藏", working: "处理中…", failed: "操作失败，请重试", stale: "连接中断，显示缓存。请检查网络并重试。", synced: "最近同步", retryLatest: "读取最新版本并保留输入", conflict: "这条连接已在其他地方修改。请读取最新版本后核对并重新保存。",
         login: "登录并注册本机", quitApp: "退出程序", sync: "立即同步", add: "新建连接",
@@ -15,6 +45,36 @@
         download: "下载到「下载」文件夹并校验", openRelease: "打开 Release", downloading: "正在下载…"
       },
       en: {
+        copyAddress: "Copy public address",
+        agentOnline: "This computer is connected",
+        agentOffline: "This computer is offline. Check the network.",
+        agentStarting: "Connecting to the server",
+        welcomeTitle: "Connect this computer to home.",
+        welcomeDetail: "Keep local services within reach. Sign in to your server and let Home Tunnel handle the connection.",
+        stepSignIn: "Sign in and register this computer",
+        stepService: "Choose a local service",
+        stepShare: "Copy its address and connect anywhere",
+        connectComputer: "Connect this computer",
+        thisComputer: "THIS COMPUTER",
+        scopeNote: "Only services on this device appear here. Manage other devices in the console or Android app.",
+        settings: "Settings",
+        myServices: "Local services",
+        allServices: "All services",
+        online: "Online",
+        paused: "Paused",
+        searchServices: "Find a service",
+        statusFilter: "Status",
+        all: "All states",
+        identity: "01 · Service and public address",
+        destination: "02 · Local destination",
+        hostHelp: "Enter an address reachable from this computer. Use 127.0.0.1 for a service running here.",
+        publishService: "PUBLISH A LOCAL SERVICE",
+        backServices: "Back to services",
+        sessionTitle: "Session and runtime",
+        sessionHelp: "Closing the window keeps services running. Quitting stops local tunnels; signing out also removes this device’s credentials.",
+        noMatch: "No matching services. Try another search.",
+        more: "More",
+        unnamedComputer: "This computer",
         loginLead: "This is the same windowed client for Windows, macOS, and Linux. Closing the window hides it to the tray; tunnels keep running. Use the tray or Quit to stop.",
         server: "Server URL", username: "Username", password: "Password", newPassword: "New password (at least 12 characters)", confirmPassword: "Confirm password", showPassword: "Show", hidePassword: "Hide", working: "Working…", failed: "Operation failed. Retry.", stale: "Connection interrupted. Showing cached data. Check your network and retry.", synced: "Last synced", retryLatest: "Load latest version and keep inputs", conflict: "This connection was edited elsewhere. Load the latest version and review before saving.",
         login: "Sign in and register this PC", quitApp: "Quit", sync: "Sync now", add: "New connection",
@@ -47,7 +107,7 @@
     }
     applyLocale();
     applyTheme(document.documentElement.dataset.theme || "light");
-    $("locale-toggle").onclick = () => { locale = locale === "en" ? "zh-CN" : "en"; applyLocale(); };
+    $("locale-toggle").onclick = () => { locale = locale === "en" ? "zh-CN" : "en"; applyLocale(); renderServices(); };
     $("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     $("server").value = localStorage.getItem("ht_server") || "";
     $("username").value = localStorage.getItem("ht_username") || "";
@@ -112,15 +172,23 @@
       document.body.innerHTML = "<main><p class='muted'>" + escapeHtml(t("quitApp")) + "</p></main>";
     }
     async function showHome(background = false) {
-      if (refreshing || background && (!$("editor").classList.contains("hidden") || !$("login").classList.contains("hidden"))) return;
+      if (refreshing || background && (!$("editor").classList.contains("hidden") || !$("login").classList.contains("hidden") || !$("settings").classList.contains("hidden"))) return;
       refreshing = true;
       try {
+      $("settings").classList.add("hidden");
       $("login").classList.add("hidden");
       $("editor").classList.add("hidden");
       $("home").classList.remove("hidden");
       const state = await api("/local/state");
       consoleUrl = state.console_url || "";
-      $("status").textContent = state.stale ? t("stale") : `${state.agent_state || "—"} · ${state.agent_message || ""} · ${t("synced")} ${new Date().toLocaleTimeString(locale)}`;
+      if (!state.enrolled) { $("home").classList.add("hidden"); $("login").classList.remove("hidden"); return; }
+      $("machine-name").textContent = state.device_name || t("unnamedComputer");
+      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.0.0");
+      $("settings-server").textContent = consoleUrl;
+      $("count-total").textContent = (state.connections || []).length;
+      $("count-online").textContent = (state.connections || []).filter(c => c.enabled && c.state === "Online").length;
+      $("count-paused").textContent = (state.connections || []).filter(c => !c.enabled).length;
+      $("status").textContent = state.stale ? t("stale") : `${t(state.agent_state === "Online" ? "agentOnline" : state.agent_state === "Starting" ? "agentStarting" : "agentOffline")} · ${t("synced")} ${new Date(state.last_synced_at || Date.now()).toLocaleTimeString(locale)}`;
       if (Date.now() - lastUpdateCheck > 3600000) {
       lastUpdateCheck = Date.now();
       $("update").replaceChildren();
@@ -156,14 +224,19 @@
       } catch { /* optional update metadata */ } })();
       }
       connections = state.connections || [];
-      if (!connections.length) {
-        $("connections").innerHTML = `<p class="muted">${escapeHtml(t("empty"))}</p>`;
-      } else {
-        $("connections").innerHTML = connections.map((item) => {
-          const publicUrl = item.public_url || item.public_endpoint || "";
-          return `<article class="card"><strong>${escapeHtml(item.name)}</strong><button type="button" class="url" data-copy="${escapeHtml(publicUrl)}">${escapeHtml(publicUrl || item.subdomain)}</button><small>${escapeHtml(["tcp", "udp"].includes(item.proxy_type) ? item.proxy_type : item.local_scheme)}://${escapeHtml(item.local_host)}:${escapeHtml(item.local_port)} · ${escapeHtml(item.state)}</small><div class="actions"><button class="secondary" data-edit="${escapeHtml(item.id)}">${escapeHtml(t("edit"))}</button><button class="secondary" data-toggle="${escapeHtml(item.id)}" data-enabled="${item.enabled}">${escapeHtml(item.enabled ? t("pause") : t("enable"))}</button><button class="danger" data-delete="${escapeHtml(item.id)}">${escapeHtml(t("remove"))}</button></div></article>`;
-        }).join("");
-      }
+      renderServices();
+      } finally { refreshing = false; }
+    }
+    function renderServices() {
+      const search = $("service-search").value.trim().toLowerCase();
+      const filter = $("service-filter").value;
+      const items = connections.filter(item => (!search || `${item.name} ${item.subdomain} ${item.local_host}`.toLowerCase().includes(search)) && (filter === "all" || filter === "paused" && !item.enabled || filter === "online" && item.enabled && item.state === "Online"));
+      $("connections").innerHTML = items.length ? items.map(item => {
+        const publicUrl = item.public_url || item.public_endpoint || "";
+        const status = !item.enabled ? t("paused") : item.state === "Online" ? t("online") : item.state || "—";
+        return `<article class="service-row"><div class="service-identity"><span class="service-protocol">${escapeHtml((item.proxy_type || "http").toUpperCase())}</span><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.local_host)}:${escapeHtml(item.local_port)}</small></div></div><span class="state-badge ${item.enabled && item.state === "Online" ? "online" : ""}">${escapeHtml(status)}</span><button type="button" class="url" data-copy="${escapeHtml(publicUrl)}" aria-label="${escapeHtml(t("copyAddress"))}">${escapeHtml(publicUrl || item.subdomain)}</button><div class="actions"><button class="secondary" data-edit="${escapeHtml(item.id)}">${escapeHtml(t("edit"))}</button><button class="secondary" data-toggle="${escapeHtml(item.id)}" data-enabled="${item.enabled}">${escapeHtml(t(item.enabled ? "pause" : "enable"))}</button><details><summary>${escapeHtml(t("more"))}</summary><button class="danger" data-delete="${escapeHtml(item.id)}">${escapeHtml(t("remove"))}</button></details></div></article>`;
+      }).join("") : `<div class="empty-state"><strong>${escapeHtml(t(items.length || connections.length ? "noMatch" : "empty"))}</strong>${!connections.length ? `<button id="empty-add">${escapeHtml(t("add"))}</button>` : ""}</div>`;
+      $("empty-add")?.addEventListener("click", () => $("add").click());
       document.querySelectorAll("[data-copy]").forEach((node) => node.addEventListener("click", async () => {
         if (!node.dataset.copy) return;
         await runAction(node, async () => { await navigator.clipboard.writeText(node.dataset.copy); $("status").textContent = t("copied"); });
@@ -182,8 +255,11 @@
       document.querySelectorAll("[data-toggle]").forEach((node) => node.addEventListener("click", async () => {
         await runAction(node, async () => { await api("/local/connections/" + node.dataset.toggle, { method: "PATCH", body: JSON.stringify({ enabled: node.dataset.enabled !== "true" }) }); await showHome(); });
       }));
-      } finally { refreshing = false; }
     }
+    $("service-search").oninput = renderServices;
+    $("service-filter").onchange = renderServices;
+    $("settings-open").onclick = () => { $("home").classList.add("hidden"); $("settings").classList.remove("hidden"); };
+    $("settings-back").onclick = () => runAction($("settings-back"), () => showHome(), "settings-error");
     $("login-form").onsubmit = async (event) => {
       event.preventDefault();
       if (!$("login-form").reportValidity()) return;
@@ -205,16 +281,16 @@
       }, "login-error");
     };
     $("refresh").onclick = () => runAction($("refresh"), () => showHome());
-    $("console").onclick = () => { if (consoleUrl) window.open(consoleUrl, "_blank"); };
+    $("console").onclick = () => { if (consoleUrl) window.open(consoleUrl, "_blank", "noopener,noreferrer"); };
     $("logout").onclick = async () => {
       if (!confirm(t("confirmLogout"))) return;
       await runAction($("logout"), async () => {
         await api("/local/logout", { method: "POST" });
         location.reload();
-      });
+      }, "settings-error");
     };
     $("quit-login").onclick = () => runAction($("quit-login"), quitApp, "login-error");
-    $("quit-home").onclick = () => runAction($("quit-home"), quitApp);
+    $("quit-home").onclick = () => runAction($("quit-home"), quitApp, "settings-error");
     $("add").onclick = () => { resetEditor(); $("home").classList.add("hidden"); $("editor").classList.remove("hidden"); };
     $("cancel").onclick = () => runAction($("cancel"), () => showHome());
     let availabilityRequest = 0, availabilityTimer;
@@ -270,7 +346,7 @@
       }
       }, "edit-error");
     };
-    api("/local/state").then((state) => { if (state.enrolled) showHome(); }).catch(() => {});
+    api("/local/state").then((state) => { if (state.enrolled) return showHome(); }).catch(() => { $("login-error").textContent = t("failed"); });
 
     setInterval(() => { if (!document.hidden) showHome(true).catch(() => { $("status").textContent = t("stale"); }); }, 30000);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) showHome(true).catch(() => { $("status").textContent = t("stale"); }); });

@@ -90,7 +90,8 @@ test("desktop logout failure remains visible and retryable", async ({ page }) =>
     route.fulfill({ status: 500, json: { message: "退出失败，请重试" } }),
   );
   page.on("dialog", (dialog) => dialog.accept());
+  await page.locator("#settings-open").click();
   await page.locator("#logout").click();
-  await expect(page.locator("#status")).toContainText("退出失败");
+  await expect(page.locator("#settings-error")).toContainText("退出失败");
   await expect(page.locator("#logout")).toBeEnabled();
 });
