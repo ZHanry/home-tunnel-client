@@ -9,12 +9,26 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $directoryPath = (Resolve-Path -LiteralPath $Directory).Path
 $subjects = @("HomeTunnel-Setup-$Version-x64.exe", "HomeTunnel-Windows-$Version-x64.zip", 'home-tunnel-gui.exe', 'home-tunnel-agent.exe')
-if ($UpdateSignatures) { Update-MpSignature -ErrorAction Stop }
+$scanner = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+if (-not (Test-Path -LiteralPath $scanner -PathType Leaf)) { throw 'Microsoft Defender scanner is missing' }
+# Hosted runners may leave the installed service stopped. Start protection only
+# on the disposable CI host; never weaken preferences or add exclusions.
+if ($env:GITHUB_ACTIONS -eq 'true') {
+    $service = Get-Service -Name WinDefend -ErrorAction Stop
+    Write-Output "Defender service: $($service.Status), startup: $($service.StartType)"
+    if ($service.Status -ne 'Running') {
+        if ($service.StartType -eq 'Disabled') { Set-Service -Name WinDefend -StartupType Manual -ErrorAction Stop }
+        Start-Service -Name WinDefend -ErrorAction Stop
+        (Get-Service WinDefend).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+    }
+}
+if ($UpdateSignatures) {
+    & $scanner -SignatureUpdate
+    if ($LASTEXITCODE -ne 0) { throw "Defender signature update failed: $LASTEXITCODE" }
+}
 $status = Get-MpComputerStatus -ErrorAction Stop
 if (-not $status.AMServiceEnabled -or -not $status.AntivirusEnabled) { throw 'Microsoft Defender is unavailable; release scanning is required' }
 if ($status.AntivirusSignatureLastUpdated -lt (Get-Date).AddDays(-2)) { throw 'Defender signatures are older than 48 hours' }
-$scanner = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
-if (-not (Test-Path -LiteralPath $scanner -PathType Leaf)) { throw 'Microsoft Defender scanner is missing' }
 $report = [ordered]@{
     schema_version = 1
     status = 'pending'
@@ -33,7 +47,7 @@ try {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Scan subject is missing: $name" }
         $before = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
         # Custom scanning with this flag ignores exclusions and reports detections
-        # without changing the files; real-time protection remains enabled.
+        # without changing the files or real-time protection preferences.
         $scanOutput = & $scanner -Scan -ScanType 3 -File $file -DisableRemediation 2>&1
         $scanExit = $LASTEXITCODE
         $scanOutput | Write-Output
