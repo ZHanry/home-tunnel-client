@@ -42,6 +42,7 @@ test("RTSP preset creates TCP with an automatic port and no required web subdoma
   await page.route("**/local/connections", route => route.fulfill({json:{id:"camera"}}));
   await page.locator("#add").click();
   await page.locator("#protocol").selectOption("rtsp");
+  await expect(page.locator("#editor-title")).toHaveText("新建连接");
   await expect(page.locator("#port")).toHaveValue("554");
   await expect(page.locator("#web-address")).not.toBeVisible();
   await expect(page.locator("#transport-note")).toContainText("RTSP over TCP");

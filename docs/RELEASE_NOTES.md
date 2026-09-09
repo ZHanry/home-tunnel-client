@@ -1,4 +1,4 @@
-# Home Tunnel Client 6.1.0
+# Home Tunnel Client 6.1.1
 
 - 修复 Windows 启动时额外控制台窗口：直接读取机器标识，不再调用 reg.exe；受管 Agent 的启动和配置校验均不创建控制台，日志保留在本地文件。
 - 为 GUI EXE 嵌入图标和版本资源，并为原生窗口绑定图标。桌面窗口默认尺寸调整为适合服务工作区的大小。
@@ -9,3 +9,5 @@
 TCP/UDP 创建需要服务端 6.1.0。管理员需启用实际公网端口范围；普通用户还需获得控制台中的自助创建授权。[连接类型说明](https://github.com/ZHanry/home-tunnel-client/blob/v6.1.0/docs/CONNECTION_TYPES.md)。
 
 Windows 使用标准 Inno Setup 安装器。未配置 Authenticode 代码签名，系统的发布者／信誉提示与 Defender 恶意软件扫描是不同检查。原 6.0.0 EXE 保持撤回。
+
+- 新建连接的标题和空状态统一使用通用文案，避免 RTSP/TCP/UDP 流程仍显示 HTTP。

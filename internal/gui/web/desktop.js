@@ -10,7 +10,7 @@
         rawPortNote: "公网端口由服务端自动分配，限于管理员已开放的范围。TCP/UDP 的认证与加密由目标应用提供。",
         rtspNote: "播放器必须使用 RTSP over TCP（交错传输）。复制地址后补上摄像头的流路径，例如 /Streaming/Channels/101。",
         udpNote: "适用于固定端口 UDP 服务。动态媒体端口协商需要额外配置。",
-        serverUpgrade: "此服务端尚未提供客户端 TCP/UDP 创建能力，请升级服务端至 6.1.0 或以上。",
+        serverUpgrade: "此服务端尚未提供客户端 TCP/UDP 创建能力，请升级服务端至 6.1.1 或以上。",
         transportDisabled: "服务端未开放此传输类型。请管理员启用对应的 TCP/UDP 端口范围和防火墙。",
         rawNotAllowed: "管理员尚未允许普通用户自行创建 TCP/UDP 连接。请在控制台的系统设置中授权。",
         rawUnavailableOffline: "无法确认服务器的端口能力，请恢复连接后重试。",
@@ -54,8 +54,8 @@
         login: "登录并注册本机", quitApp: "退出程序", sync: "立即同步", add: "新建连接",
         console: "打开控制台", logout: "退出账号", name: "名称", subdomain: "公网子域",
         scheme: "本地协议", host: "本地主机", port: "本地端口", enabled: "启用这条连接",
-        save: "保存", cancel: "取消", createTitle: "新建 HTTP 连接", editTitle: "编辑 ",
-        empty: "还没有连接。点「新建连接」发布家里的 HTTP 服务。", pause: "暂停", enable: "启用",
+        save: "保存", cancel: "取消", createTitle: "新建连接", editTitle: "编辑 ",
+        empty: "还没有连接。点「新建连接」发布这台设备上的服务。", pause: "暂停", enable: "启用",
         remove: "删除", edit: "编辑", copied: "已复制公网地址", connecting: "正在连接…",
         confirmDelete: "确定删除这条连接？公网地址会立即失效。",
         confirmLogout: "退出账号会停止本机隧道，并清除这台电脑上的设备登录状态。",
@@ -74,7 +74,7 @@
         rawPortNote: "The server assigns a public port from the administrator’s configured range. The target application provides authentication and encryption.",
         rtspNote: "Use RTSP over TCP (interleaved mode) in your player. Append the camera stream path, such as /Streaming/Channels/101, to the copied address.",
         udpNote: "For fixed-port UDP services. Dynamic media-port negotiation needs additional configuration.",
-        serverUpgrade: "Upgrade the server to 6.1.0 or later to create TCP/UDP connections here.",
+        serverUpgrade: "Upgrade the server to 6.1.1 or later to create TCP/UDP connections here.",
         transportDisabled: "The server has not enabled this transport. Ask the administrator to configure the matching TCP/UDP port range and firewall.",
         rawNotAllowed: "The administrator has not enabled TCP/UDP self-service for regular users. Permission is managed in console settings.",
         rawUnavailableOffline: "Reconnect to the server to check port availability.",
@@ -118,8 +118,8 @@
         login: "Sign in and register this PC", quitApp: "Quit", sync: "Sync now", add: "New connection",
         console: "Open console", logout: "Sign out", name: "Name", subdomain: "Public subdomain",
         scheme: "Local scheme", host: "Local host", port: "Local port", enabled: "Enable this connection",
-        save: "Save", cancel: "Cancel", createTitle: "New HTTP connection", editTitle: "Edit ",
-        empty: "No connections yet. Use New connection to publish a local HTTP service.", pause: "Pause", enable: "Enable",
+        save: "Save", cancel: "Cancel", createTitle: "New connection", editTitle: "Edit ",
+        empty: "No connections yet. Use New connection to publish a service from this device.", pause: "Pause", enable: "Enable",
         remove: "Delete", edit: "Edit", copied: "Public address copied", connecting: "Connecting…",
         confirmDelete: "Delete this connection? The public address will stop working immediately.",
         confirmLogout: "Signing out stops local tunnels and clears this computer's device login.",
@@ -265,7 +265,7 @@
       capabilities = state.capabilities || {}; serverStale = Boolean(state.stale);
       if (!state.enrolled) { $("home").classList.add("hidden"); $("login").classList.remove("hidden"); return; }
       $("machine-name").textContent = state.device_name || t("unnamedComputer");
-      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.1.0");
+      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.1.1");
       $("settings-server").textContent = consoleUrl;
       $("count-total").textContent = (state.connections || []).length;
       $("count-online").textContent = (state.connections || []).filter(c => c.enabled && c.state === "Online").length;

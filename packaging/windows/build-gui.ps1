@@ -2,7 +2,7 @@
 # Requires Go 1.26+. Prefer packaging/windows/build-release.ps1 for the zip.
 
 param(
-    [string]$Version = "6.1.0",
+    [string]$Version = "6.1.1",
     [string]$OutputDir = "",
     [string]$WindRes = $env:HOME_TUNNEL_WINDRES,
     [string]$AgentVersion = "",
