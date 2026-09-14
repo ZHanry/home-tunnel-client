@@ -38,7 +38,7 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
   Timer? _updateTimer;
 
   double get em => 14.0;
-  double? get height => bind.isIncomingOnly() ? null : em * 3;
+  double? get height => bind.isIncomingOnly() ? null : em * 3 * MediaQuery.textScalerOf(context).scale(1).clamp(1, 2); // HOMEDESK: 放大字体时保留状态文字高度。
 
   void onUsePublicServerGuide() {
     const url = "https://rustdesk.com/pricing";
@@ -125,15 +125,15 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
                         : Color.fromARGB(255, 224, 79, 95)),
               ),
             ).marginSymmetric(horizontal: em),
-            Container(
+            Flexible(child: Container( // HOMEDESK: 窄窗状态文案可换行，不挤出设置入口。
               width: isIncomingOnly ? 226 : null,
               child: _buildConnStatusMsg(),
-            ),
+            )),
             // stop
             if (!isIncomingOnly) startServiceWidget(),
             // ready && public
             // No need to show the guide if is custom client.
-            if (!isIncomingOnly) setupServerWidget(),
+            if (!isIncomingOnly && !bind.isCustomClient()) setupServerWidget(), // HOMEDESK: 家庭版不显示公共服务器推广。
           ],
         );
 
@@ -161,9 +161,10 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
           : stateGlobal.svcStatus.value == SvcStatus.connecting
               ? translate("connecting_status")
               : stateGlobal.svcStatus.value == SvcStatus.notReady
-                  ? translate("not_ready_status")
+                  ? '家庭连接服务未就绪，请检查网络设置' // HOMEDESK: 给出可执行的下一步。
                   : translate('Ready'),
       style: TextStyle(fontSize: em),
+      maxLines: 2, overflow: TextOverflow.ellipsis, // HOMEDESK: 适配窄窗口和大字体。
     );
   }
 

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/homedesk_devices.dart'; // HOMEDESK: 独立家庭设备墙。
+import 'package:flutter_hbb/homedesk_dashboard.dart'; // HOMEDESK: 家庭设备中心主布局。
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -56,19 +57,23 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   final RxBool _block = false.obs;
 
   final GlobalKey _childKey = GlobalKey();
+  final _dashboardKey = GlobalKey<HomeDeskDashboardState>(); // HOMEDESK: 统一手动连接入口。
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final isIncomingOnly = bind.isIncomingOnly();
-    return _buildBlock(
-        child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        buildLeftPane(context),
-        if (!isIncomingOnly) const VerticalDivider(width: 1),
-        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
-      ],
+    // HOMEDESK: 双角色客户端以设备中心为首页；纯被控形态保留本机信息页。
+    return _buildBlock(child: isIncomingOnly ? buildLeftPane(context) : HomeDeskDashboard(
+      key: _dashboardKey,
+      brandName: appName,
+      devicesBuilder: (_) => HomeDeskDevices(onManualConnect: () => _dashboardKey.currentState?.showManualConnection()),
+      recentBuilder: (_) => const ConnectionPage(),
+      localBuilder: (_) => buildLeftPane(context),
+      statusBuilder: (_) => const OnlineStatusWidget(),
+      onSettings: () => DesktopTabPage.onAddSetting(),
+      onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network),
+      onConnect: (id) => connect(context, id),
     ));
   }
 
@@ -82,11 +87,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final isOutgoingOnly = bind.isOutgoingOnly();
     final children = <Widget>[
       if (!isOutgoingOnly) buildPresetPasswordWarning(),
-      if (bind.isCustomClient())
-        Align(
-          alignment: Alignment.center,
-          child: loadPowered(context),
-        ),
+      // HOMEDESK: 首页仅展示自有品牌，上游来源与开源说明统一放在关于页。
       Align(
         alignment: Alignment.center,
         child: loadLogo(),
@@ -138,14 +139,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           children: [
             Column(
               children: [
-                SingleChildScrollView(
+                Expanded(child: SingleChildScrollView( // HOMEDESK: 本机信息弹层在大字体下可滚动。
                   controller: _leftPaneScrollController,
                   child: Column(
                     key: _childKey,
                     children: children,
                   ),
-                ),
-                Expanded(child: Container())
+                )),
               ],
             ),
             if (isOutgoingOnly)
@@ -178,22 +178,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           ],
         ),
       ),
-    );
-  }
-
-  buildRightPane(BuildContext context) {
-    return Container(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      // HOMEDESK: 上报关闭时保持原页面；管理台不承载远控连接。
-      child: bind.mainGetLocalOption(key: 'homedesk-console-url').isEmpty
-          ? ConnectionPage()
-          : Column(children: [
-              SizedBox( // HOMEDESK: 字体放大时为设备卡片增加高度。
-                height: HomeDeskDevices.heightForTextScale(MediaQuery.textScalerOf(context).scale(1)),
-                child: const HomeDeskDevices(),
-              ),
-              Expanded(child: ConnectionPage()),
-            ]),
     );
   }
 

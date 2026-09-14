@@ -6,11 +6,17 @@ import 'homedesk_console_api.dart';
 import 'models/platform_model.dart';
 
 class HomeDeskDevices extends StatefulWidget {
-  static double heightForTextScale(double scale) =>
-      194.0 + (scale > 1 ? scale - 1 : 0.0) * 80.0;
   final HomeDeskConsoleApi? api;
   final void Function(BuildContext, String)? onConnect;
-  const HomeDeskDevices({Key? key, this.api, this.onConnect}) : super(key: key);
+  final VoidCallback? onManualConnect;
+  final String Function(String)? readOption;
+  const HomeDeskDevices(
+      {Key? key,
+      this.api,
+      this.onConnect,
+      this.onManualConnect,
+      this.readOption})
+      : super(key: key);
   @override
   State<HomeDeskDevices> createState() => _HomeDeskDevicesState();
 }
@@ -22,6 +28,7 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
   final Set<String> _waking = {};
   bool _loading = false;
   String _message = '';
+  String _room = '全部';
 
   @override
   void initState() {
@@ -29,15 +36,19 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
     try {
       _api = widget.api;
       if (_api == null) {
-        final url = bind.mainGetLocalOption(key: 'homedesk-console-url');
-        if (url.isEmpty) return;
-        _api = HomeDeskConsoleApi(
-            url, bind.mainGetLocalOption(key: 'homedesk-console-token'));
+        final read = widget.readOption ??
+            (String key) => bind.mainGetLocalOption(key: key);
+        final url = read('homedesk-console-url');
+        if (url.isEmpty) {
+          _message = '家庭设备服务尚未连接，你仍可通过设备 ID 或内网 IP 连接。';
+          return;
+        }
+        _api = HomeDeskConsoleApi(url, read('homedesk-console-token'));
       }
       _refresh();
       _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
     } catch (_) {
-      _message = '管理台配置无效，仍可使用下方设备 ID 连接';
+      _message = '家庭设备服务配置有误，你仍可使用手动连接。';
     }
   }
 
@@ -51,10 +62,10 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
         _devices = result;
         _waking.removeWhere(
             (id) => result.any((d) => d['id'] == id && d['online'] == true));
-        _message = result.isEmpty ? '还没有设备，请启用被控端的管理台上报' : '';
+        _message = result.isEmpty ? '打开其他电脑上的客户端，接入家庭设备服务后，它们就会出现在这里。' : '';
       });
     } catch (_) {
-      if (mounted) setState(() => _message = '管理台暂不可用，仍可使用下方设备 ID 连接');
+      if (mounted) setState(() => _message = '设备状态暂未更新，你仍可尝试连接或手动连接。');
     } finally {
       _loading = false;
     }
@@ -88,75 +99,235 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
 
   @override
   Widget build(BuildContext context) {
-    if (_api == null && _message.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Text('我的设备', style: TextStyle(fontWeight: FontWeight.bold)),
-          const Spacer(),
-          IconButton(
-              tooltip: '刷新设备',
-              onPressed: _refresh,
-              icon: const Icon(Icons.refresh, size: 18)),
-        ]),
-        if (_message.isNotEmpty)
-          Text(_message,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12)),
-        if (_devices.isNotEmpty)
-          Expanded(
-              child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: _devices.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final d = _devices[index], id = d['id'].toString();
-              final online = d['online'] == true;
-              final room = d['room']?.toString() ?? '';
-              return SizedBox(
-                  width: 210,
-                  child: Card(
-                      child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(d['name']?.toString() ?? id,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                          Text(
-                              '${room.isEmpty ? '未分组' : room} · ${online ? '在线' : '离线'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12)),
-                          Row(children: [
-                            TextButton(
-                                onPressed: () {
-                                  if (widget.onConnect != null) {
-                                    widget.onConnect!(context, id);
-                                  } else {
-                                    connect(context, id);
-                                  }
-                                },
-                                child: const Text('连接')),
-                            if (!online && d['wol_configured'] == true)
-                              TextButton(
-                                  onPressed: _waking.contains(id)
-                                      ? null
-                                      : () => _wake(id),
-                                  child: Text(
-                                      _waking.contains(id) ? '等待上线' : '开机')),
-                          ]),
-                        ]),
-                  )));
-            },
-          )),
+    final colors = Theme.of(context).colorScheme;
+    final rooms = _devices.map(_roomOf).toSet().toList()..sort();
+    final room = rooms.contains(_room) ? _room : '全部';
+    final visible =
+        _devices.where((d) => room == '全部' || _roomOf(d) == room).toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(
+            child: Text(
+                '${_devices.length} 台设备 · ${_devices.where((d) => d['online'] == true).length} 台在线',
+                style:
+                    TextStyle(fontSize: 13, color: colors.onSurfaceVariant))),
+        IconButton(
+            tooltip: '刷新设备',
+            onPressed: _api == null ? null : _refresh,
+            icon: const Icon(Icons.refresh_rounded, size: 20)),
       ]),
-    );
+      if (rooms.isNotEmpty)
+        Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: ['全部', ...rooms]
+                    .map(
+                      (value) => ChoiceChip(
+                          label: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 140),
+                              child: Text(value,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis)),
+                          selected: room == value,
+                          onSelected: (_) => setState(() => _room = value)),
+                    )
+                    .toList())),
+      if (_message.isNotEmpty && _devices.isNotEmpty)
+        Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(_message,
+                style:
+                    TextStyle(color: colors.onSurfaceVariant, fontSize: 13))),
+      Expanded(
+          child: _devices.isEmpty
+              ? _empty(context)
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final scale = MediaQuery.textScalerOf(context).scale(1);
+                    final columns = scale > 1.4
+                        ? 1
+                        : (constraints.maxWidth / 300).floor().clamp(1, 3);
+                    final tileWidth =
+                        (constraints.maxWidth - 16 * (columns - 1)) / columns;
+                    final stacked = tileWidth < 280;
+                    return GridView.builder(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: columns,
+                            crossAxisSpacing: 16,
+                            mainAxisSpacing: 16,
+                            mainAxisExtent: 260 +
+                                (scale > 1 ? scale - 1 : 0) * 130 +
+                                (stacked ? 52 : 0)),
+                        itemCount: visible.length,
+                        itemBuilder: (_, index) =>
+                            _card(context, visible[index], stacked));
+                  },
+                )),
+    ]);
+  }
+
+  String _roomOf(Map<String, dynamic> d) {
+    final room = d['room']?.toString().trim() ?? '';
+    return room.isEmpty ? '未分组' : room;
+  }
+
+  String _detailOf(Map<String, dynamic> d) {
+    if (d['online'] != true) {
+      final stamp = d['online_at'];
+      if (stamp is! num || stamp <= 0) return '尚无上线记录';
+      final at = DateTime.fromMillisecondsSinceEpoch(stamp.toInt() * 1000);
+      final age = DateTime.now().difference(at);
+      if (age.inMinutes < 1) return '最近在线：刚刚';
+      if (age.inMinutes < 60) return '最近在线：${age.inMinutes} 分钟前';
+      if (age.inHours < 24) return '最近在线：${age.inHours} 小时前';
+      return '最近在线：${at.month} 月 ${at.day} 日';
+    }
+    final raw = d['platform']?.toString().toLowerCase() ?? '';
+    final platform =
+        {'windows': 'Windows', 'linux': 'Linux', 'macos': 'macOS'}[raw] ?? '电脑';
+    final rawArch = d['arch']?.toString() ?? '';
+    final arch = {
+          'x86_64': 'x64',
+          'amd64': 'x64',
+          'aarch64': 'ARM64',
+          'arm64': 'ARM64'
+        }[rawArch] ??
+        rawArch;
+    return arch.isEmpty ? platform : '$platform · $arch';
+  }
+
+  Widget _empty(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
+        child: SingleChildScrollView(
+            child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 480),
+      child: Card(
+          child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                  color: colors.primaryContainer,
+                  borderRadius: BorderRadius.circular(24)),
+              child: Icon(Icons.devices_rounded,
+                  size: 36, color: colors.onPrimaryContainer)),
+          const SizedBox(height: 24),
+          Text(_loading ? '正在查找家庭设备' : '从连接第一台电脑开始',
+              textAlign: TextAlign.center,
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          Text(_loading ? '正在获取最新设备状态…' : _message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 14, height: 1.6, color: colors.onSurfaceVariant)),
+          if (widget.onManualConnect != null) ...[
+            const SizedBox(height: 24),
+            FilledButton.icon(
+                onPressed: widget.onManualConnect,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('手动连接'))
+          ],
+        ]),
+      )),
+    )));
+  }
+
+  Widget _card(BuildContext context, Map<String, dynamic> d, bool stacked) {
+    final colors = Theme.of(context).colorScheme;
+    final id = d['id'].toString();
+    final online = d['online'] == true;
+    final owner = d['owner']?.toString().trim() ?? '';
+    final statusColor = online
+        ? (colors.brightness == Brightness.dark
+            ? const Color(0xFF6DE2B6)
+            : const Color(0xFF127C60))
+        : colors.onSurfaceVariant;
+    void open() {
+      if (widget.onConnect != null) {
+        widget.onConnect!(context, id);
+      } else {
+        connect(context, id);
+      }
+    }
+
+    final connectButton =
+        OutlinedButton(onPressed: open, child: Text(online ? '连接设备' : '尝试连接'));
+    final wakeButton = FilledButton(
+        onPressed: _waking.contains(id) ? null : () => _wake(id),
+        child: Text(_waking.contains(id) ? '等待上线' : '远程开机'));
+    return Card(
+        child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                          color: colors.primaryContainer.withOpacity(.55),
+                          borderRadius: BorderRadius.circular(13)),
+                      child: Icon(Icons.desktop_windows_rounded,
+                          color: colors.primary, size: 23)),
+                  const Spacer(),
+                  Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 5),
+                      decoration: BoxDecoration(
+                          color: statusColor.withOpacity(.09),
+                          borderRadius: BorderRadius.circular(20)),
+                      child: Text(online ? '● 在线' : '○ 离线',
+                          style: TextStyle(color: statusColor, fontSize: 12))),
+                ]),
+                const SizedBox(height: 14),
+                Text(d['name']?.toString() ?? id,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 7),
+                Text('${_roomOf(d)}${owner.isEmpty ? '' : ' · $owner'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: colors.onSurfaceVariant, fontSize: 13)),
+                const SizedBox(height: 7),
+                Text(_detailOf(d),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: colors.onSurfaceVariant, fontSize: 12)),
+                const Spacer(),
+                if (!online && d['wol_configured'] == true)
+                  stacked
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                              wakeButton,
+                              const SizedBox(height: 8),
+                              connectButton
+                            ])
+                      : Row(children: [
+                          Expanded(child: connectButton),
+                          const SizedBox(width: 8),
+                          Expanded(child: wakeButton)
+                        ])
+                else
+                  SizedBox(
+                      width: double.infinity,
+                      child: online
+                          ? FilledButton(
+                              onPressed: open, child: const Text('连接设备'))
+                          : connectButton),
+              ],
+            )));
   }
 }

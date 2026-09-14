@@ -14,6 +14,7 @@
 | 客户端上报 | 独立异步发送器；后台服务启动心跳，认证成功后登记会话，释放时结束；有界队列及退避 |
 | 客户端外围限制 | 私网直接 IP/CIDR 检查、HTTP POST/重定向/下载边界、公网 STUN 阻断、关闭插件初始化及公网机器人读取 |
 | 家庭界面 | 原生首页设备墙、设备连接和 WOL；默认简体中文配置；隐藏账号/云地址簿；设置仅保留四组；新增纯内网模式开关 |
+| 家庭设备中心改版 | 左侧导航、设备卡片与房间筛选、手动连接、本机信息弹层、浅深色主题及网络状态入口；设备服务未接入时显示真实空态 |
 | 构建支持 | Windows x64/Linux x64/ARM64 原生预检与构建入口；ARM64 bundle 与 deb 目录识别；离线依赖准备/安装脚本 |
 | CI 与部署 | 仓库验证工作流、三平台私有 Runner 构建工作流、固定 gitleaks 扫描、Console Dockerfile 和 NAS host 网络 Compose 覆盖文件 |
 
@@ -52,9 +53,9 @@
 4. **真实远控链路**：未获得 NAS 管理入口及另一台 Windows 地址，尚未正式部署、双机连接、加密/P2P/UDP 检查、锁屏/重启/断外网/性能实测；smoke 保持未勾选。
 5. **纯内网全量保证**：已补充入口限制，但尚未完成所有出站点清单、代理配置/外部链接与服务端回包地址的全路径核验，也未抓包。不能宣称零公网出站验收通过。
 6. **会话审计完善**：直连/中继类型已接入并编译通过，真实链路对照仍待实测；队列不是落盘 outbox，断电和长时间服务故障可能丢事件；控制台与设备共享静态 Token。
-7. **原生界面验收**：首页设备墙和 WOL 已接入并通过组件测试；完整安装后的高级模式、中文/错误提示、托盘及多 DPI 仍需实机审核。
+7. **原生界面验收**：家庭设备中心已通过合成设备组件测试和本机进程验证；完整安装后的高级模式、中文/错误提示、托盘及多 DPI 仍需实机审核。设备服务未接入时应显示真实空态。
 8. **后续功能**：Web 自托管尚无符合当前 OSS 约束的已验证交付，见 WEB_CONSOLE.md；龙芯 no-GUI、Android 真机、WireGuard 回家、管理台 TOTP/成员权限尚未实现或验收。
-9. **正式 CI/Gemini 审计**：工作流未推送运行，私有 Runner 未配置；本轮浏览器目视不替代设计要求的 Gemini 审计。
+9. **正式 CI/Gemini 审计**：工作流未推送运行，私有 Runner 未配置；Console 和整体设计尚未完成 Gemini 审计。家庭客户端合成图已单独审查且无 Blocker，但不替代实机视觉验收。
 
 ## 上游改动范围
 
@@ -71,5 +72,13 @@
 - `client/src/auth_2fa.rs`、`flutter_ffi.rs`、`plugin/mod.rs`：公网通知/插件入口。
 - `client/src/rendezvous_mediator.rs`：初始化本地连接类型元数据。
 - `client/flutter/lib/desktop/pages/desktop_setting_page.dart`、`desktop_home_page.dart`：四组家庭设置、开关与原生设备墙。
+- `client/flutter/lib/homedesk_dashboard.dart`、`homedesk_devices.dart`：家庭设备中心布局、设备卡片、房间筛选和 WOL 入口。
 
 新增逻辑独立在 `homedesk_console.rs`、`homedesk_report.rs`、`server/console/` 和 `build/ci/`。本次保存为阶段性 Git 版本，不代表全部功能或实机门禁通过；没有推送或部署到真实 NAS，没有填写真实 IP、公钥、Token。
+
+## 2026-09-08 家庭设备中心 UI 更新
+
+- 已在本机安装的 HomeDesk 中更新家庭设备中心；安装文件与本轮 Release 构建文件摘要一致，主窗口重新启动后可响应。
+- 常规合成设备组件测试共 6 项通过，覆盖设备卡片、房间筛选、手动连接、本机信息默认隐藏、窄窗口/双倍字体和空态；仅启用本机预览环境变量时额外导出 1 项深浅色合成预览（共 7 项）。Gemini 对合成图审计无 Blocker。手动连接已改为描边按钮，网络状态入口已补充文案与设置入口。
+- CI 的 Flutter 静态分析和组件测试已纳入 `homedesk_dashboard.dart` 与 `homedesk_dashboard_test.dart`；CI 不设置本机预览环境变量。
+- 当前安装仍使用测试服务器配置，设备服务尚未接入，故会显示真实空态；旧 portable 验证包未重新打包，尚未创建新的 Git 提交。未进行真实双机、ARM、WOL 实机或完整 Windows 视觉验收。

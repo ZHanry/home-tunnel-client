@@ -63,9 +63,9 @@ jobs:
           flutter pub get --enforce-lockfile
           cd ..
           flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h --llvm-path /usr/lib/llvm-14/lib/libclang.so.1
-      - name: 设备墙与内网请求测试
+      - name: 家庭设备中心与内网请求测试
         run: |
           dart --enable-asserts tests/dart/console_api_test.dart
           cd client/flutter
-          flutter analyze --no-pub lib/homedesk_console_api.dart lib/homedesk_devices.dart
-          flutter test --no-pub test/homedesk_devices_test.dart
+          flutter analyze --no-pub lib/homedesk_console_api.dart lib/homedesk_devices.dart lib/homedesk_dashboard.dart
+          flutter test --no-pub test/homedesk_devices_test.dart test/homedesk_dashboard_test.dart

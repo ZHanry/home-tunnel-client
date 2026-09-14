@@ -42,7 +42,7 @@ Widget host(FakeConsole api,
       data: MediaQueryData(textScaler: TextScaler.linear(scale)),
       child: SizedBox(
           width: 600,
-            height: HomeDeskDevices.heightForTextScale(scale),
+          height: 580,
           child: HomeDeskDevices(api: api, onConnect: onConnect)),
     )));
 
@@ -55,7 +55,7 @@ void main() {
     }));
     await tester.pump();
     expect(find.text('书房电脑'), findsOneWidget);
-    await tester.tap(find.widgetWithText(TextButton, '连接'));
+    await tester.tap(find.widgetWithText(OutlinedButton, '尝试连接'));
     expect(connected, '123456');
     await tester.pumpWidget(const SizedBox());
     expect(api.closed, isTrue);
@@ -64,7 +64,7 @@ void main() {
     final api = FakeConsole();
     await tester.pumpWidget(host(api));
     await tester.pump();
-    await tester.tap(find.widgetWithText(TextButton, '开机'));
+    await tester.tap(find.widgetWithText(FilledButton, '远程开机'));
     await tester.pump();
     expect(api.woken, '123456');
     expect(find.text('等待上线'), findsOneWidget);
@@ -72,7 +72,7 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
     await tester.pump();
     expect(find.text('等待上线'), findsNothing);
-    expect(find.text('书房 · 在线'), findsOneWidget);
+    expect(find.text('● 在线'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 30));
   });
@@ -84,7 +84,7 @@ void main() {
     api.fail = true;
     await tester.pump(const Duration(seconds: 10));
     await tester.pump();
-    expect(find.text('管理台暂不可用，仍可使用下方设备 ID 连接'), findsOneWidget);
+    expect(find.text('设备状态暂未更新，你仍可尝试连接或手动连接。'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });

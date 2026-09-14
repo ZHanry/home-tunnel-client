@@ -2452,12 +2452,16 @@ class _AboutState extends State<_About> {
       final scrollController = ScrollController();
       return SingleChildScrollView(
         controller: scrollController,
-        child: _Card(title: translate('About RustDesk'), children: [
+        child: _Card(title: '关于 $appName', children: [ // HOMEDESK: 标题使用当前品牌，内部保留开源来源说明。
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(
                 height: 8.0,
+              ),
+              // HOMEDESK: 首页去除支持提示后，在关于页明确保留项目来源。
+              const SelectionArea(
+                child: Text('基于 RustDesk 开源项目开发 · AGPL-3.0'),
               ),
               // HOMEDESK: 两秒内连续点击版本号五次，解锁并持久化高级模式。
               GestureDetector(
