@@ -33,7 +33,8 @@ about every security product.
 - Exercise silent installation, installed-file hash checks and native
   uninstallation on the isolated runner.
 - Attest the EXE and ZIP separately. Keep antivirus and installation reports in
-  Actions evidence; do not add engineering reports to the public download list.
+  durable Release assets as well as Actions evidence. Keep the README download
+  table focused on installable packages, with a separate verification link.
 
 Antivirus scanning, Authenticode signing, SmartScreen reputation, dependency
 auditing and build provenance are different checks. Passing one does not imply

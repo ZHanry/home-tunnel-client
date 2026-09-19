@@ -25,15 +25,22 @@ func TestClientUpdateVersionIsIndependentOfAgent(t *testing.T) {
 }
 
 func TestParseChecksum(t *testing.T) {
-	got := parseChecksum("abc123  HomeTunnel-Setup-5.0.0-x64.exe\n", "HomeTunnel-Setup-5.0.0-x64.exe")
-	if got != "abc123" {
-		t.Fatalf("got %q", got)
+	digest := strings.Repeat("a", 64)
+	cases := []struct{ text, expected string }{
+		{digest + "  file.zip\n", digest},
+		{digest + " *file.zip\n", digest},
+		{"abc123  file.zip", ""},
+		{digest, ""},
+		{digest + "  other-file.zip", ""},
+		{digest + "  ../file.zip", ""},
+		{digest + "  file.zip\n" + digest + "  file.zip", ""},
 	}
-	if parseChecksum("deadbeef\n", "file.zip") != "deadbeef" {
-		t.Fatal("single-field checksum")
+	for _, c := range cases {
+		if got := parseChecksum(c.text, "file.zip"); got != c.expected {
+			t.Errorf("parseChecksum(%q) = %q", c.text, got)
+		}
 	}
 }
-
 func TestPackageAssetMatchesCurrentOS(t *testing.T) {
 	release := githubRelease{
 		TagName: "v3.2.1",
@@ -65,11 +72,14 @@ func TestUpdateCheckUsesReleaseAsset(t *testing.T) {
 			{"name": "home-tunnel-macos-9.9.9-" + runtime.GOARCH + ".tar.gz", "browser_download_url": "https://example.com/app-mac.tgz"},
 		},
 	})
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("content-type", "application/json")
 		_, _ = writer.Write(payload)
 	}))
 	t.Cleanup(upstream.Close)
+	oldClient := updateHTTPClient
+	updateHTTPClient = upstream.Client()
+	t.Cleanup(func() { updateHTTPClient = oldClient })
 	previous := githubLatestRelease
 	githubLatestRelease = upstream.URL
 	t.Cleanup(func() { githubLatestRelease = previous })
@@ -115,8 +125,11 @@ func TestDownloadUpdateVerifiesSHA256(t *testing.T) {
 			},
 		})
 	})
-	upstream := httptest.NewServer(mux)
+	upstream := httptest.NewTLSServer(mux)
 	t.Cleanup(upstream.Close)
+	oldClient := updateHTTPClient
+	updateHTTPClient = upstream.Client()
+	t.Cleanup(func() { updateHTTPClient = oldClient })
 	mux.HandleFunc("/file", func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write(archive)
 	})
@@ -185,8 +198,11 @@ func TestDownloadUpdateRejectsBadChecksum(t *testing.T) {
 		t.Skip("no packaged GUI asset")
 	}
 	mux := http.NewServeMux()
-	upstream := httptest.NewServer(mux)
+	upstream := httptest.NewTLSServer(mux)
 	t.Cleanup(upstream.Close)
+	oldClient := updateHTTPClient
+	updateHTTPClient = upstream.Client()
+	t.Cleanup(func() { updateHTTPClient = oldClient })
 	mux.HandleFunc("/file", func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = writer.Write([]byte("tampered"))
 	})

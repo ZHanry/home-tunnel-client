@@ -1,6 +1,6 @@
 #define AppName "Home Tunnel"
 #ifndef AppVersion
-  #define AppVersion "6.1.1"
+  #define AppVersion "7.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "."
@@ -45,6 +45,12 @@ Source: "{#SourceDir}\HomeTunnel.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\FRP-LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\platform-signing.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\README*.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\contracts\*"; DestDir: "{app}\contracts"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourceDir}\packaging\nas\*"; DestDir: "{app}\packaging\nas"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
 Type: files; Name: "{app}\uninstall.cmd"

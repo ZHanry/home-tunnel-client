@@ -1,5 +1,5 @@
     const strings = {
-      "zh-CN": {
+      "zh-CN": { select: "选择", batchPause: "暂停所选", batchResume: "恢复所选", tags: "设备标签（逗号分隔，最多 12 个）", favorite: "收藏此设备", metadata: "设备标记", saveMetadata: "保存标记", loginMethod: "接入方式", accountLogin: "账号密码", codeLogin: "一次性接入码", enrollmentCode: "接入码（在控制台的我的账号页面生成）", mfaCode: "动态码或恢复码（已启用双重验证时填写）",
         connectionType: "连接类型",
         typeWeb: "Web · HTTP / HTTPS",
         typeRtsp: "RTSP 摄像头 · TCP",
@@ -10,7 +10,7 @@
         rawPortNote: "公网端口由服务端自动分配，限于管理员已开放的范围。TCP/UDP 的认证与加密由目标应用提供。",
         rtspNote: "播放器必须使用 RTSP over TCP（交错传输）。复制地址后补上摄像头的流路径，例如 /Streaming/Channels/101。",
         udpNote: "适用于固定端口 UDP 服务。动态媒体端口协商需要额外配置。",
-        serverUpgrade: "此服务端尚未提供客户端 TCP/UDP 创建能力，请升级服务端至 6.1.0 或以上。",
+        serverUpgrade: "此服务端尚未提供客户端 TCP/UDP 创建能力，请升级服务端至 7.0.0。",
         transportDisabled: "服务端未开放此传输类型。请管理员启用对应的 TCP/UDP 端口范围和防火墙。",
         rawNotAllowed: "管理员尚未允许普通用户自行创建 TCP/UDP 连接。请在控制台的系统设置中授权。",
         rawUnavailableOffline: "无法确认服务器的端口能力，请恢复连接后重试。",
@@ -63,7 +63,7 @@
         updatePrefix: "有新版本 ", updateCurrent: "（当前 ", updateSuffix: "）。",
         download: "下载到「下载」文件夹并校验", openRelease: "打开 Release", downloading: "正在下载…"
       },
-      en: {
+      en: { select: "Select", batchPause: "Pause selected", batchResume: "Resume selected", tags: "Device tags (comma separated, up to 12)", favorite: "Favorite this device", metadata: "Device organization", saveMetadata: "Save tags", loginMethod: "Sign-in method", accountLogin: "Account and password", codeLogin: "One-time enrollment code", enrollmentCode: "Enrollment code (create in your console account page)", mfaCode: "Authenticator or recovery code (if MFA is enabled)",
         connectionType: "Connection type",
         typeWeb: "Web · HTTP / HTTPS",
         typeRtsp: "RTSP camera · TCP",
@@ -74,7 +74,7 @@
         rawPortNote: "The server assigns a public port from the administrator’s configured range. The target application provides authentication and encryption.",
         rtspNote: "Use RTSP over TCP (interleaved mode) in your player. Append the camera stream path, such as /Streaming/Channels/101, to the copied address.",
         udpNote: "For fixed-port UDP services. Dynamic media-port negotiation needs additional configuration.",
-        serverUpgrade: "Upgrade the server to 6.1.0 or later to create TCP/UDP connections here.",
+        serverUpgrade: "Upgrade the server to 7.0.0 to create TCP/UDP connections here.",
         transportDisabled: "The server has not enabled this transport. Ask the administrator to configure the matching TCP/UDP port range and firewall.",
         rawNotAllowed: "The administrator has not enabled TCP/UDP self-service for regular users. Permission is managed in console settings.",
         rawUnavailableOffline: "Reconnect to the server to check port availability.",
@@ -265,7 +265,7 @@
       capabilities = state.capabilities || {}; serverStale = Boolean(state.stale);
       if (!state.enrolled) { $("home").classList.add("hidden"); $("login").classList.remove("hidden"); return; }
       $("machine-name").textContent = state.device_name || t("unnamedComputer");
-      $("machine-version").textContent = "Home Tunnel " + (state.version || "6.1.1");
+      $("machine-version").textContent = "Home Tunnel " + (state.version || "7.0.0");
       $("settings-server").textContent = consoleUrl;
       $("count-total").textContent = (state.connections || []).length;
       $("count-online").textContent = (state.connections || []).filter(c => c.enabled && c.state === "Online").length;
@@ -287,6 +287,7 @@
               download.textContent = t("downloading");
               try {
                 const result = await api("/local/update/download", { method: "POST" });
+                if (result.verified !== true) throw new Error("更新包未通过 SHA-256 校验 / Update verification failed");
                 $("update").textContent = result.hint || result.path;
               } catch (error) {
                 $("update").textContent = error.message;
@@ -303,21 +304,32 @@
             $("update").append(link);
           }
         }
-      } catch { /* optional update metadata */ } })();
+      } catch (error) { $("update").textContent = error.message; } })();
       }
       connections = state.connections || [];
       renderServices();
       } finally { refreshing = false; }
     }
+    const selectedConnections = new Set();
+    let deviceMetadata = null;
     function renderServices() {
+      for (const id of selectedConnections) if (!connections.some(item => item.id === id)) selectedConnections.delete(id);
+      $("batch-pause").disabled = $("batch-resume").disabled = selectedConnections.size === 0;
+      $("batch-count").textContent = `${selectedConnections.size} / 50`;
       const search = $("service-search").value.trim().toLowerCase();
       const filter = $("service-filter").value;
       const items = connections.filter(item => (!search || `${item.name} ${item.subdomain} ${item.local_host}`.toLowerCase().includes(search)) && (filter === "all" || filter === "paused" && !item.enabled || filter === "online" && item.enabled && item.state === "Online"));
       $("connections").innerHTML = items.length ? items.map(item => {
         const publicUrl = item.public_url || item.access_url || item.public_endpoint || "";
         const status = !item.enabled ? t("paused") : item.state === "Online" ? t("online") : item.state || "—";
-        return `<article class="service-row"><div class="service-identity"><span class="service-protocol">${escapeHtml((item.application_protocol || item.proxy_type || "http").toUpperCase())}</span><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.local_host)}:${escapeHtml(item.local_port)}</small></div></div><span class="state-badge ${item.enabled && item.state === "Online" ? "online" : ""}">${escapeHtml(status)}</span><button type="button" class="url" data-copy="${escapeHtml(publicUrl)}" aria-label="${escapeHtml(t("copyAddress"))}">${escapeHtml(publicUrl || item.subdomain)}</button><div class="actions"><button class="secondary" data-edit="${escapeHtml(item.id)}">${escapeHtml(t("edit"))}</button><button class="secondary" data-toggle="${escapeHtml(item.id)}" data-enabled="${item.enabled}">${escapeHtml(t(item.enabled ? "pause" : "enable"))}</button><details><summary>${escapeHtml(t("more"))}</summary><button class="danger" data-delete="${escapeHtml(item.id)}">${escapeHtml(t("remove"))}</button></details></div></article>`;
+        return `<article class="service-row"><div class="service-identity"><input type="checkbox" class="batch-select" style="width:18px;min-height:18px" data-select="${escapeHtml(item.id)}" aria-label="${escapeHtml(t("select") + ": " + item.name)}" ${selectedConnections.has(item.id) ? "checked" : ""}><span class="service-protocol">${escapeHtml((item.application_protocol || item.proxy_type || "http").toUpperCase())}</span><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.local_host)}:${escapeHtml(item.local_port)}</small></div></div><span class="state-badge ${item.enabled && item.state === "Online" ? "online" : ""}">${escapeHtml(status)}</span><button type="button" class="url" data-copy="${escapeHtml(publicUrl)}" aria-label="${escapeHtml(t("copyAddress"))}">${escapeHtml(publicUrl || item.subdomain)}</button><div class="actions"><button class="secondary" data-edit="${escapeHtml(item.id)}">${escapeHtml(t("edit"))}</button><button class="secondary" data-toggle="${escapeHtml(item.id)}" data-enabled="${item.enabled}">${escapeHtml(t(item.enabled ? "pause" : "enable"))}</button><details><summary>${escapeHtml(t("more"))}</summary><button class="danger" data-delete="${escapeHtml(item.id)}">${escapeHtml(t("remove"))}</button></details></div></article>`;
       }).join("") : `<div class="empty-state"><strong>${escapeHtml(t(items.length || connections.length ? "noMatch" : "empty"))}</strong>${!connections.length ? `<button id="empty-add">${escapeHtml(t("add"))}</button>` : ""}</div>`;
+      document.querySelectorAll("[data-select]").forEach(node => node.addEventListener("change", () => {
+        if (node.checked && selectedConnections.size < 50) selectedConnections.add(node.dataset.select);
+        else { selectedConnections.delete(node.dataset.select); node.checked = false; }
+        $("batch-pause").disabled = $("batch-resume").disabled = selectedConnections.size === 0;
+        $("batch-count").textContent = `${selectedConnections.size} / 50`;
+      }));
       $("empty-add")?.addEventListener("click", () => $("add").click());
       document.querySelectorAll("[data-copy]").forEach((node) => node.addEventListener("click", async () => {
         if (!node.dataset.copy) return;
@@ -340,8 +352,46 @@
     }
     $("service-search").oninput = renderServices;
     $("service-filter").onchange = renderServices;
-    $("settings-open").onclick = () => { $("home").classList.add("hidden"); $("settings").classList.remove("hidden"); };
+    $("settings-open").onclick = () => runAction($("settings-open"), async () => {
+      $("home").classList.add("hidden"); $("settings").classList.remove("hidden");
+      $("metadata-save").disabled = true; deviceMetadata = null;
+      deviceMetadata = await api("/local/device/metadata");
+      $("device-tags").value = (deviceMetadata.tags || []).join(", ");
+      $("device-favorite").checked = !!deviceMetadata.favorite;
+      $("metadata-save").disabled = !deviceMetadata.metadata_version;
+    }, "settings-error");
+    $("metadata-save").onclick = () => runAction($("metadata-save"), async () => {
+      if (!deviceMetadata) return;
+      const tags = [...new Set($("device-tags").value.split(",").map(tag => tag.trim()).filter(Boolean))];
+      await api("/local/device/metadata", { method: "PATCH", body: JSON.stringify({tags, favorite: $("device-favorite").checked, expected_metadata_version: deviceMetadata.metadata_version}) });
+      deviceMetadata = await api("/local/device/metadata");
+      $("settings-error").textContent = locale === "en" ? "Saved" : "已保存";
+    }, "settings-error");
+    for (const enabled of [false, true]) {
+      const button = $(enabled ? "batch-resume" : "batch-pause");
+      button.onclick = () => runAction(button, async () => {
+        const items = connections.filter(item => selectedConnections.has(item.id));
+        if (!items.length || items.length > 50) return;
+        const verb = t(enabled ? "batchResume" : "batchPause");
+        if (!confirm(`${verb} (${items.length})?\n${items.map(item => item.name).join("\n")}`)) return;
+        const result = await api("/local/batch", {method: "POST", body: JSON.stringify({enabled, items: items.map(item => ({id:item.id,expected_version:item.version}))})});
+        $("batch-results").textContent = result.results.map(row => `${items.find(item => item.id === row.id)?.name || row.id}: ${row.status === 200 ? (locale === "en" ? "Saved" : "已保存") : row.error_code || row.status}`).join("\n");
+        selectedConnections.clear(); await showHome();
+      });
+    }
     $("settings-back").onclick = () => runAction($("settings-back"), () => showHome(), "settings-error");
+    $("login-method").onchange = () => {
+      const code = $("login-method").value === "code";
+      $("account-fields").classList.toggle("hidden", code);
+      $("code-fields").classList.toggle("hidden", !code);
+      $("username").required = $("password").required = !code;
+      $("enrollment-code").required = code;
+      $("new-password").required = $("confirm-password").required = false;
+      $("new-password").value = $("confirm-password").value = "";
+      $("password").value = $("mfa-code").value = $("enrollment-code").value = "";
+      $("new-password").value = $("confirm-password").value = "";
+      $("password-change").classList.add("hidden");
+    };
     $("login-form").onsubmit = async (event) => {
       event.preventDefault();
       if (!$("login-form").reportValidity()) return;
@@ -351,8 +401,8 @@
       try {
         localStorage.setItem("ht_server", $("server").value);
         localStorage.setItem("ht_username", $("username").value);
-        await api("/local/login", { method: "POST", body: JSON.stringify({ server: $("server").value, username: $("username").value, password: $("password").value, new_password: $("new-password").value }) });
-        $("password").value = ""; $("new-password").value = ""; $("confirm-password").value = "";
+        await api("/local/login", { method: "POST", body: JSON.stringify({ server: $("server").value, username: $("username").value, password: $("password").value, new_password: $("new-password").value, mfa_code: $("mfa-code").value, enrollment_code: $("enrollment-code").value }) });
+        $("password").value = $("new-password").value = $("confirm-password").value = $("mfa-code").value = $("enrollment-code").value = "";
         await showHome();
       } catch (error) {
         if (/requires a password change|PASSWORD_CHANGE_REQUIRED/.test(error.message)) {
@@ -362,6 +412,14 @@
       }
       }, "login-error");
     };
+    $("doctor-run").onclick = () => runAction($("doctor-run"), async () => {
+      const report = await api("/local/doctor");
+      $("doctor-result").textContent = report.checks.map(check => `[${check.status}] ${check.name}: ${check.message}`).join("\n");
+    }, "settings-error");
+    $("support-bundle").onclick = () => runAction($("support-bundle"), async () => {
+      const result = await api("/local/doctor", {method:"POST"});
+      $("doctor-result").textContent = result.path;
+    }, "settings-error");
     $("refresh").onclick = () => runAction($("refresh"), () => showHome());
     $("console").onclick = () => { if (consoleUrl) window.open(consoleUrl, "_blank", "noopener,noreferrer"); };
     $("logout").onclick = async () => {

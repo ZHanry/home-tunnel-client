@@ -1,6 +1,6 @@
 # Builds the unified Windows x64 desktop package: home-tunnel-gui.exe + Agent.
 param(
-    [string]$Version = "6.1.1",
+    [string]$Version = "7.0.0",
     [string]$WindRes = "",
     [string]$OutputDir = "",
     [string]$IsccPath = $env:HOME_TUNNEL_ISCC
@@ -40,10 +40,28 @@ if (-not (Test-Path -LiteralPath $agentSource -PathType Leaf)) {
 
 $gui = Join-Path $OutputDir "home-tunnel-gui.exe"
 $agent = Join-Path $OutputDir "home-tunnel-agent.exe"
-& (Join-Path $PSScriptRoot 'build-gui.ps1') -Version $Version -OutputDir $OutputDir -WindRes $WindRes -AgentVersion $agentVersion -ExpectedAgentSHA256 $agentSha
 Copy-Item -LiteralPath $agentSource -Destination $agent -Force
+& (Join-Path $PSScriptRoot 'sign-release.ps1') -Files @($agent)
+# Signing changes the Agent bytes. Pin the shipped, signed bytes in the GUI.
+$agentSha = (Get-FileHash -LiteralPath $agent -Algorithm SHA256).Hash.ToLowerInvariant()
+& (Join-Path $PSScriptRoot 'build-gui.ps1') -Version $Version -OutputDir $OutputDir -WindRes $WindRes -AgentVersion $agentVersion -ExpectedAgentSHA256 $agentSha
+& (Join-Path $PSScriptRoot 'sign-release.ps1') -Files @($gui)
 $icon = Join-Path $workspace "agent\assets\HomeTunnel.ico"
 Copy-Item -LiteralPath $icon -Destination (Join-Path $OutputDir "HomeTunnel.ico") -Force
+if ($agentVersion -ne $Version) { throw 'Client and first-party Agent versions must match' }
+# Include the payload's signing state inside the installer as well as the ZIP.
+# The installer itself is recorded separately after its own signature is complete.
+$signingEvidence = [ordered]@{
+    version = $Version
+    platform = 'windows'
+    mode = $(if ($env:WINDOWS_SIGNING_PFX_BASE64) { 'authenticode-sha256-timestamped' } else { 'unsigned-no-certificate-configured' })
+    files = @(@($agent, $gui) | ForEach-Object { [ordered]@{
+        name = [IO.Path]::GetFileName($_)
+        sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+        signature_status = [string](Get-AuthenticodeSignature -LiteralPath $_).Status
+    } })
+}
+[IO.File]::WriteAllText((Join-Path $OutputDir 'platform-signing.json'), ($signingEvidence | ConvertTo-Json -Depth 5) + [char]10, [Text.UTF8Encoding]::new($false))
 
 $setupName = "HomeTunnel-Setup-$Version-x64.exe"
 $setup = Join-Path $OutputDir $setupName
@@ -52,6 +70,7 @@ if (Test-Path -LiteralPath $setup) { Remove-Item -LiteralPath $setup -Force }
 if (-not (Test-Path -LiteralPath $setup)) {
     throw "failed to produce $setup"
 }
+& (Join-Path $PSScriptRoot 'sign-release.ps1') -Files @($setup)
 $sha = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText(
     "$setup.sha256",
@@ -65,7 +84,18 @@ Write-Host "AGENT_SHA256=$agentSha"
 
 $zipName = "HomeTunnel-Windows-$Version-x64.zip"
 $zip = Join-Path $OutputDir $zipName
-$packageFiles = @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt') | ForEach-Object { Join-Path $OutputDir $_ }
+$signingEvidence = [ordered]@{
+    version = $Version
+    platform = 'windows'
+    mode = $(if ($env:WINDOWS_SIGNING_PFX_BASE64) { 'authenticode-sha256-timestamped' } else { 'unsigned-no-certificate-configured' })
+    files = @(@($agent, $gui, $setup) | ForEach-Object { [ordered]@{
+        name = [IO.Path]::GetFileName($_)
+        sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+        signature_status = [string](Get-AuthenticodeSignature -LiteralPath $_).Status
+    } })
+}
+[IO.File]::WriteAllText((Join-Path $OutputDir 'windows-platform-signing.json'), ($signingEvidence | ConvertTo-Json -Depth 5) + [char]10, [Text.UTF8Encoding]::new($false))
+$packageFiles = @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico', 'LICENSE', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'README.en.md', 'docs', 'contracts', 'packaging') | ForEach-Object { Join-Path $OutputDir $_ }
 Compress-Archive -LiteralPath $packageFiles -DestinationPath $zip -Force
 $zipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$zip.sha256", "$zipSha  $zipName" + [char]10, [Text.UTF8Encoding]::new($false))

@@ -22,13 +22,15 @@ import (
 var ErrRevoked = errors.New("account or device was revoked")
 
 type EnrollOptions struct {
-	StatePath   string
-	Server      string
-	Username    string
-	Password    string
-	NewPassword string
-	DeviceName  string
-	HTTPClient  *http.Client
+	StatePath      string
+	Server         string
+	Username       string
+	Password       string
+	NewPassword    string
+	MFACode        string
+	EnrollmentCode string
+	DeviceName     string
+	HTTPClient     *http.Client
 }
 
 type RunOptions struct {
@@ -58,32 +60,43 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 	if err != nil {
 		return err
 	}
-	session, err := client.Login(ctx, options.Username, options.Password)
-	if err != nil {
-		return err
-	}
-	if session.PasswordChangeRequired {
-		if strings.TrimSpace(options.NewPassword) == "" {
-			return errors.New("the account requires a password change; provide --new-password-file")
-		}
-		if err := client.ChangePassword(ctx, options.Password, options.NewPassword); err != nil {
-			return fmt.Errorf("change initial password: %w", err)
-		}
-		session, err = client.Login(ctx, options.Username, options.NewPassword)
-		if err != nil {
-			return fmt.Errorf("sign in after password change: %w", err)
-		}
-		if session.PasswordChangeRequired {
-			return errors.New("server still requires a password change after updating it")
-		}
-	}
 	fingerprint, err := statepkg.Fingerprint(state.InstallID)
 	if err != nil {
 		return err
 	}
-	registration, err := client.RegisterDevice(ctx, options.DeviceName, state.InstallID, fingerprint)
-	if err != nil {
-		return fmt.Errorf("register Linux device: %w", err)
+	var registration model.DeviceRegistration
+	if options.EnrollmentCode != "" {
+		registration, err = client.EnrollWithCode(ctx, options.EnrollmentCode, options.DeviceName, state.InstallID, fingerprint)
+		if err != nil {
+			return fmt.Errorf("enroll with one-time code: %w", err)
+		}
+	} else {
+		session, err := client.Login(ctx, options.Username, options.Password, options.MFACode)
+		if err != nil {
+			return err
+		}
+		if session.PasswordChangeRequired {
+			if options.MFACode != "" {
+				return errors.New("complete the required password change in the web console, then enroll with a fresh MFA code or an enrollment code")
+			}
+			if strings.TrimSpace(options.NewPassword) == "" {
+				return errors.New("the account requires a password change; provide --new-password-file")
+			}
+			if err := client.ChangePassword(ctx, options.Password, options.NewPassword, options.MFACode); err != nil {
+				return fmt.Errorf("change initial password: %w", err)
+			}
+			session, err = client.Login(ctx, options.Username, options.NewPassword)
+			if err != nil {
+				return fmt.Errorf("sign in after password change: %w", err)
+			}
+			if session.PasswordChangeRequired {
+				return errors.New("server still requires a password change after updating it")
+			}
+		}
+		registration, err = client.RegisterDevice(ctx, options.DeviceName, state.InstallID, fingerprint)
+		if err != nil {
+			return fmt.Errorf("register device: %w", err)
+		}
 	}
 	state.Profile = profile
 	state.DeviceID = registration.DeviceID

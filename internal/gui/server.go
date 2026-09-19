@@ -87,6 +87,9 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/update", server.update)
 	mux.HandleFunc("/local/update/download", server.downloadUpdate)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
+	mux.HandleFunc("/local/doctor", server.doctor)
+	mux.HandleFunc("/local/device/metadata", server.deviceMetadata)
+	mux.HandleFunc("/local/batch", server.batchConnections)
 	return protectLocalUI(mux, server.options.LocalToken)
 }
 
@@ -199,10 +202,12 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	var body struct {
-		Server      string `json:"server"`
-		Username    string `json:"username"`
-		Password    string `json:"password"`
-		NewPassword string `json:"new_password"`
+		Server         string `json:"server"`
+		Username       string `json:"username"`
+		Password       string `json:"password"`
+		NewPassword    string `json:"new_password"`
+		MFACode        string `json:"mfa_code"`
+		EnrollmentCode string `json:"enrollment_code"`
 	}
 	if err := readJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
@@ -211,12 +216,14 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), 45*time.Second)
 	defer cancel()
 	if err := app.Enroll(ctx, app.EnrollOptions{
-		StatePath:   server.options.StatePath,
-		Server:      body.Server,
-		Username:    body.Username,
-		Password:    body.Password,
-		NewPassword: body.NewPassword,
-		DeviceName:  app.DefaultDeviceName(),
+		StatePath:      server.options.StatePath,
+		Server:         body.Server,
+		Username:       body.Username,
+		Password:       body.Password,
+		NewPassword:    body.NewPassword,
+		MFACode:        body.MFACode,
+		EnrollmentCode: body.EnrollmentCode,
+		DeviceName:     app.DefaultDeviceName(),
 	}); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return

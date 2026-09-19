@@ -21,6 +21,17 @@ if component == "server":
     assert not (root / "go.mod").exists()
 else:
     lock = json.loads((root / "contracts/lock.json").read_text())
+    assert lock['ref'] == compat['contract_ref']
+    required = {'contracts/home-tunnel.v1.json','contracts/openapi.v1.json','contracts/api.schema.json'}
+    assert len(lock['files']) == len(required) and {item['path'] for item in lock['files']} == required
+    for item in lock['files']:
+        name, checksum = item['path'], item['sha256']
+        assert re.fullmatch(r'[a-f0-9]{64}', checksum)
+        assert hashlib.sha256((root/name).read_bytes()).hexdigest() == checksum, f'Contract drift: {name}'
+    specification = json.loads((root/'contracts/openapi.v1.json').read_text(encoding='utf-8'))
+    assert specification['x-contract-ref'] == lock['ref']
+    assert specification['components']['schemas']['BatchInput']['properties']['items']['maxItems'] == 50
+    assert '/api/v1/public/capabilities' in specification['paths']
     fixture = root / lock["path"]
     assert hashlib.sha256(fixture.read_bytes()).hexdigest() == lock["sha256"], "Protocol fixture drift"
     assert lock["repository"] == "ZHanry/home-tunnel-server"
