@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const Version = "6.1.1"
+const Version = "7.0.0"
 const CurrentSyncCapabilityVersion = 1
 
 type Profile struct {
@@ -44,10 +44,13 @@ type DeviceRegistration struct {
 }
 
 type Device struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Online bool   `json:"online"`
+	Tags            []string `json:"tags"`
+	Favorite        bool     `json:"favorite"`
+	MetadataVersion int64    `json:"metadata_version"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Status          string   `json:"status"`
+	Online          bool     `json:"online"`
 }
 
 type Connection struct {

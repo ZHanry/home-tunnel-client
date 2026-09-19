@@ -1,42 +1,55 @@
-<div align="center">
-  <img src="docs/assets/HomeTunnel.svg" alt="Home Tunnel" width="72" height="72">
-  <h1>Home Tunnel Client</h1>
-  <p><strong>专注于本机服务的桌面与命令行客户端</strong></p>
-  <p><a href="https://github.com/ZHanry/home-tunnel-client/releases/latest"><img src="https://img.shields.io/badge/release-6.1.1-176653" alt="Release 6.1.1"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"></a></p>
-  <p><a href="README.en.md">English</a> · <a href="https://zhanry.github.io/home-tunnel/">项目网站</a></p>
-</div>
+<img src="docs/assets/HomeTunnel.svg" alt="" width="64" height="64">
 
-6.1.0 补齐 Windows 无控制台启动、程序图标和 TCP/UDP／RTSP 创建流程。[连接类型与使用条件](docs/CONNECTION_TYPES.md)。
+# Home Tunnel Client
 
-Windows 6.0.0 EXE 已因 Defender 告警撤下。6.0.1 改用标准安装器并增加实际杀毒扫描与安装验证；说明见 [Windows 发布检查](docs/WINDOWS_RELEASE_CHECKS.md)。
+**连接 Windows、macOS、Linux 与 NAS**
 
-6.0 正式版以“本机服务”为中心重新设计桌面界面：设备状态、服务搜索、状态筛选、连接编辑与设置各有清晰入口。GUI 和 CLI 共用客户端核心。
+[![Stable 7.0.0](https://img.shields.io/badge/stable-7.0.0-176653)](https://github.com/ZHanry/home-tunnel-client/releases/tag/v7.0.0) [![License Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-## 下载与安装
+[English](README.en.md) · [项目网站](https://zhanry.github.io/home-tunnel/) · [下载](https://github.com/ZHanry/home-tunnel/blob/main/docs/DOWNLOADS.md) · [快速开始](https://github.com/ZHanry/home-tunnel/blob/main/docs/GETTING_STARTED.md)
 
-在 [Releases](https://github.com/ZHanry/home-tunnel-client/releases/latest) 中选择：
 
-| 平台 | 文件 |
+在家中电脑或 NAS 上运行受管隧道，访问自己的 Home Tunnel 服务器。GUI 与 CLI
+共享 Go 核心，后台 Agent 执行转发；窗口关闭后仍可保持连接。
+
+| 平台 | 7.0.0 下载 |
 | --- | --- |
-| Windows x64 | `HomeTunnel-Setup-6.1.1-x64.exe`；便携版为 `.zip` |
-| Linux amd64 / arm64 | `home-tunnel-linux-6.1.1-<架构>.tar.gz` |
-| macOS Intel / Apple Silicon | `home-tunnel-macos-6.1.1-amd64.tar.gz` / `arm64.tar.gz` |
+| Windows x64 | [安装器](https://github.com/ZHanry/home-tunnel-client/releases/download/v7.0.0/HomeTunnel-Setup-7.0.0-x64.exe) · [便携 ZIP](https://github.com/ZHanry/home-tunnel-client/releases/download/v7.0.0/HomeTunnel-Windows-7.0.0-x64.zip) |
+| macOS Intel / Apple Silicon | [选择 amd64 / arm64 包](https://github.com/ZHanry/home-tunnel-client/releases/tag/v7.0.0) |
+| Linux amd64 / arm64 · NAS | [选择平台包](https://github.com/ZHanry/home-tunnel-client/releases/tag/v7.0.0) · [NAS Compose 模板](packaging/nas/README.md) |
 
-安装器或解压后的安装脚本会部署完整客户端及 Agent。`SHA256SUMS.txt` 提供安装文件校验值。首次运行填写自己的控制台地址、用户名与密码，设备会自动登记。
+核验 Release 的 `SHA256SUMS.txt` 和证明文件后安装。Windows/macOS 当前没有平台
+发行证书，包内如实标明未签名；不要把哈希或病毒扫描当成平台签名。
+[签名流程与凭据保护](docs/PLATFORM_SECURITY.md)。
 
-## 使用方式
+## 接入自己的服务器
 
-1. 打开“本机服务”，添加本地服务名称与访问地址。
-2. 本地目标填这台机器可以访问的主机和端口；本机服务通常使用 `127.0.0.1`。
-3. 等待在线后复制公网地址。可随时搜索、暂停、启用或编辑服务。
-4. 管理其他机器时打开 Web 控制台或 Android App。
+1. 服务端使用 **7.0.0**。桌面输入 HTTPS 地址，使用账号 + MFA 或一次性接入码。
+2. 选择本机可访问的服务，创建 HTTP/HTTPS 或被授权的 TCP/UDP 连接。
+3. 等待在线并验证公网访问。SSH/RDP/RTSP 有预设，原始传输由应用负责认证和加密。
 
-客户端只展示并操作当前设备的连接，即使同一账号在多台电脑上登录也各自独立。关闭窗口保持后台运行；“退出程序”停止隧道；“退出账号”还会清除本机登录凭据。
+桌面会话只管理本机。标签、收藏在设置中修改；选中最多 50 条本机连接可以批量暂停/
+恢复，确认范围后逐项显示结果。跨设备/服务器管理使用 Web 或 Android。
 
-## 命令行与开发
+```sh
+home-tunnel-client enroll --server https://console.your-domain.net \
+  --device-name home-nas --enrollment-code-file /secure/enrollment-code
+home-tunnel-client doctor
+home-tunnel-client run
+```
 
-NAS 和无桌面主机使用安装包中的 CLI 与后台服务配置，详见[运行指南](docs/OPERATIONS.md)。源码入口为 `cmd/`，共用核心为 `internal/`，FRP Agent 是 `agent/` 中的独立 Go 模块。构建使用 Go 1.26.6；执行 `go test ./...`，桌面交互检查使用 `pnpm test:browser`。
+CLI 服务安装和状态路径请按 [运维指南](docs/OPERATIONS.md)；勿直接复制示例私密路径。
+Windows 使用 DPAPI，macOS 使用 Keychain，Linux headless 明确使用 0600 文件权限。
+自有 Agent 与客户端均为 7.0.0，内置 FRP 为 0.70.1，必须使用同包 Agent。
 
-[发布流程](docs/RELEASING.md) · [版本说明](docs/RELEASE_NOTES.md) · [安全报告](SECURITY.md) · [项目入口](https://github.com/ZHanry/home-tunnel)
+## 开发与验证
 
-![Home Tunnel 6.0 desktop](docs/assets/desktop.jpg)
+```sh
+go test ./...
+python3 scripts/check-repository.py
+```
+
+Go 1.26.6；原生 GUI 构建依赖见各平台打包脚本。CI 检查 Windows 安装/卸载、
+Defender 扫描、Agent 可复现哈希、macOS/Linux 构建和浏览器交互。
+
+[功能说明](docs/PLATFORM_FEATURES.md) · [诊断/签名](docs/PLATFORM_SECURITY.md) · [API](contracts/README.md) · [项目入口](https://github.com/ZHanry/home-tunnel)

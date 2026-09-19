@@ -37,6 +37,36 @@ async function services(page, capabilities, connections = []) {
   await expect(page.locator("#home")).toBeVisible();
 }
 
+test("batch selection confirms the affected names and preserves each result", async ({page}) => {
+  const connections = ["one", "two"].map((id,index)=>({id,device_id:"local",name:`Service ${index+1}`,proxy_type:"http",enabled:true,version:index+3,local_host:"127.0.0.1",local_port:8080}));
+  await services(page,undefined,connections);
+  let body;
+  await page.route("**/local/batch",route=>{body=route.request().postDataJSON();return route.fulfill({json:{results:[{id:"one",status:200},{id:"two",status:409,error_code:"VERSION_CONFLICT"}]}});});
+  await page.locator('[data-select="one"]').check();
+  await page.locator('[data-select="two"]').check();
+  page.once("dialog",async dialog=>{expect(dialog.message()).toContain("Service 1");expect(dialog.message()).toContain("Service 2");await dialog.accept();});
+  await page.locator("#batch-pause").click();
+  await expect(page.locator("#batch-results")).toContainText("Service 1: 已保存");
+  await expect(page.locator("#batch-results")).toContainText("Service 2: VERSION_CONFLICT");
+  expect(body).toEqual({enabled:false,items:[{id:"one",expected_version:3},{id:"two",expected_version:4}]});
+});
+
+test("device tags use a version and retain the draft on conflict", async ({page}) => {
+  await services(page,undefined);
+  let body;
+  await page.route("**/local/device/metadata",route=>{
+    if(route.request().method()==="PATCH") {body=route.request().postDataJSON();return route.fulfill({status:409,json:{message:"Metadata changed; refresh before retrying"}});}
+    return route.fulfill({json:{id:"local",tags:["home"],favorite:false,metadata_version:4}});
+  });
+  await page.locator("#settings-open").click();
+  await expect(page.locator("#device-tags")).toHaveValue("home");
+  await page.locator("#device-tags").fill("home, nas");await page.locator("#device-favorite").check();
+  await page.locator("#metadata-save").click();
+  await expect(page.locator("#settings-error")).toContainText("Metadata changed");
+  await expect(page.locator("#device-tags")).toHaveValue("home, nas");
+  expect(body).toEqual({tags:["home","nas"],favorite:true,expected_metadata_version:4});
+});
+
 test("RTSP preset creates TCP with an automatic port and no required web subdomain", async ({page}) => {
   await services(page,{supported:true,tcp:{enabled:true,can_create:true},udp:{enabled:true,can_create:true}});
   await page.route("**/local/connections", route => route.fulfill({json:{id:"camera"}}));
@@ -56,7 +86,7 @@ test("RTSP preset creates TCP with an automatic port and no required web subdoma
 test("old servers explain the upgrade and retain HTTP creation", async ({page}) => {
   await services(page,undefined);
   await page.locator("#add").click();await page.locator("#protocol").selectOption("tcp");
-  await expect(page.locator("#transport-note")).toContainText("升级服务端至 6.1.0");await expect(page.locator("#save")).toBeDisabled();
+  await expect(page.locator("#transport-note")).toContainText("升级服务端至 7.0.0");await expect(page.locator("#save")).toBeDisabled();
   await page.locator("#protocol").selectOption("http");await expect(page.locator("#save")).toBeEnabled();await expect(page.locator("#subdomain")).toBeVisible();
 });
 

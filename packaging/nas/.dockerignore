@@ -1,0 +1,6 @@
+*
+!package/
+!package/bin/
+!package/bin/home-tunnel-client
+!package/lib/
+!package/lib/home-tunnel-agent

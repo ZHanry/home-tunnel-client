@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/ZHanry/home-tunnel-client/internal/model"
@@ -48,6 +49,16 @@ func (store Store) Load() (model.State, error) {
 	if value.InstallID == "" {
 		value.InstallID, err = randomID(16)
 	}
+	if strings.HasPrefix(value.DeviceCredential, "dpapi:") || strings.HasPrefix(value.DeviceCredential, "keychain:") {
+		value.DeviceCredential, err = unprotectCredential(value.DeviceCredential, store.Path)
+		if err != nil {
+			return model.State{}, err
+		}
+	} else if value.DeviceCredential != "" && (runtime.GOOS == "windows" || runtime.GOOS == "darwin") {
+		if err = store.Save(value); err != nil {
+			return model.State{}, fmt.Errorf("migrate legacy credential: %w", err)
+		}
+	}
 	return value, err
 }
 
@@ -57,6 +68,17 @@ func (store Store) Save(value model.State) error {
 		return fmt.Errorf("create state directory: %w", err)
 	}
 	value.UpdatedAt = time.Now().UTC()
+	var previous model.State
+	if data, readErr := os.ReadFile(store.Path); readErr == nil {
+		_ = json.Unmarshal(data, &previous)
+	}
+	if value.DeviceCredential != "" {
+		protected, err := protectCredential(value.DeviceCredential, store.Path)
+		if err != nil {
+			return err
+		}
+		value.DeviceCredential = protected
+	}
 	temporary, err := os.CreateTemp(directory, ".state-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary state: %w", err)
@@ -85,6 +107,9 @@ func (store Store) Save(value model.State) error {
 	}
 	if err := syncDirectory(directory); err != nil {
 		return fmt.Errorf("flush state directory: %w", err)
+	}
+	if previous.DeviceCredential != value.DeviceCredential {
+		forgetCredential(previous.DeviceCredential, store.Path)
 	}
 	return os.Chmod(store.Path, 0o600)
 }

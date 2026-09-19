@@ -98,7 +98,7 @@ jobs:
           security_dependencies = Get-Content -Raw agent/security-pins.json | ConvertFrom-Json
           build_identity = "https://github.com/$env:GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$env:GITHUB_REF_NAME"
           distribution = "bundled in HomeTunnel-Windows-<version>-x64.zip with home-tunnel-gui"
-          authenticode = "not used; Windows GUI is an unsigned Go zip"
+          authenticode = "reproducible baseline is unsigned; see platform-signing.json inside the distributed package"
         }
         [IO.File]::WriteAllText(
           (Join-Path (Get-Location) 'agent-provenance.json'),
@@ -118,6 +118,9 @@ jobs:
       env:
         VERSION: ${{ needs.metadata.outputs.base-version }}
         AGENT_VERSION: ${{ steps.agent.outputs.agent_version }}
+        WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+        WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        REQUIRE_PLATFORM_SIGNING: ${{ vars.REQUIRE_PLATFORM_SIGNING }}
       run: |
         $lines = & .\packaging\windows\build-release.ps1 -Version $env:VERSION -WindRes $env:HOME_TUNNEL_WINDRES
         $lines | Write-Output
@@ -271,6 +274,13 @@ jobs:
       env:
         VERSION: ${{ needs.metadata.outputs.base-version }}
         ARCH: ${{ matrix.arch }}
+        MACOS_DEVELOPER_ID_P12_BASE64: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
+        MACOS_DEVELOPER_ID_PASSWORD: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_PASSWORD || '' }}
+        MACOS_SIGNING_IDENTITY: ${{ matrix.platform == 'macos' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+        APPLE_NOTARY_KEY_P8_BASE64: ${{ matrix.platform == 'macos' && secrets.APPLE_NOTARY_KEY_P8_BASE64 || '' }}
+        APPLE_NOTARY_KEY_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_NOTARY_KEY_ID || '' }}
+        APPLE_NOTARY_ISSUER_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_NOTARY_ISSUER_ID || '' }}
+        REQUIRE_PLATFORM_SIGNING: ${{ vars.REQUIRE_PLATFORM_SIGNING }}
       run: |
         test "$(go env GOARCH)" = "$ARCH"
         ${{ matrix.script }}

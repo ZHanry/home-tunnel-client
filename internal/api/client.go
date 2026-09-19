@@ -185,12 +185,16 @@ func userAgent() string {
 	}
 }
 
-func (client *Client) Login(ctx context.Context, username, password string) (model.Session, error) {
+func (client *Client) Login(ctx context.Context, username, password string, factor ...string) (model.Session, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	var session model.Session
+	var code string
+	if len(factor) > 0 {
+		code = factor[0]
+	}
 	err := client.publicJSON(ctx, http.MethodPost, "auth/login", map[string]any{
-		"username": username, "password": password, "client_type": clientType(),
+		"username": username, "password": password, "client_type": clientType(), "mfa_code": code,
 	}, &session)
 	if err == nil {
 		client.deviceID = ""
@@ -223,11 +227,27 @@ func (client *Client) Logout(ctx context.Context) error {
 	return err
 }
 
-func (client *Client) ChangePassword(ctx context.Context, current, next string) error {
+// CloseSession ends a short-lived diagnostic session without rotating the
+// computer's permanent credential (Logout intentionally revokes that credential).
+func (client *Client) CloseSession(ctx context.Context) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
+	err := client.authJSON(ctx, http.MethodPost, "auth/session/close", map[string]any{}, nil)
+	if err == nil {
+		client.setSession("", "", time.Time{})
+	}
+	return err
+}
+
+func (client *Client) ChangePassword(ctx context.Context, current, next string, factor ...string) error {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	var code string
+	if len(factor) > 0 {
+		code = factor[0]
+	}
 	err := client.authJSON(ctx, http.MethodPost, "auth/password/change", map[string]any{
-		"current_password": current, "new_password": next,
+		"current_password": current, "new_password": next, "mfa_code": code,
 	}, nil)
 	if err == nil {
 		client.setSession("", "", time.Time{})
@@ -243,6 +263,25 @@ func (client *Client) RegisterDevice(ctx context.Context, name, installID, finge
 		"name": name, "install_id": installID, "fingerprint_hash": fingerprint, "client_version": model.Version,
 	}, &registration)
 	return registration, err
+}
+
+func (client *Client) EnrollWithCode(ctx context.Context, code, name, installID, fingerprint string) (model.DeviceRegistration, error) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	var payload struct {
+		model.DeviceRegistration
+		AccessToken     string    `json:"access_token"`
+		RefreshToken    string    `json:"refresh_token"`
+		AccessExpiresAt time.Time `json:"access_expires_at"`
+	}
+	err := client.publicJSON(ctx, http.MethodPost, "auth/enroll", map[string]any{
+		"code": code, "name": name, "install_id": installID, "fingerprint_hash": fingerprint, "client_version": model.Version, "client_type": clientType(),
+	}, &payload)
+	if err == nil {
+		client.deviceID = payload.DeviceID
+		client.setSession(payload.AccessToken, payload.RefreshToken, payload.AccessExpiresAt)
+	}
+	return payload.DeviceRegistration, err
 }
 
 func (client *Client) Sync(ctx context.Context, deviceID string, lastVersion int64, leaseExpiry *time.Time) (model.SyncResponse, error) {
@@ -262,15 +301,25 @@ func (client *Client) Sync(ctx context.Context, deviceID string, lastVersion int
 }
 
 type itemList[T any] struct {
-	Items []T `json:"items"`
+	Items      []T `json:"items"`
+	TotalPages int `json:"total_pages"`
 }
 
 func (client *Client) ListDevices(ctx context.Context) ([]model.Device, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	var payload itemList[model.Device]
-	err := client.authJSON(ctx, http.MethodGet, "client/devices", nil, &payload)
-	return payload.Items, err
+	var items []model.Device
+	for page := 1; page <= 100; page++ {
+		var payload itemList[model.Device]
+		if err := client.authJSON(ctx, http.MethodGet, fmt.Sprintf("client/devices?page=%d&page_size=100", page), nil, &payload); err != nil {
+			return nil, err
+		}
+		items = append(items, payload.Items...)
+		if page >= payload.TotalPages {
+			return items, nil
+		}
+	}
+	return nil, errors.New("device list exceeds the supported page limit")
 }
 
 func (client *Client) ListConnections(ctx context.Context) ([]model.Connection, error) {
@@ -281,18 +330,26 @@ func (client *Client) ListConnections(ctx context.Context) ([]model.Connection, 
 func (client *Client) ListConnectionCatalog(ctx context.Context) (model.ConnectionCatalog, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	var payload model.ConnectionCatalog
-	err := client.authJSON(ctx, http.MethodGet, "client/connections", nil, &payload)
-	if err == nil && client.deviceID != "" {
-		local := make([]model.Connection, 0, len(payload.Items))
+	var result model.ConnectionCatalog
+	for page := 1; page <= 100; page++ {
+		var payload struct {
+			model.ConnectionCatalog
+			TotalPages int `json:"total_pages"`
+		}
+		if err := client.authJSON(ctx, http.MethodGet, fmt.Sprintf("client/connections?page=%d&page_size=100", page), nil, &payload); err != nil {
+			return result, err
+		}
+		result.Capabilities = payload.Capabilities
 		for _, item := range payload.Items {
-			if item.DeviceID == client.deviceID {
-				local = append(local, item)
+			if client.deviceID == "" || item.DeviceID == client.deviceID {
+				result.Items = append(result.Items, item)
 			}
 		}
-		payload.Items = local
+		if page >= payload.TotalPages {
+			return result, nil
+		}
 	}
-	return payload, err
+	return result, errors.New("connection list exceeds the supported page limit")
 }
 
 func (client *Client) CreateHTTPConnection(ctx context.Context, deviceID, name, subdomain, scheme, host string, port int, enabled bool) (model.Connection, error) {

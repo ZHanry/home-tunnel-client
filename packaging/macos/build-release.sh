@@ -8,6 +8,7 @@ set -Eeuo pipefail
 # requires a matching macOS host.
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$script_dir/signing.sh"
 client_dir=$(cd -- "$script_dir/../.." && pwd)
 workspace_dir="$client_dir"
 source_version=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' "$client_dir/internal/model/model.go")
@@ -84,9 +85,11 @@ temporary_command="$frp_source/cmd/home-tunnel-agent-macos-build"
 mkdir "$temporary_command"
 stage=$(mktemp -d "$output_dir/.stage.XXXXXX")
 cleanup() {
+  cleanup_signing
   rm -rf -- "$temporary_command" "$stage"
 }
 trap cleanup EXIT INT TERM
+init_signing
 cp "$workspace_dir/agent/main.go" "$temporary_command/main.go"
 
 package_dir="$stage/home-tunnel-macos-$version-$architecture"
@@ -109,14 +112,16 @@ module_version=$(go version -m "$agent_output" | awk '$1 == "dep" && $2 == "gith
 [[ "$module_version" == "v0.1.1" ]] || { echo "Agent did not include the reviewed NTLM security fix" >&2; exit 1; }
 crypto_version=$(go version -m "$agent_output" | awk '$1 == "dep" && $2 == "golang.org/x/crypto" { print $3 }')
 [[ "$crypto_version" == "v0.56.0" ]] || { echo "Agent did not include the reviewed SSH security fixes" >&2; exit 1; }
+sign_macos_binary "$agent_output"
 agent_hash=$(hash_file "$agent_output")
 (
   cd "$client_dir"
-  CGO_ENABLED=0 GOOS=darwin GOARCH="$architecture" GOFLAGS=-buildvcs=false \
+  [[ "$(uname -s)" == "Darwin" ]] || { echo "Native macOS with Xcode command-line tools is required for Keychain support" >&2; exit 1; }
+  CGO_ENABLED=1 GOOS=darwin GOARCH="$architecture" GOFLAGS=-buildvcs=false \
     go build -trimpath \
     -ldflags "-s -w -buildid= -X main.version=$version -X main.agentVersion=$agent_version -X main.expectedAgentSHA256=$agent_hash" \
     -o "$package_dir/bin/home-tunnel-client" ./cmd/home-tunnel-client
-  gui_cgo=0
+  gui_cgo=1
   if [[ "$(go env GOOS)" == "darwin" && "$architecture" == "$(go env GOARCH)" ]]; then
     gui_cgo=1
   fi
@@ -130,6 +135,8 @@ cp "$script_dir/home-tunnel-enroll" "$package_dir/libexec/"
 cp "$script_dir/install.sh" "$package_dir/install.sh"
 cp "$client_dir/README.md" "$package_dir/README.md"
 chmod 0755 "$package_dir/bin/home-tunnel-client" "$package_dir/bin/home-tunnel-gui" "$package_dir/lib/home-tunnel-agent" "$package_dir/libexec/home-tunnel-enroll" "$package_dir/install.sh"
+sign_macos_binary "$package_dir/bin/home-tunnel-client"
+sign_macos_binary "$package_dir/bin/home-tunnel-gui"
 
 # The self-check can only execute the darwin binaries when this script itself
 # runs on macOS with the same architecture; cross-builds skip it.
@@ -139,6 +146,7 @@ if [[ "$(go env GOOS)" == "darwin" && "$architecture" == "$(go env GOARCH)" ]]; 
   [[ "$client_version_output" == "Home Tunnel macOS Client $version (Agent $agent_version)" ]] || { echo "client version self-check failed: $client_version_output" >&2; exit 1; }
   [[ "$agent_version_output" == "Home Tunnel Agent $agent_version (FRP $frp_version, $frp_commit)" ]] || { echo "Agent version self-check failed: $agent_version_output" >&2; exit 1; }
 fi
+notarize_macos_package "$package_dir"
 tar -C "$stage" -czf "$archive" "$(basename "$package_dir")"
 archive_hash=$(hash_file "$archive")
 printf '%s  %s\n' "$archive_hash" "$(basename "$archive")" >"$checksum_file"
