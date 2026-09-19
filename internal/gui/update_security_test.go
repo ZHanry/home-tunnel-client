@@ -82,7 +82,7 @@ func TestUpdateFailuresPreserveExistingFile(t *testing.T) {
 }
 
 func TestChecksumDownloadFailsClosed(t *testing.T) {
-	for _, status := range []int{404, 503, 200} {
+	for _, status := range []int{http.StatusNotFound, http.StatusServiceUnavailable, http.StatusOK} {
 		upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status); _, _ = w.Write([]byte("invalid")) }))
 		old := updateHTTPClient
 		updateHTTPClient = upstream.Client()
@@ -100,7 +100,7 @@ func TestChecksumDownloadFailsClosed(t *testing.T) {
 }
 
 func TestFailedReleaseCheckDoesNotClaimUpToDate(t *testing.T) {
-	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 503) }))
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", http.StatusServiceUnavailable) }))
 	defer upstream.Close()
 	oldURL, oldClient := githubLatestRelease, updateHTTPClient
 	githubLatestRelease, updateHTTPClient = upstream.URL, upstream.Client()
