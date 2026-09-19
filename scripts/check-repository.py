@@ -22,8 +22,11 @@ if component == "server":
 else:
     lock = json.loads((root / "contracts/lock.json").read_text())
     assert lock['ref'] == compat['contract_ref']
-    for name, checksum in lock['files'].items():
-        assert name in ('contracts/home-tunnel.v1.json','contracts/openapi.v1.json','contracts/api.schema.json')
+    required = {'contracts/home-tunnel.v1.json','contracts/openapi.v1.json','contracts/api.schema.json'}
+    assert len(lock['files']) == len(required) and {item['path'] for item in lock['files']} == required
+    for item in lock['files']:
+        name, checksum = item['path'], item['sha256']
+        assert re.fullmatch(r'[a-f0-9]{64}', checksum)
         assert hashlib.sha256((root/name).read_bytes()).hexdigest() == checksum, f'Contract drift: {name}'
     specification = json.loads((root/'contracts/openapi.v1.json').read_text(encoding='utf-8'))
     assert specification['x-contract-ref'] == lock['ref']
