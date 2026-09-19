@@ -1,0 +1,4 @@
+# Exact reviewed false positives: public API snapshot SHA-256 values in lock.json.
+# These are content digests verified by check-repository.py, not credentials.
+08ab2b794e08b913eaa6cc47219a6bdd1092e301:contracts/lock.json:generic-api-key:8
+08ab2b794e08b913eaa6cc47219a6bdd1092e301:contracts/lock.json:generic-api-key:9
