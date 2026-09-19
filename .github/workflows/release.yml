@@ -229,6 +229,7 @@ jobs:
           Where-Object { $_.Name -like '*.zip*' -or $_.Name -like 'HomeTunnel-Setup-*' } |
           Copy-Item -Destination release-windows
         Copy-Item windows-exe-smoke.json, windows-defender-scan.json, windows-installer-smoke.json, agent-provenance.json, agent-provenance.json.sigstore.json release-windows
+        Copy-Item outputs/windows/windows-platform-signing.json release-windows
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: windows-release
@@ -301,6 +302,9 @@ jobs:
         grep -q '/bin/home-tunnel-client$' <<< "$listing"
         grep -q '/bin/home-tunnel-gui$' <<< "$listing"
         grep -q '/lib/home-tunnel-agent$' <<< "$listing"
+        grep -q '/LICENSE$' <<< "$listing"
+        grep -q '/FRP-LICENSE.txt$' <<< "$listing"
+        grep -q '/docs/PLATFORM_SECURITY.md$' <<< "$listing"
         if [ "$PLATFORM" = linux ]; then
           grep -q '/lib/systemd/system/home-tunnel-client.service$' <<< "$listing"
         else

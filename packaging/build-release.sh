@@ -25,7 +25,8 @@ downloads_dir="$workspace_dir/.downloads"
 output_dir="$workspace_dir/outputs/linux"
 frp_version=0.70.1
 agent_version=$(tr -d '\r' < "$workspace_dir/agent/build-agent.ps1" | sed -n 's/^\$agentVersion = "\([^"]*\)"$/\1/p')
-[[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unable to read the independent Agent version" >&2; exit 1; }
+[[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unable to read the unified Agent version" >&2; exit 1; }
+[[ "$agent_version" == "$source_version" ]] || { echo "Client and first-party Agent versions must match" >&2; exit 1; }
 frp_commit=fa3bcca2b0c4753cd4f0e2ab189dd6a5a6a15708
 frp_archive="$downloads_dir/frp-$frp_commit.zip"
 frp_archive_sha256=9c6b0188a8f74e982069dc89218cc3d79bada8663cedf3b514b98847530cbf7d
@@ -106,7 +107,11 @@ cp "$script_dir/home-tunnel-client.service" "$package_dir/lib/systemd/system/"
 cp "$script_dir/home-tunnel.desktop" "$package_dir/lib/home-tunnel.desktop"
 cp "$script_dir/home-tunnel-enroll" "$package_dir/libexec/"
 cp "$script_dir/install.sh" "$package_dir/install.sh"
-cp "$client_dir/README.md" "$package_dir/README.md"
+cp "$client_dir/README.md" "$client_dir/README.en.md" "$client_dir/LICENSE" "$package_dir/"
+cp "$client_dir/agent/FRP-LICENSE.txt" "$client_dir/agent/THIRD-PARTY-NOTICES.txt" "$package_dir/"
+cp -R "$client_dir/docs" "$client_dir/contracts" "$package_dir/"
+mkdir -p "$package_dir/packaging"
+cp -R "$client_dir/packaging/nas" "$package_dir/packaging/"
 chmod 0755 "$package_dir/bin/home-tunnel-client" "$package_dir/bin/home-tunnel-gui" "$package_dir/lib/home-tunnel-agent" "$package_dir/libexec/home-tunnel-enroll" "$package_dir/install.sh"
 
 if [[ "$(go env GOOS)" == "linux" && "$architecture" == "$(go env GOARCH)" ]]; then

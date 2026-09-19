@@ -15,7 +15,7 @@ if (Test-Path -LiteralPath $destination) { throw 'Smoke installation path alread
 $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$destination`"")
 $process = Start-Process -FilePath $Installer -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
-foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt')) {
+foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'docs\PLATFORM_SECURITY.md')) {
     $installed = (Get-FileHash -LiteralPath (Join-Path $destination $name) -Algorithm SHA256).Hash
     $expected = (Get-FileHash -LiteralPath (Join-Path $PayloadDirectory $name) -Algorithm SHA256).Hash
     if ($installed -ne $expected) { throw "Installed payload mismatch: $name" }

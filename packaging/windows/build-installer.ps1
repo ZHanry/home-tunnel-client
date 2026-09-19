@@ -10,10 +10,15 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Installer version must be X.Y
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
 $compiler = (Resolve-Path -LiteralPath $IsccPath).Path
 $clientDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico')) {
+foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico', 'platform-signing.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $SourceDir $name) -PathType Leaf)) { throw "Missing installer payload: $name" }
 }
 Copy-Item -LiteralPath (Join-Path $clientDir 'LICENSE') -Destination (Join-Path $SourceDir 'LICENSE.txt') -Force
+foreach ($name in @('LICENSE', 'README.md', 'README.en.md', 'docs', 'contracts')) {
+    Copy-Item -LiteralPath (Join-Path $clientDir $name) -Destination $SourceDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path (Join-Path $SourceDir 'packaging') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $clientDir 'packaging\nas') -Destination (Join-Path $SourceDir 'packaging') -Recurse -Force
 foreach ($name in @('FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt')) {
     Copy-Item -LiteralPath (Join-Path $clientDir "agent\$name") -Destination (Join-Path $SourceDir $name) -Force
 }

@@ -48,6 +48,20 @@ $agentSha = (Get-FileHash -LiteralPath $agent -Algorithm SHA256).Hash.ToLowerInv
 & (Join-Path $PSScriptRoot 'sign-release.ps1') -Files @($gui)
 $icon = Join-Path $workspace "agent\assets\HomeTunnel.ico"
 Copy-Item -LiteralPath $icon -Destination (Join-Path $OutputDir "HomeTunnel.ico") -Force
+if ($agentVersion -ne $Version) { throw 'Client and first-party Agent versions must match' }
+# Include the payload's signing state inside the installer as well as the ZIP.
+# The installer itself is recorded separately after its own signature is complete.
+$signingEvidence = [ordered]@{
+    version = $Version
+    platform = 'windows'
+    mode = $(if ($env:WINDOWS_SIGNING_PFX_BASE64) { 'authenticode-sha256-timestamped' } else { 'unsigned-no-certificate-configured' })
+    files = @(@($agent, $gui) | ForEach-Object { [ordered]@{
+        name = [IO.Path]::GetFileName($_)
+        sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+        signature_status = [string](Get-AuthenticodeSignature -LiteralPath $_).Status
+    } })
+}
+[IO.File]::WriteAllText((Join-Path $OutputDir 'platform-signing.json'), ($signingEvidence | ConvertTo-Json -Depth 5) + [char]10, [Text.UTF8Encoding]::new($false))
 
 $setupName = "HomeTunnel-Setup-$Version-x64.exe"
 $setup = Join-Path $OutputDir $setupName
@@ -80,8 +94,8 @@ $signingEvidence = [ordered]@{
         signature_status = [string](Get-AuthenticodeSignature -LiteralPath $_).Status
     } })
 }
-[IO.File]::WriteAllText((Join-Path $OutputDir 'platform-signing.json'), ($signingEvidence | ConvertTo-Json -Depth 5) + [char]10, [Text.UTF8Encoding]::new($false))
-$packageFiles = @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json') | ForEach-Object { Join-Path $OutputDir $_ }
+[IO.File]::WriteAllText((Join-Path $OutputDir 'windows-platform-signing.json'), ($signingEvidence | ConvertTo-Json -Depth 5) + [char]10, [Text.UTF8Encoding]::new($false))
+$packageFiles = @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico', 'LICENSE', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'README.en.md', 'docs', 'contracts', 'packaging') | ForEach-Object { Join-Path $OutputDir $_ }
 Compress-Archive -LiteralPath $packageFiles -DestinationPath $zip -Force
 $zipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$zip.sha256", "$zipSha  $zipName" + [char]10, [Text.UTF8Encoding]::new($false))
