@@ -1,0 +1,14 @@
+HT_REMOTE_ANDROID_1 {
+  global:
+    ht_rd_abi_version;
+    ht_rd_create;
+    ht_rd_get_capabilities;
+    ht_rd_start;
+    ht_rd_on_signal;
+    ht_rd_submit_input;
+    ht_rd_set_surface;
+    ht_rd_pause;
+    ht_rd_close;
+    ht_rd_release;
+  local: *;
+};

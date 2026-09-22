@@ -60,7 +60,7 @@ def dependency_entries(path):
         # Only the part before ':' is a filesystem path. The suffix stays data.
         checkout_path, separator, package = name.partition(":")
         relative = PurePosixPath(checkout_path)
-        if relative.is_absolute() or ".." in relative.parts or "\\" in name or relative.parts[0] != "src" or (separator and (not package or ":" in package)):
+        if not relative.parts or relative.is_absolute() or ".." in relative.parts or "\\" in name or relative.parts[0] != "src" or (separator and (not package or ":" in package)):
             raise SystemExit("Unsafe gclient source path")
     return result
 
@@ -85,7 +85,7 @@ def verify_artifact(directory):
         path = directory / name
         if not path.resolve().is_relative_to(directory) or path.is_symlink() or not re.fullmatch(r"[0-9a-f]{64}", expected) or sha(path) != expected:
             raise SystemExit("Engine artifact hash/path mismatch")
-    required = {"lib/arm64-v8a/libwebrtc.a", "lib/arm64-v8a/libhome_tunnel_android_surface.a", "LICENSE.md", "source-manifest.json", "include/api/peer_connection_interface.h", "include/home_tunnel/remote.h"}
+    required = {"lib/arm64-v8a/libwebrtc.a", "lib/arm64-v8a/libhome_tunnel_android_surface.a", "lib/arm64-v8a/libhome_tunnel_remote.so", "LICENSE.md", "source-manifest.json", "include/api/peer_connection_interface.h", "include/home_tunnel/remote.h"}
     if not required.issubset(files):
         raise SystemExit("Engine artifact omits a required library/header/license/source manifest")
     print("Android engine library/header/license hashes verified; device media acceptance remains required")
@@ -146,7 +146,7 @@ def main():
     run([gn, "gen", build, root_target], source, env)
     log = build / "android-build.log"
     with log.open("w", encoding="utf-8") as stream:
-        result = subprocess.run([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs), "webrtc", "home_tunnel_android_surface"], cwd=source, env=env, stdout=stream, stderr=subprocess.STDOUT)
+        result = subprocess.run([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs), "webrtc", "home_tunnel_android_surface", "home_tunnel_android_controller"], cwd=source, env=env, stdout=stream, stderr=subprocess.STDOUT)
     if result.returncode:
         print("\n".join(log.read_text(errors="replace").splitlines()[-100:]))
         raise SystemExit(result.returncode)
@@ -165,6 +165,25 @@ def main():
         if not machines or machines != {"AArch64"}:
             raise SystemExit("Engine archive contains unexpected architecture objects")
         shutil.copyfile(library, library_dir / library.name)
+    controller = build / "libhome_tunnel_remote.so"
+    architecture = run([readelf, "--file-headers", controller], source, env, True)
+    if set(value.strip() for value in re.findall(r"Machine:\s*(.+)", architecture)) != {"AArch64"}:
+        raise SystemExit("Controller shared library is not AArch64")
+    segments = run([readelf, "--wide", "--program-headers", controller], source, env, True)
+    alignments = [int(value, 16) for value in re.findall(r"^\s*LOAD\s+.*\s+(0x[0-9a-fA-F]+)\s*$", segments, re.MULTILINE)]
+    if not alignments or any(value < 16384 or value % 16384 for value in alignments):
+        raise SystemExit("Controller shared library does not support 16 KiB Android pages")
+    dynamic = run([readelf, "--dynamic", controller], source, env, True)
+    dependencies = set(re.findall(r"Shared library: \[(.*?)\]", dynamic))
+    if "TEXTREL" in dynamic or dependencies - {"libandroid.so", "liblog.so", "libdl.so", "libm.so", "libc.so"}:
+        raise SystemExit("Controller leaked a C++ runtime or unexpected native dependency across the app ABI")
+    nm = readelf.with_name("llvm-nm")
+    exported = run([nm, "--dynamic", "--defined-only", controller], source, env, True)
+    symbols = {line.split()[-1].split("@")[0] for line in exported.splitlines() if line.strip()}
+    expected = {"ht_rd_abi_version", "ht_rd_create", "ht_rd_get_capabilities", "ht_rd_start", "ht_rd_on_signal", "ht_rd_submit_input", "ht_rd_set_surface", "ht_rd_pause", "ht_rd_close", "ht_rd_release"}
+    if symbols - {"HT_REMOTE_ANDROID_1"} != expected:
+        raise SystemExit("Controller exported symbols differ from the reviewed C ABI")
+    shutil.copyfile(controller, library_dir / controller.name)
     # Collect headers from each pinned Git source, excluding generated build trees.
     # Preserve paths exactly so the inventory can be compared with source revisions.
     header_bytes = 0
@@ -195,13 +214,14 @@ def main():
     licenses = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(licenses)
     licenses.LicenseBuilder._run_gn = staticmethod(lambda directory, target: run([gn, "desc", root_target, "--all", "--format=json", directory, target], source, env, True))
-    licenses.LicenseBuilder([str(build)], ["//:webrtc", "//home_tunnel_remote/android:home_tunnel_android_surface"]).generate_license_text(str(output))
+    licenses.LicenseBuilder([str(build)], ["//:webrtc", "//home_tunnel_remote/android:home_tunnel_android_controller"]).generate_license_text(str(output))
     source_manifest = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "revision": revision, "source_modified": False,
                        "dependency_sources": entries, "upstream_lock": upstream, "android_recipe": android,
                        "rebuild": "Use Linux x64 and run python3 scripts/build-remote-android-webrtc.py --build from the exact clean client revision."}
     (output / "source-manifest.json").write_text(json.dumps(source_manifest, indent=2, sort_keys=True) + "\n")
     files = {path.relative_to(output).as_posix(): sha(path) for path in sorted(output.rglob("*")) if path.is_file()}
-    manifest = {"schema_version": 1, "status": "engine-built-controller-integration-and-device-acceptance-required", "available": False,
+    manifest = {"schema_version": 1, "status": "controller-built-device-acceptance-required", "available": False,
+                "controller_backend_linked": True, "device_media_accepted": False,
                 "target": "arm64-v8a", "android_api": 26, "source_revision": revision, "source_modified": False,
                 "webrtc_revision": upstream["webrtc"]["revision"], "upstream_lock_sha256": android["upstream_lock_sha256"],
                 "recipe_sha256": sha(ANDROID / "android-build.lock.json"), "gn_args": android["gn_args"], "files": files}

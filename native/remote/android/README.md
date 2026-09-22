@@ -13,7 +13,8 @@ currently enables software codecs and disables optional H.264/HEVC, internal aud
 device capture and upstream examples/tools. This does not claim hardware decoding,
 audio or any codec/device interoperability.
 
-The internal SDK contains real `libwebrtc.a` and renderer archives, source headers,
+The internal SDK contains real `libwebrtc.a`, renderer archives, a shared C ABI
+controller, source headers,
 dependency notices, source revisions, GN configuration and a SHA-256 inventory.
 Run `--verify-artifact <directory>` after transferring it. Every library object must
 be AArch64. The source checkout must be clean; unknown dependency licenses or
@@ -26,7 +27,15 @@ Clang/libc++ ABI. The app communicates with that shared library only through
 The app's existing JNI NDK remains 27.2.12479018. The final shared-library packaging
 must also verify 16 KiB ELF segment alignment and the exact exported C symbols.
 
-Until PeerConnection signaling, independent native authorization, all four data
-channels, direct-UDP verification and real Surface decoding acceptance are wired
-through the C ABI, Android keeps reporting `RD_MEDIA_UNAVAILABLE`. Neither this
-source layer nor a successful engine build changes that capability.
+The shared controller implements PeerConnection signaling, independent native
+ticket/lease/grant verification, all four data channels, mutual identity proofs,
+direct-UDP statistics checks, Surface presentation and synchronized input. Lease
+deadlines are enforced on every rendered frame and input operation. It reports
+backend availability only when that implementation is linked. The default app
+security-core build continues to report `RD_MEDIA_UNAVAILABLE`.
+
+Artifact metadata keeps `available:false` and `device_media_accepted:false` until
+physical-device acceptance is recorded; `controller_backend_linked:true` records
+only the existence of the real implementation. Successful compilation is not
+evidence of remote frames actually decoded and presented on a device. The arm64
+shared library must pass ELF/C ABI checks before an app may import it.
