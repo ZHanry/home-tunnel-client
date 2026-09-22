@@ -409,7 +409,7 @@ func TestNativeHostProcess(t *testing.T) {
 	if err != nil || !capability.Available || capability.Status != "ready" || len(capability.Displays) == 0 {
 		t.Fatalf("native capability: %+v, %v", capability, err)
 	}
-	wantPermissions := []string{"view", "input.keyboard", "input.pointer", "input.text", "clipboard.read", "clipboard.write"}
+	wantPermissions := []string{"view", "input.keyboard", "input.pointer", "input.text", "clipboard.read", "clipboard.write", "files.send", "files.receive"}
 	if runtime.GOOS == "linux" {
 		wantPermissions = []string{"view", "input.keyboard", "input.pointer"}
 	}

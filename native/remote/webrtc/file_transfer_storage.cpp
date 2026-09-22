@@ -53,7 +53,7 @@ std::string random_name() {
 #else
   if (RAND_bytes(bytes.data(), bytes.size()) != 1) return {};
 #endif
-  constexpr char hex[] = "0123456789abcdef";
+  constexpr std::string_view hex = "0123456789abcdef";
   std::string result = ".home-tunnel-";
   for (const auto byte : bytes) {
     result += hex[byte >> 4];
@@ -199,7 +199,15 @@ class Destination final : public FileDestination {
       const auto bytes = offsetof(FILE_RENAME_INFO, FileName) +
                          (name.size() + 1) * sizeof(wchar_t);
       std::vector<uint8_t> buffer(bytes, 0);
+      // Win32 requires this variable-length structure. The allocation above
+      // includes the complete counted UTF-16 filename plus its terminator.
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage begin
+#endif
       auto* rename = reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage end
+#endif
       rename->ReplaceIfExists = FALSE;
       rename->RootDirectory = nullptr;
       rename->FileNameLength =

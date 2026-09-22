@@ -38,6 +38,7 @@ type configuration struct {
 	Worker           string `json:"worker"`
 	SHA256           string `json:"sha256"`
 	InputTargetPID   uint32 `json:"input_target_pid"`
+	FileTestRoot     string `json:"file_test_root"`
 }
 
 type command struct {
@@ -95,6 +96,16 @@ func run() error {
 	scopes := []string{"view"}
 	if initial.InputTargetPID != 0 {
 		scopes = append(scopes, "input.keyboard", "input.pointer", "input.text")
+	}
+	if initial.FileTestRoot != "" {
+		if !filepath.IsAbs(initial.FileTestRoot) || filepath.Clean(initial.FileTestRoot) != filepath.Join(filepath.Dir(initial.StorePath), "file-fixture") {
+			return errors.New("file fixture must be confined to this test directory")
+		}
+		info, check := os.Lstat(initial.FileTestRoot)
+		if check != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("invalid file fixture")
+		}
+		scopes = append(scopes, "files.send", "files.receive")
 	}
 	for _, scope := range scopes {
 		found := false
@@ -166,6 +177,29 @@ func run() error {
 		var operation error
 		details := map[string]any{}
 		switch request.Action {
+		case "file_state", "file_offer", "file_accept", "file_cancel":
+			if initial.FileTestRoot == "" || controllerID == "" {
+				operation = remotehost.ErrLocalApproval
+				break
+			}
+			state := service.FileState()
+			switch request.Action {
+			case "file_state":
+				details["files"] = state
+			case "file_offer":
+				operation = service.SelectFiles(ctx, state.SessionRef, func(context.Context) ([]string, error) {
+					return []string{filepath.Join(initial.FileTestRoot, "native-empty.bin"), filepath.Join(initial.FileTestRoot, "native-multichunk.bin")}, nil
+				})
+			case "file_accept":
+				operation = service.SelectDestination(ctx, state.SessionRef, request.TargetID, func(_ context.Context, name string) (string, error) {
+					if name != "browser-empty.bin" && name != "browser-multichunk.bin" {
+						return "", remotehost.ErrLocalApproval
+					}
+					return filepath.Join(initial.FileTestRoot, name), nil
+				})
+			case "file_cancel":
+				operation = service.CancelFile(ctx, state.SessionRef, request.TargetID)
+			}
 		case "state":
 			details["session_idle"] = service.State(ctx).ActiveSessionID == ""
 		case "input_target_point":

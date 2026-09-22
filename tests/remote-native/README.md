@@ -62,7 +62,18 @@ keys, protected state and the temporary server are disposed at the end.
 No screenshots, recordings, SDP, candidate addresses, JWTs, keys or passwords are written to
 the report. Real desktop pixels do traverse this local test session; run on a test desktop.
 Without `--input chromium`, input stays `not_verified` and the runner performs no injection.
-Audio, clipboard, files and Android remain outside this report's scope.
+Audio, clipboard and Android remain outside this report's scope.
+
+Add `--files fixture` for actual bidirectional file DataChannel acceptance. The runner
+creates empty and multi-chunk files only in its temporary directory, grants both file
+permissions through the real signed pairing, and explicitly enables both features. A
+test-only local selector calls the production Go consent service; the browser writes
+to its real origin-private filesystem. Both receivers must save the exact byte count
+and SHA-256, the sender must receive completion acknowledgments, and video must continue
+after the file features are disabled. This proves the actual native/browser transfer
+path and disk writes, **not** the Windows or browser user-facing file picker. No existing
+user files or clipboard content are read. The fixture selector is compiled only with
+`windows && remote_native_e2e` and accepts only fixed generated filenames.
 
 Use `--codec H264` or `--codec VP8` for separate baseline codec acceptance. The
 isolated browser page constrains its real video transceiver to that codec (H.264

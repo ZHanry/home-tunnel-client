@@ -4,8 +4,10 @@ import { RemoteSession, selectedUdpPair } from '/modules/remote/session.js';
 import { base64url, sha256, signJws } from '/modules/remote/identity.js';
 import { canonicalJson, decodeFrame, encodeFrame, TYPES } from '/modules/remote/protocol.js';
 import { RemoteInput } from '/modules/remote/input.js';
+import { RemoteTransfers } from '/modules/remote/transfer.js';
 
-let api, signal, session, host, pairing, requestID, nonce, input, savedHeartbeat, pending = [], permissions = ['view'];
+let api, signal, session, host, pairing, requestID, nonce, input, savedHeartbeat, transfers, pending = [], permissions = ['view'];
+const fileState = { offers: [], progress: [], received: [] };
 const video = document.querySelector('video');
 const state = { phases: [], failures: [], input_releases: [], frames: 0 };
 const fail = error => { state.failures.push(error?.code ?? 'RD_NATIVE_E2E_BROWSER_FAILED'); session?.fail(error); };
@@ -23,8 +25,9 @@ async function deliver(message) {
   await session.onSignal(message);
 }
 window.nativeE2E = {
-  async initialize({ account_token: token, user_id: userID, input: withInput = false, codec = null }) {
+  async initialize({ account_token: token, user_id: userID, input: withInput = false, files: withFiles = false, codec = null }) {
     permissions = withInput ? ['view', 'input.keyboard', 'input.pointer', 'input.text'] : ['view'];
+    if (withFiles) permissions.push('files.send', 'files.receive');
     if (codec !== null) {
       if (!['H264', 'VP8'].includes(codec)) throw new Error('E2E_CODEC_INVALID');
       // Constrain the real browser offer in this isolated test page. The actual
@@ -86,6 +89,12 @@ window.nativeE2E = {
     session = new RemoteSession({ api, signal, session: snapshot, hostThumbprint: host.jkt, video,
       onState(phase, error) { state.phases.push(phase); if (error) state.failures.push(error.code ?? 'RD_MEDIA_FAILED'); },
       onReconnectNeeded() { fail(new Error('RD_UNEXPECTED_RECONNECT')); },
+      onControl: frame => transfers?.onFrame(frame),
+      onFeatureRevoked: permission => transfers?.revoke(permission),
+    });
+    transfers = new RemoteTransfers(session, {
+      onOffer: offer => fileState.offers.push(offer),
+      onProgress: progress => { fileState.progress.push(progress); if (fileState.progress.length > 256) fileState.progress.shift(); },
     });
     input = new RemoteInput(session, video);
     // Local host candidates suffice for this same-machine direct UDP acceptance.
@@ -159,6 +168,31 @@ window.nativeE2E = {
     if (!hold) { session.send(TYPES.BUTTON, payload(false)); input.buttons = 0; }
   },
   releaseInput() { input.release(); },
+  async enableFiles() { await session.setFeature('files.send', true); await session.setFeature('files.receive', true); },
+  fileEvidence() { return structuredClone(fileState); },
+  async offerFiles() {
+    const bytes = Uint8Array.from({ length: 1048593 }, (_, n) => (n * 31 + 17) & 255);
+    await transfers.offerFiles([new File([], 'browser-empty.bin'), new File([bytes], 'browser-multichunk.bin')]);
+  },
+  async acceptFile(id) {
+    const offer = fileState.offers.find(item => item.id === id);
+    if (!offer || !['native-empty.bin', 'native-multichunk.bin'].includes(offer.name)) throw new Error('E2E_FILE_NAME_INVALID');
+    // The origin-private browser filesystem uses real streaming writes. This
+    // fixture deliberately does not count as a user save-picker acceptance.
+    const directory = await navigator.storage.getDirectory();
+    const handle = await directory.getFileHandle(offer.name, { create: true });
+    const sink = await handle.createWritable();
+    await transfers.acceptFile(id, {
+      write: bytes => sink.write(bytes), abort: () => sink.abort(),
+      async close() {
+        await sink.close(); const saved = await handle.getFile();
+        const digest = await crypto.subtle.digest('SHA-256', await saved.arrayBuffer());
+        fileState.received.push({ id, name: offer.name, size: saved.size, sha256: [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('') });
+      },
+    });
+  },
+  async cancelFile(id) { await transfers.cancel(id); },
+  async disableFiles() { await session.setFeature('files.send', false); await session.setFeature('files.receive', false); },
   async closeSession() { input?.close(); session?.close(); await session?.closeRequest; session = null; input = null; pending = []; },
-  async close() { input?.close(); session?.close(); await session?.closeRequest; signal?.close(); api?.close(); },
+  async close() { await transfers?.close(); input?.close(); session?.close(); await session?.closeRequest; signal?.close(); api?.close(); },
 };

@@ -2,6 +2,7 @@
 #include "peer_identity.hpp"
 #include "sdp_policy.hpp"
 #include "clipboard.hpp"
+#include "file_transfer.hpp"
 #include "host_platform.hpp"
 #include "../generated/host_version.hpp"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
@@ -123,6 +124,8 @@ Json::Value capabilities(webrtc::PeerConnectionFactoryInterface& factory){
     if(supported_permissions&protocol::PERMISSION_INPUT_TEXT)value["permissions"].append("input.text");
     if(supported_permissions&protocol::PERMISSION_CLIPBOARD_READ)value["permissions"].append("clipboard.read");
     if(supported_permissions&protocol::PERMISSION_CLIPBOARD_WRITE)value["permissions"].append("clipboard.write");
+    if(supported_permissions&protocol::PERMISSION_FILES_SEND)value["permissions"].append("files.send");
+    if(supported_permissions&protocol::PERMISSION_FILES_RECEIVE)value["permissions"].append("files.receive");
   }
   value["displays"]=Json::Value(Json::arrayValue);
   for(const auto& source:sources){Json::Value item;item["id"]=std::to_string(source.id);item["name"]=source.name;
@@ -250,6 +253,10 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     if(clipboard_storage_)clipboard_=std::make_unique<ClipboardTransfer>(*clipboard_storage_,[this](uint8_t type,std::span<const uint8_t> payload){SendBinary(4,type,payload,0);return !closed_;},
       [this]{const auto channel=channels_.find(4);return channel!=channels_.end() && channel->second.first->state()==webrtc::DataChannelInterface::kOpen && channel->second.first->buffered_amount()<32768;},
       [this](std::string_view permission){Json::Value result;result["permission"]=std::string(permission);result["enabled"]=false;result["error_code"]="RD_CLIPBOARD_UNAVAILABLE";Send(protocol::FEATURE_STATE,result);});
+    if(supported_permissions&(protocol::PERMISSION_FILES_SEND|protocol::PERMISSION_FILES_RECEIVE))files_=std::make_unique<FileTransfer>(
+      [this](uint8_t type,std::span<const uint8_t> payload){SendBinary(5,type,payload,0);return !closed_;},
+      [this]{const auto channel=channels_.find(5);return !closed_ && channel!=channels_.end() && channel->second.first->state()==webrtc::DataChannelInterface::kOpen && channel->second.first->buffered_amount()<65536;},
+      [this](const Json::Value& value){Event("file",value);},[this]{return FileCurrent();});
     started_=true;started_at_=steady_ms();Tick();return true;
   }
   bool Signal(const Json::Value& message){
@@ -303,11 +310,38 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     Send(protocol::SESSION_PROOF,body);MaybeReady();return !closed_;
   }
   void Close(std::string_view reason){
-    if(closed_)return;closed_=true;if(clipboard_)clipboard_->close();gate_.close();if(capture_){capture_->stop();capture_.reset();}
+    if(closed_)return;closed_=true;close_reason_=reason;gate_.close();
+    // File callbacks may detect failed IPC/SCTP writes. Release input now, but
+    // never destroy/reenter the transfer while one of its methods is on stack.
+    if(!file_depth_)FinishClose();
+  }
+  bool FileCommand(std::string_view operation,const Json::Value& payload){
+    if(!FileCurrent() || !files_)return false;
+    FileCall guard(*this);const auto now=steady_ms();bool ok=false;
+    if(operation=="file_offer_sources"){
+      if(!fields(payload,{"session_id","connection_epoch","paths"}) || !payload["paths"].isArray() || payload["paths"].empty() || payload["paths"].size()>64)return false;
+      std::vector<std::filesystem::path> paths;
+      for(const auto& value:payload["paths"]){std::filesystem::path path;if(!LocalPath(value,path))return false;paths.push_back(std::move(path));}
+      ok=files_->offer_sources(paths,now);
+    }else{
+      std::array<uint8_t,16> id{};
+      if(!payload["file_id"].isString() || !PeerIdentity::uuid(payload["file_id"].asString(),id))return false;
+      if(operation=="file_accept"){
+        std::filesystem::path path;
+        if(!fields(payload,{"session_id","connection_epoch","file_id","path"}) || !LocalPath(payload["path"],path))return false;
+        ok=files_->approve_destination(payload["file_id"].asString(),path,now);
+      }else if(operation=="file_cancel" && fields(payload,{"session_id","connection_epoch","file_id"}))ok=files_->cancel(payload["file_id"].asString(),now);
+    }
+    if(!closed_)files_->tick(steady_ms());return ok && !closed_;
+  }
+  void FinishClose(){
+    if(close_finished_)return;close_finished_=true;
+    if(files_){files_->close();files_.reset();}
+    if(clipboard_)clipboard_->close();if(capture_){capture_->stop();capture_.reset();}
     for(auto& [slot,pair]:channels_){pair.first->UnregisterObserver();pair.first->Close();}channels_.clear();
     if(connection_)connection_->Close();connection_=nullptr;source_=nullptr;
     sink_.watchdog_stop();
-    if(!reason.empty()){Json::Value payload;payload["error_code"]=std::string(reason);Event("closed",payload);}
+    if(!close_reason_.empty()){Json::Value payload;payload["error_code"]=close_reason_;Event("closed",payload);}
   }
   bool ReleasesComplete(){gate_.tick(steady_ms());return !gate_.input_releases_pending();}
   Json::Value Diagnostics()const{
@@ -319,12 +353,12 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   }
   void State(unsigned slot){if(closed_)return;const auto found=channels_.find(slot);if(found!=channels_.end() && found->second.first->state()==webrtc::DataChannelInterface::kClosed)Close("RD_MEDIA_FAILED");}
   void Receive(unsigned slot,const webrtc::DataBuffer& message){
-    if(closed_)return;if(!message.binary || slot>4){Close("RD_PROTOCOL_MISMATCH");return;}
+    if(closed_)return;if(!message.binary || slot>5){Close("RD_PROTOCOL_MISMATCH");return;}
     if(slot==1 || slot==2)++input_diagnostics_[0];
     Frame frame;const auto bytes=std::span(message.data.cdata<uint8_t>(),message.data.size());
     if(parse_frame(bytes,static_cast<Channel>(slot),identity_->epoch(),frame)!=FrameError::ok){Close("RD_PROTOCOL_MISMATCH");return;}
     auto& previous=received_[slot];if(frame.sequence<=previous){if(slot==1 || slot==2)++input_diagnostics_[2];return;}
-    if((slot<2 || slot==4) && frame.sequence!=previous+1){Close("RD_PROTOCOL_MISMATCH");return;}previous=frame.sequence;
+    if((slot<2 || slot>=4) && frame.sequence!=previous+1){Close("RD_PROTOCOL_MISMATCH");return;}previous=frame.sequence;
     const bool controlled=gate_.input_allowed();
     if(gate_.tick(steady_ms())!=GateResult::ok){Close("RD_LEASE_EXPIRED");return;}
     if(controlled && !gate_.input_allowed())ReleaseInput("RD_INPUT_WATCHDOG",true);
@@ -339,6 +373,14 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     if(frame.type==protocol::RELEASE_ALL || frame.type==protocol::CONTROL_RELEASED || frame.type==protocol::PAUSE){ReleaseInput("controller_released",false);return;}
     if(!ready_){Close("RD_STATE_CONFLICT");return;}
     if(slot==4){if(!clipboard_ || !clipboard_->receive(frame.type,frame.payload,steady_ms()))Close("RD_CLIPBOARD_INVALID");return;}
+    if(slot==5){
+      if(!FileCurrent() || !files_){Close("RD_SCOPE_DENIED");return;}
+      FileCall guard(*this);
+      if(!files_->receive(frame.type,frame.payload,steady_ms()))Close("RD_FILE_INVALID");
+      // Flush ACKs and the next bounded chunk immediately. Waiting for the
+      // 250 ms lifecycle tick would artificially limit each file to 128 KiB/s.
+      if(!closed_)files_->tick(steady_ms());return;
+    }
     if(frame.type==protocol::CAPABILITIES_ACK){
       if(!text(body["capability_hash"],capability_hash_) || body["permissions"]!=identity_->permissions()){Close("RD_SCOPE_DENIED");return;}capabilities_ack_=true;return;
     }
@@ -349,8 +391,16 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
       const auto permission=body["permission"].asString();const bool enabled=body["enabled"].asBool();
       bool approved=false;for(const auto& value:identity_->permissions())if(value==permission)approved=true;
       if(!approved){Close("RD_SCOPE_DENIED");return;}
-      const bool supported=clipboard_ && (permission=="clipboard.read" || permission=="clipboard.write");
-      const bool changed=supported && (!enabled || (capture_ && capture_->frames>0)) && clipboard_->enable(permission,enabled,steady_ms());
+      bool changed=false;
+      if(clipboard_ && (permission=="clipboard.read" || permission=="clipboard.write"))
+        changed=(!enabled || (capture_ && capture_->frames>0)) && clipboard_->enable(permission,enabled,steady_ms());
+      if(files_ && (permission=="files.send" || permission=="files.receive")){
+        // Before the first captured frame both directions are already off.
+        // An early disable must not call live() and permanently close the
+        // not-yet-activated transfer engine during the handshake.
+        if(!capture_ || !capture_->frames)changed=!enabled;
+        else {FileCall guard(*this);changed=files_->enable(permission,enabled,steady_ms());}
+      }
       Json::Value result;result["permission"]=permission;result["enabled"]=changed && enabled;
       if(!changed)result["error_code"]="RD_FEATURE_UNAVAILABLE";Send(protocol::FEATURE_STATE,result);return;
     }
@@ -446,11 +496,11 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     else if(state==webrtc::PeerConnectionInterface::PeerConnectionState::kDisconnected || state==webrtc::PeerConnectionInterface::PeerConnectionState::kFailed)Close("RD_NO_DIRECT_PATH");
   }
   void OnDataChannel(webrtc::scoped_refptr<webrtc::DataChannelInterface> channel)override{
-    constexpr std::array<std::string_view,5> names{"control","input","motion","feedback","clipboard"};const auto label=channel->label();
+    constexpr std::array<std::string_view,6> names{"control","input","motion","feedback","clipboard","file"};const auto label=channel->label();
     const auto found=std::find(names.begin(),names.end(),label);
     if(closed_ || found==names.end()){channel->Close();if(!closed_)Close("RD_PROTOCOL_MISMATCH");return;}
     const unsigned slot=static_cast<unsigned>(found-names.begin());
-    const bool reliable=slot<2 || slot==4;
+    const bool reliable=slot<2 || slot>=4;
     if(channels_.contains(slot) || channel->negotiated() || channel->ordered()!=reliable ||
        (reliable?channel->maxRetransmitsOpt().has_value():channel->maxRetransmitsOpt()!=0) || channel->maxPacketLifeTime().has_value()){
       channel->Close();Close("RD_PROTOCOL_MISMATCH");return;
@@ -459,6 +509,22 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     channels_.emplace(slot,std::pair{channel,std::move(observer)});channel->RegisterObserver(pointer);
   }
  private:
+  struct FileCall {
+    HostSession& owner;
+    explicit FileCall(HostSession& value):owner(value){++owner.file_depth_;}
+    ~FileCall(){if(!--owner.file_depth_ && owner.closed_)owner.FinishClose();}
+  };
+  static bool LocalPath(const Json::Value& value,std::filesystem::path& path){
+    if(!value.isString())return false;const auto bytes=value.asString();
+    if(bytes.empty() || bytes.size()>32768 || bytes.find('\0')!=std::string::npos || !valid_utf8({reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size()}))return false;
+    path=std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(bytes.data()),bytes.size()));return path.is_absolute();
+  }
+  bool FileCurrent(){
+    const auto now=steady_ms();
+    if(closed_ || !ready_ || !capabilities_ack_ || !identity_->authenticated() || !path_verified_ || !capture_ || !capture_->frames || capture_->failed)return false;
+    const auto last=capture_->last_frame.load();
+    return (last>now || now-last<1750) && gate_.tick(now)==GateResult::ok && gate_.media_allowed();
+  }
   bool ApplyCandidates(){
     if(!remote_description_)return true;
     for(const auto& item:pending_candidates_){std::unique_ptr<webrtc::IceCandidate> candidate(webrtc::CreateIceCandidate(item["sdpMid"].asString(),item["sdpMLineIndex"].asInt(),item["candidate"].asString(),nullptr));
@@ -532,6 +598,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     if(!ready_ && now-started_at_>protocol::ICE_DEADLINE_MS){Close("RD_NO_DIRECT_PATH");return;}
     if(capture_){const auto last=capture_->last_frame.load();if(capture_->failed || (now>=last && now-last>=1750)){Close("RD_CAPTURE_FAILED");return;}}
     if(ready_ && clipboard_)clipboard_->tick(now);
+    if(files_ && FileCurrent()){FileCall guard(*this);files_->tick(now);}
     if(closed_)return;
     if(connected_ && !stats_pending_){stats_pending_=true;connection_->GetStats(webrtc::make_ref_counted<Stats>(weak_from_this()).get());}
     auto weak=weak_from_this();signaling_.PostDelayedTask([weak]{if(auto self=weak.lock())self->Tick();},webrtc::TimeDelta::Millis(250));
@@ -539,13 +606,14 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   std::unique_ptr<PeerIdentity> identity_;webrtc::Thread& signaling_;webrtc::PeerConnectionFactoryInterface& factory_;
   HostInputSink sink_;SessionGate gate_;Screen screen_{};std::vector<Screen> available_screens_;
   std::unique_ptr<ClipboardStorage> clipboard_storage_;std::unique_ptr<ClipboardTransfer> clipboard_;
+  std::unique_ptr<FileTransfer> files_;unsigned file_depth_=0;bool close_finished_=false;std::string close_reason_;
   webrtc::scoped_refptr<webrtc::PeerConnectionInterface> connection_;webrtc::scoped_refptr<ScreenSource> source_;std::unique_ptr<Capture> capture_;
   std::map<unsigned,std::pair<webrtc::scoped_refptr<webrtc::DataChannelInterface>,std::unique_ptr<ChannelObserver>>> channels_;
-  std::array<uint32_t,5> received_{};std::vector<Json::Value> pending_candidates_;Json::Value pending_hello_;
+  std::array<uint32_t,6> received_{};std::vector<Json::Value> pending_candidates_;Json::Value pending_hello_;
   std::array<uint64_t,6> input_diagnostics_{};Json::Value codec_capabilities_,video_diagnostics_,pending_ready_;uint64_t pending_ready_at_=0;
   std::string pending_offer_,proof_request_,selected_pair_,local_type_,remote_type_,capability_hash_;
   std::string input_request_;std::set<std::array<uint8_t,16>> request_ids_;
-  std::array<uint32_t,5> sent_sequence_{};uint32_t local_candidates_=0,remote_candidates_=0,request_input_epoch_=0;uint64_t started_at_=0,input_requested_at_=0,input_permissions_=0;
+  std::array<uint32_t,6> sent_sequence_{};uint32_t local_candidates_=0,remote_candidates_=0,request_input_epoch_=0;uint64_t started_at_=0,input_requested_at_=0,input_permissions_=0;
   bool input_pending_=false;
   bool closed_=false,started_=false,connected_=false,stats_pending_=false,remote_description_=false,answer_echoed_=false,path_verified_=false,ready_=false,capabilities_ack_=false;
 };
@@ -559,6 +627,7 @@ int serve(webrtc::PeerConnectionFactoryInterface& factory,webrtc::Thread& signal
     if(!number(request["abi"],1) || !request["id"].isUInt64() || request["id"].asUInt64()<=last_id ||
        !request["operation"].isString() || !request["payload"].isObject())break;
     last_id=request["id"].asUInt64();const auto operation=request["operation"].asString();const auto& payload=request["payload"];
+    const bool file_operation=operation=="file_offer_sources" || operation=="file_accept" || operation=="file_cancel";
     Json::Value response;response["abi"]=1;response["id"]=request["id"];response["ok"]=false;response["result"]=Json::Value(Json::objectValue);
     bool ok=false;
     if(operation=="hello"){response["result"]["version"]=std::string(HOST_VERSION);response["result"]["abi"]=1;response["result"]["max_frame_bytes"]=maximum_ipc;ok=true;}
@@ -578,9 +647,10 @@ int serve(webrtc::PeerConnectionFactoryInterface& factory,webrtc::Thread& signal
         std::vector<uint8_t> signature;if(payload["request_id"].isString() && payload["signature"].isString() && PeerIdentity::decode_base64(payload["signature"].asString(),signature) && signature.size()==64)
           ok=signaling.BlockingCall([&]{return session->Proof(payload["request_id"].asString(),signature);});
       }else if(operation=="close"){signaling.BlockingCall([&]{session->Close("RD_LOCAL_CLOSE");});ok=true;}
-      if(!ok)signaling.BlockingCall([&]{session->Close("RD_AUTHORIZATION_INVALID");});
+      else if(file_operation)ok=signaling.BlockingCall([&]{return session->FileCommand(operation,payload);});
+      if(!ok && !file_operation)signaling.BlockingCall([&]{session->Close("RD_AUTHORIZATION_INVALID");});
     }else if(operation=="close")ok=true;
-    response["ok"]=ok;if(!ok)response["error_code"]="RD_AUTHORIZATION_INVALID";
+    response["ok"]=ok;if(!ok)response["error_code"]=file_operation?"RD_FILE_OPERATION_FAILED":"RD_AUTHORIZATION_INVALID";
     if(!write_frame(response))break;
   }
   signaling.BlockingCall([&]{if(session)session->Close("RD_WORKER_CLOSED");session.reset();});return 0;

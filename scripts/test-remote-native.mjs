@@ -12,20 +12,21 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = Object.create(null);
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i];
-  if (!['--worker', '--sha256', '--server-root', '--report-dir', '--input', '--codec'].includes(key) || !process.argv[i + 1] || options[key]) {
-    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>] [--input chromium] [--codec H264|VP8]');
+  if (!['--worker', '--sha256', '--server-root', '--report-dir', '--input', '--codec', '--files'].includes(key) || !process.argv[i + 1] || options[key]) {
+    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>] [--input chromium] [--codec H264|VP8] [--files fixture]');
     process.exit(2);
   }
   options[key] = process.argv[i + 1];
 }
 const reportDir = resolve(options['--report-dir'] ?? join(root, 'outputs', 'remote-native-acceptance'));
 const withInput = options['--input'] === 'chromium';
+const withFiles = options['--files'] === 'fixture';
 const requestedCodec = options['--codec'] ?? null;
 if (requestedCodec !== null && !['H264', 'VP8'].includes(requestedCodec)) { console.error('Unsupported codec constraint'); process.exit(2); }
 mkdirSync(reportDir, { recursive: true });
 const report = {
   schema: 1, started_at: new Date().toISOString(), status: 'not_verified',
-  scope: `Windows native desktop capture to Chromium on the same machine, ${withInput ? 'view and input confined to a dedicated test browser process' : 'view only'}`,
+  scope: `Windows native desktop capture to Chromium on the same machine, ${withInput ? 'view and input confined to a dedicated test browser process' : 'view without input'}${withFiles ? ', with bidirectional fixture file transfer' : ''}`,
   transport: 'isolated HTTP/WS IPv4 loopback fixture; production HTTPS policy unchanged',
   checks: {}, limitations: ['Cross-network traversal, Android, audio, clipboard, files and input are not established by this run.'],
   input: { status: 'not_verified', reason: withInput ? 'Input acceptance has not completed.' : 'Input acceptance was not requested; no input injection is attempted.' },
@@ -128,6 +129,7 @@ try {
   requireCheck(process.platform === 'win32', 'E2E_WINDOWS_REQUIRED');
   requireCheck(Number(process.versions.node.split('.')[0]) === 24, 'E2E_NODE_24_REQUIRED');
   requireCheck(options['--input'] === undefined || withInput, 'E2E_INPUT_TARGET_INVALID');
+  requireCheck(options['--files'] === undefined || withFiles, 'E2E_FILE_FIXTURE_INVALID');
   requireCheck(options['--worker'] && isAbsolute(options['--worker']) && existsSync(options['--worker']), 'E2E_NATIVE_WORKER_MISSING');
   requireCheck(/^[0-9a-f]{64}$/i.test(options['--sha256'] ?? ''), 'E2E_PINNED_SHA256_REQUIRED');
   const actualHash = createHash('sha256').update(readFileSync(options['--worker'])).digest('hex');
@@ -151,6 +153,12 @@ try {
   requireCheck(afterBuild.commit === serverLock.revision && afterBuild.modified === false, 'E2E_SERVER_SOURCE_CHANGED_DURING_BUILD');
   report.server_build = { fresh: true, source_commit: afterBuild.commit, command: 'pnpm run build', dist: treeHash(dist) };
   directory = mkdtempSync(join(tmpdir(), 'home-tunnel-native-e2e-'));
+  const fileRoot = withFiles ? join(directory, 'file-fixture') : '';
+  const nativeFileBytes = Buffer.from(Uint8Array.from({ length: 1048607 }, (_, n) => (n * 13 + 29) & 255));
+  if (withFiles) {
+    mkdirSync(fileRoot); writeFileSync(join(fileRoot, 'native-empty.bin'), '');
+    writeFileSync(join(fileRoot, 'native-multichunk.bin'), nativeFileBytes);
+  }
   stage = 'build_host';
   const hostExecutable = join(directory, 'native-e2e-host.exe');
   const build = spawnSync('go', ['build', '-tags', 'remote_native_e2e', '-o', hostExecutable, './tests/remote-native/host'], { cwd: root, windowsHide: true, timeout: 120000, encoding: 'utf8', maxBuffer: 1048576 });
@@ -178,7 +186,7 @@ try {
   }
   stage = 'native_backend';
   host = new PipeProcess(hostExecutable, []);
-  host.send({ ...initial, worker: options['--worker'], sha256: actualHash, store_path: join(directory, 'host-state.json'), input_target_pid: inputTargetPID });
+  host.send({ ...initial, worker: options['--worker'], sha256: actualHash, store_path: join(directory, 'host-state.json'), input_target_pid: inputTargetPID, file_test_root: fileRoot });
   const ready = await host.read(item => item.event === 'host', 30000);
   requireCheck(ready.capabilities?.available && ready.capabilities.status === 'ready' && ready.capabilities.displays?.length, 'RD_BACKEND_UNAVAILABLE');
   report.checks.native_backend_ready = true;
@@ -195,7 +203,7 @@ try {
   page = await context.newPage();
   await page.goto(`${initial.origin}/__native-e2e/controller.html`);
   await page.waitForFunction(() => !!window.nativeE2E);
-  const controller = await page.evaluate(value => window.nativeE2E.initialize(value), { account_token: initial.account_token, user_id: initial.user_id, input: withInput, codec: requestedCodec });
+  const controller = await page.evaluate(value => window.nativeE2E.initialize(value), { account_token: initial.account_token, user_id: initial.user_id, input: withInput, files: withFiles, codec: requestedCodec });
   // Tokens remain exclusively in process memory and in the isolated browser context.
   delete initial.account_token;
   await rpc('bind_controller', controller);
@@ -231,6 +239,44 @@ try {
     const expectedMime = `video/${requestedCodec}`;
     requireCheck(report.media.video_codec === expectedMime && report.native_media.video_codec === expectedMime && report.native_media.video_frames_encoded > 0 && typeof report.native_media.video_encoder_implementation === 'string' && report.native_media.video_encoder_implementation.length > 0, 'E2E_REQUESTED_CODEC_NOT_OBSERVED');
     report.checks.requested_codec_encoded_and_decoded = true;
+  }
+  if (withFiles) {
+    stage = 'files';
+    report.files = { status: 'not_verified', scope: 'Real bidirectional DataChannel bytes and disk writes using isolated fixture selection; native and browser user pickers are not exercised.' };
+    await page.evaluate(() => window.nativeE2E.enableFiles());
+    await page.evaluate(() => window.nativeE2E.offerFiles());
+    let incoming;
+    await until(async () => { incoming = (await rpc('file_state')).files.items.filter(item => !item.outgoing && item.event === 'offer'); return incoming.length === 2; }, 'E2E_NATIVE_FILE_OFFERS_MISSING');
+    for (const item of incoming) await rpc('file_accept', { target_id: item.id });
+    await until(async () => (await rpc('file_state')).files.items.filter(item => !item.outgoing && item.event === 'complete').length === 2, 'E2E_BROWSER_FILES_NOT_SAVED', 45000);
+    const expectedBrowser = Buffer.from(Uint8Array.from({ length: 1048593 }, (_, n) => (n * 31 + 17) & 255));
+    requireCheck(readFileSync(join(fileRoot, 'browser-empty.bin')).length === 0 && readFileSync(join(fileRoot, 'browser-multichunk.bin')).equals(expectedBrowser), 'E2E_NATIVE_FILE_BYTES_MISMATCH');
+    report.files.browser_to_native = incoming.map(item => ({ name: item.name, size: item.size, sha256: createHash('sha256').update(readFileSync(join(fileRoot, item.name))).digest('hex') }));
+    await rpc('file_offer');
+    let offers;
+    await until(async () => { offers = (await page.evaluate(() => window.nativeE2E.fileEvidence())).offers; return offers.length === 2; }, 'E2E_BROWSER_FILE_OFFERS_MISSING');
+    for (const item of offers) await page.evaluate(id => window.nativeE2E.acceptFile(id), item.id);
+    await until(async () => (await page.evaluate(() => window.nativeE2E.fileEvidence())).received.length === 2, 'E2E_NATIVE_FILES_NOT_SAVED', 45000);
+    const received = (await page.evaluate(() => window.nativeE2E.fileEvidence())).received;
+    requireCheck(received.every(item => item.sha256 === createHash('sha256').update(item.name === 'native-empty.bin' ? Buffer.alloc(0) : nativeFileBytes).digest('hex')), 'E2E_BROWSER_FILE_BYTES_MISMATCH');
+    await until(async () => (await rpc('file_state')).files.items.filter(item => item.outgoing && item.event === 'complete').length === 2, 'E2E_NATIVE_COMPLETION_ACK_MISSING');
+    report.files.native_to_browser = received.map(({ name, size, sha256 }) => ({ name, size, sha256 }));
+    await rpc('file_offer');
+    let cancelledOffers;
+    await until(async () => { cancelledOffers = (await page.evaluate(() => window.nativeE2E.fileEvidence())).offers.filter(item => !offers.some(previous => previous.id === item.id)); return cancelledOffers.length === 2; }, 'E2E_CANCEL_OFFERS_MISSING');
+    for (const item of cancelledOffers) await page.evaluate(id => window.nativeE2E.cancelFile(id), item.id);
+    await until(async () => (await rpc('file_state')).files.items.filter(item => cancelledOffers.some(offer => offer.id === item.id) && item.event === 'cancelled').length === 2, 'E2E_NATIVE_CANCEL_NOT_OBSERVED');
+    await page.evaluate(() => window.nativeE2E.offerFiles());
+    let revokedOffers;
+    await until(async () => { revokedOffers = (await rpc('file_state')).files.items.filter(item => !item.outgoing && item.event === 'offer'); return revokedOffers.length === 2; }, 'E2E_REVOKE_OFFERS_MISSING');
+    await page.evaluate(() => window.nativeE2E.disableFiles());
+    await until(async () => (await rpc('file_state')).files.items.filter(item => revokedOffers.some(offer => offer.id === item.id) && item.event === 'cancelled').length === 2, 'E2E_FILE_REVOCATION_NOT_OBSERVED');
+    requireCheck(readFileSync(join(fileRoot, 'browser-multichunk.bin')).equals(expectedBrowser), 'E2E_CANCEL_CHANGED_SAVED_FILE');
+    const after = await page.evaluate(() => window.nativeE2E.evidence());
+    requireCheck(verifiedMedia(after) && after.frames_decoded > report.media.frames_decoded, 'E2E_FILES_INTERRUPTED_VIDEO');
+    report.files.cancellation_and_revocation = 'passed'; report.files.saved_file_preserved = true;
+    report.files.video_frames_decoded_after = after.frames_decoded;
+    report.files.status = 'passed'; report.checks.bidirectional_file_bytes_and_hashes = true; report.checks.video_continues_after_files_disabled = true;
   }
   if (withInput) {
     stage = 'input';
@@ -345,6 +391,10 @@ try {
   await rpc('shutdown');
   if (!withInput) report.checks.clean_session_shutdown = true;
   report.status = 'passed';
+  report.limitations = [
+    `Cross-network traversal, Android, audio, clipboard${withFiles ? '' : ', files'}${withInput ? '' : ', input'} are not established by this run.`,
+    ...(withFiles ? ['File selection uses a confined test fixture and browser origin-private storage; native and browser user pickers are not established.'] : []),
+  ];
 } catch (error) {
   if (withInput && host && !host.closed && !host.failure) {
     try { report.input.native_diagnostics = (await rpc('diagnostics')).native; } catch {}
