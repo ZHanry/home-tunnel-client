@@ -246,6 +246,10 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if (frame.type == protocol::BUTTON || frame.type == protocol::WHEEL || frame.type == protocol::POINTER_ABS) permission = protocol::PERMISSION_INPUT_POINTER;
     if (!permission || !(identity_->expected().permission_ceiling & permission)) return false;
     if (permission == protocol::PERMISSION_INPUT_POINTER && (read_u32(frame.payload, 0) != layout_epoch_ || !display_slots_.contains(read_u16(frame.payload, 4)))) return false;
+    if (frame.type == protocol::TEXT_COMMIT) {
+      const auto id = auth::base64url(frame.payload.first(16));
+      if (pending_text_.size() >= 32 || !pending_text_.insert(id).second) return false;
+    }
     SendBinary(rule->channel, frame.type, frame.payload, input_epoch_);
     if (!closed_ && frame.type == protocol::KEY) {
       const auto usage = read_u16(frame.payload, 2);
@@ -272,7 +276,14 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if (frame.sequence <= received_[slot]) return;
     if (slot < 2 && frame.sequence != received_[slot] + 1) { Close("RD_PROTOCOL_MISMATCH"); return; }
     received_[slot] = frame.sequence;
-    if (frame.type == protocol::TEXT_ACK) return;
+    if (frame.type == protocol::TEXT_ACK) {
+      if (!identity_->authenticated() || !local_path_ || !remote_path_) { Close("RD_PEER_IDENTITY_MISMATCH"); return; }
+      const auto id = auth::base64url(frame.payload.first(16));
+      if (frame.input_epoch != input_epoch_ || !pending_text_.erase(id)) return;
+      const auto status = read_u16(frame.payload, 16);
+      if (status > 1) { Close("RD_PROTOCOL_MISMATCH"); return; }
+      Json::Value ack; ack["submission_id"] = id; ack["status"] = status; Control(frame.type, ack); return;
+    }
     if (slot != 0) { Close("RD_PROTOCOL_MISMATCH"); return; }
     Json::Value body;
     if (!auth::strict_json(std::string_view(reinterpret_cast<const char*>(frame.payload.data()), frame.payload.size()), body)) { Close("RD_PROTOCOL_MISMATCH"); return; }
@@ -397,7 +408,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     UpdateRendering();
   }
   void UpdateRendering() { renderer_.SetAuthorized(!closed_ && !paused_ && ready_ && local_path_ && remote_path_ && identity_ && identity_->authenticated() && steady_ms() < deadline_, deadline_); }
-  void ResetInput() { input_enabled_ = state_sent_ = false; input_request_.clear(); input_deadline_ = 0; held_keys_.clear(); held_buttons_ = 0; }
+  void ResetInput() { input_enabled_ = state_sent_ = false; input_request_.clear(); input_deadline_ = 0; held_keys_.clear(); held_buttons_ = 0; pending_text_.clear(); }
   void ReleaseInput(std::string_view reason) {
     const bool needed = input_enabled_ || !input_request_.empty(); ResetInput();
     if (needed && !closed_ && channels_.contains(0) && channels_.at(0).first->state() == webrtc::DataChannelInterface::kOpen) { Json::Value body; body["reason"] = std::string(reason); Send(protocol::RELEASE_ALL, body); }
@@ -423,7 +434,8 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if (input_enabled_) {
       Json::Value heartbeat; heartbeat["input_epoch"]=input_epoch_; heartbeat["state_version"]=Json::UInt64(++heartbeat_version_); heartbeat["keys"]=Json::Value(Json::arrayValue); heartbeat["buttons"]=held_buttons_;
       for (const auto usage : held_keys_) { Json::Value key; key["usage_page"]=7; key["usage"]=usage; heartbeat["keys"].append(key); }
-      Send(protocol::INPUT_HEARTBEAT,heartbeat);
+      const auto payload = PeerIdentity::json(heartbeat);
+      SendBinary(3, protocol::INPUT_HEARTBEAT, std::span(reinterpret_cast<const uint8_t*>(payload.data()), payload.size()), 0);
     }
     if (!input_enabled_ && !input_request_.empty() && steady_ms() >= input_deadline_) { ReleaseInput("request_timeout"); Json::Value body; body["reason"]="request_timeout"; Control(protocol::CONTROL_RELEASED,body); }
     if (!first_frame_ && renderer_.presented_frames()) { first_frame_=true; Json::Value body; body["epoch"]=identity_->epoch(); body["frames_presented"]=Json::UInt64(renderer_.presented_frames()); Emit(first_frame,body); }
@@ -439,6 +451,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   std::vector<Json::Value> local_candidates_,remote_candidates_;
   std::set<uint16_t> display_slots_;
   std::set<uint16_t> held_keys_;
+  std::set<std::string> pending_text_;
   uint64_t deadline_=0,lease_sequence_=0,started_=0,ready_at_=0,event_generation_=0,input_deadline_=0,heartbeat_version_=0;
   uint32_t input_epoch_=0,layout_epoch_=0,held_buttons_=0;
   unsigned local_candidate_count_=0,remote_candidate_count_=0;

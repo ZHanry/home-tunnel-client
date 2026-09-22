@@ -75,6 +75,9 @@ def verify_artifact(directory):
         raise SystemExit("Engine artifact was built from a different reviewed recipe")
     if manifest.get("upstream_lock_sha256") != android["upstream_lock_sha256"] or manifest.get("gn_args") != android["gn_args"]:
         raise SystemExit("Engine artifact build configuration mismatch")
+    source_files = manifest.get("source_files")
+    if not isinstance(source_files, dict) or not source_files or hashlib.sha256(json.dumps(source_files, sort_keys=True, separators=(",", ":")).encode()).hexdigest() != manifest.get("source_tree_sha256"):
+        raise SystemExit("Engine artifact has no immutable controller source identity")
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
         raise SystemExit("Missing engine artifact file inventory")
@@ -220,9 +223,12 @@ def main():
                        "rebuild": "Use Linux x64 and run python3 scripts/build-remote-android-webrtc.py --build from the exact clean client revision."}
     (output / "source-manifest.json").write_text(json.dumps(source_manifest, indent=2, sort_keys=True) + "\n")
     files = {path.relative_to(output).as_posix(): sha(path) for path in sorted(output.rglob("*")) if path.is_file()}
+    source_files = {path.relative_to(NATIVE).as_posix(): sha(path) for path in sorted(NATIVE.rglob("*")) if path.is_file() and
+                    (path.suffix in {".cpp", ".hpp", ".h", ".json", ".md", ".patch", ".gn", ".exports"} or path.name in {"CMakeLists.txt", "DEPS", "WEBRTC-LICENSE"})}
     manifest = {"schema_version": 1, "status": "controller-built-device-acceptance-required", "available": False,
                 "controller_backend_linked": True, "device_media_accepted": False,
                 "target": "arm64-v8a", "android_api": 26, "source_revision": revision, "source_modified": False,
+                "source_files": source_files, "source_tree_sha256": hashlib.sha256(json.dumps(source_files, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                 "webrtc_revision": upstream["webrtc"]["revision"], "upstream_lock_sha256": android["upstream_lock_sha256"],
                 "recipe_sha256": sha(ANDROID / "android-build.lock.json"), "gn_args": android["gn_args"], "files": files}
     (output / "android-webrtc-build.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

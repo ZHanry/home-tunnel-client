@@ -3,10 +3,11 @@ import("//webrtc.gni")
 assert(is_android && current_cpu == "arm64")
 
 group("default") {
+  testonly = true
   deps = [
     ":home_tunnel_android_controller",
     ":home_tunnel_android_surface",
-    "//:webrtc",
+    "//:default",
   ]
 }
 

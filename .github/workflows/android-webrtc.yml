@@ -7,7 +7,7 @@ on:
     paths:
       - ".github/workflows/android-webrtc.yml"
       - "scripts/build-remote-android-webrtc.py"
-      - "native/remote/android/**"
+      - "native/remote/**"
 
 permissions:
   contents: read
@@ -59,4 +59,3 @@ jobs:
           path: .downloads/remote-webrtc-android/checkout/src/out/home_tunnel_android_arm64/android-build.log
           if-no-files-found: ignore
           retention-days: 14
-
