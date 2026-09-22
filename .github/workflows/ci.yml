@@ -219,6 +219,7 @@ jobs:
           packaging/macos/build-release.sh \
           packaging/macos/install.sh \
           packaging/macos/home-tunnel-enroll
+        python3 scripts/test_installer_upgrade.py
   browser:
     name: Desktop browser tests
     runs-on: ubuntu-latest
