@@ -24,7 +24,14 @@ type PublicJWK struct {
 }
 
 func jwk(key *ecdsa.PublicKey) PublicJWK {
-	return PublicJWK{"EC", "P-256", encode(key.X.FillBytes(make([]byte, 32))), encode(key.Y.FillBytes(make([]byte, 32)))}
+	if key == nil || key.Curve != elliptic.P256() {
+		return PublicJWK{}
+	}
+	point, err := key.Bytes()
+	if err != nil || len(point) != 65 || point[0] != 4 {
+		return PublicJWK{}
+	}
+	return PublicJWK{"EC", "P-256", encode(point[1:33]), encode(point[33:])}
 }
 func encode(data []byte) string { return base64.RawURLEncoding.EncodeToString(data) }
 func decode(text string) ([]byte, error) {
@@ -44,11 +51,15 @@ func (key PublicJWK) public() (*ecdsa.PublicKey, error) {
 	if e != nil || key.KTY != "EC" || key.CRV != "P-256" || len(x) != 32 || len(y) != 32 {
 		return nil, ErrAuthorization
 	}
-	px, py := new(big.Int).SetBytes(x), new(big.Int).SetBytes(y)
-	if !elliptic.P256().IsOnCurve(px, py) {
+	point := make([]byte, 65)
+	point[0] = 4
+	copy(point[1:33], x)
+	copy(point[33:], y)
+	public, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+	if err != nil {
 		return nil, ErrAuthorization
 	}
-	return &ecdsa.PublicKey{Curve: elliptic.P256(), X: px, Y: py}, nil
+	return public, nil
 }
 func (key PublicJWK) Thumbprint() string {
 	data, _ := json.Marshal(map[string]string{"crv": key.CRV, "kty": key.KTY, "x": key.X, "y": key.Y})
