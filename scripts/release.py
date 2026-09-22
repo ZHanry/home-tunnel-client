@@ -215,6 +215,12 @@ def verify_remote_evidence(directory, version, revision):
     for component, expected_revision in (('client', revision), ('server', server['revision'])):
         if sources.get(component, {}).get('commit') != expected_revision or sources.get(component, {}).get('modified') is not False:
             raise SystemExit('Native acceptance used a different or modified source tree')
+    server_build = acceptance.get('server_build', {})
+    dist = server_build.get('dist', {})
+    if (server_build.get('fresh') is not True or server_build.get('source_commit') != server['revision'] or
+            server_build.get('command') != 'pnpm run build' or type(dist.get('file_count')) is not int or
+            dist['file_count'] < 1 or not re.fullmatch(r'[0-9a-f]{64}', dist.get('sha256', ''))):
+        raise SystemExit('Native acceptance must freshly build the locked server and identify its output')
     required = ('isolated_real_server', 'native_backend_ready', 'real_browser_identity', 'signed_pairing_and_code_match',
                 'explicit_session_approval', 'real_continuing_video', 'selected_udp_and_dtls', 'clean_session_shutdown')
     if any(acceptance.get('checks', {}).get(check) is not True for check in required):
