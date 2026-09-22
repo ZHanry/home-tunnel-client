@@ -18,6 +18,7 @@ rtc_executable("home_tunnel_webrtc_probe") {
     "//rtc_base:threading",
     "//rtc_base:timeutils",
     "//third_party/libyuv",
+    "//third_party/jsoncpp",
   ]
   if (is_win) {
     deps += [ "//rtc_base:win32_socket_init" ]

@@ -54,6 +54,7 @@ def main():
     parser.add_argument("--jobs", type=int, default=4, help="Maximum local compiler jobs")
     parser.add_argument("--media-probe", action="store_true", help="Also build the explicit local-only desktop media probe")
     parser.add_argument("--run-local-probe", action="store_true", help="Run an in-memory desktop loopback; no screen contents are saved")
+    parser.add_argument("--probe-codec", choices=["VP8", "H264"], default="VP8", help="Force the local probe codec; H264 uses constrained baseline packetization-mode 1")
     args = parser.parse_args()
     if args.jobs < 1 or args.jobs > 64:
         parser.error("--jobs must be between 1 and 64")
@@ -229,14 +230,21 @@ def main():
         probe = build / ("home_tunnel_webrtc_probe.exe" if target == "win" else "home_tunnel_webrtc_probe")
         manifest["probe_sha256"] = hashlib.sha256(probe.read_bytes()).hexdigest()
         if args.run_local_probe:
-            result = subprocess.run([str(probe), "--local-desktop-loopback"], cwd=build, env=env, capture_output=True, text=True, timeout=90)
+            result = subprocess.run([str(probe), "--local-desktop-loopback", "--codec=" + args.probe_codec], cwd=build, env=env, capture_output=True, text=True, timeout=90)
+            evidence = json.loads(result.stdout) if result.stdout.strip() else {"status": "failed", "requested_codec": args.probe_codec}
+            evidence["exit_code"] = result.returncode
+            evidence["probe_sha256"] = manifest["probe_sha256"]
+            evidence["webrtc_revision"] = lock["webrtc"]["revision"]
+            evidence["deps_lock_sha256"] = hashlib.sha256(lock_bytes).hexdigest()
+            (build / "remote-media-probe.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+            (build / ("remote-media-probe-" + args.probe_codec.lower() + ".json")).write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+            manifest["local_probe"] = evidence
             if result.returncode:
+                (build / "remote-webrtc-build.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
                 # The probe emits bounded stage diagnostics only, never SDP/IPs.
                 print(result.stderr[-4096:])
+                print(json.dumps(evidence))
                 raise SystemExit("Local native desktop media probe failed")
-            evidence = json.loads(result.stdout)
-            (build / "remote-media-probe.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
-            manifest["local_probe"] = evidence
     (build / "remote-webrtc-build.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print("Native artifacts and dependency sources recorded. Real browser/input and each advertised codec require separate acceptance.")
 
