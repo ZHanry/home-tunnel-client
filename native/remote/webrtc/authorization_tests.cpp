@@ -1,5 +1,6 @@
 #include "authorization.hpp"
 #include "peer_identity.hpp"
+#include "sdp_policy.hpp"
 #include "json/writer.h"
 #include "openssl/bn.h"
 #include "openssl/ec_key.h"
@@ -163,6 +164,7 @@ void native_identity(const Json::Value& vectors) {
   auto remote=envelope("peer.offer",1,offer,false);
   REQUIRE(identity->peer_signal(remote,now,extracted)==Error::ok && extracted==offer);
   REQUIRE(identity->peer_signal(remote,now,extracted)==Error::identity);
+  REQUIRE(identity->peer_signal(envelope("peer.offer",2,offer,false),now,extracted)==Error::identity);
   Json::Value answer;answer["type"]="answer";answer["sdp"]="test-answer";identity->expect_answer(answer);
   auto wrong=answer;wrong["sdp"]="substituted";
   REQUIRE(identity->signed_answer(envelope("peer.answer",1,wrong,true),now)==Error::identity);
@@ -181,9 +183,27 @@ void native_identity(const Json::Value& vectors) {
   REQUIRE(identity->host_proof(host.raw_sign(transcript))==Error::ok && identity->authenticated());
   REQUIRE(identity->host_proof(host.raw_sign(transcript))==Error::identity);
   REQUIRE(identity->controller_proof(proof)==Error::identity);
+  REQUIRE(identity->peer_signal(envelope("peer.offer",3,offer,false),now,extracted)==Error::identity);
   lease["lease_seq"]=2;Json::Value renewal;renewal["server_keyset"]=keyset;renewal["lease_jws"]=server.sign(lease,"ht-rd-lease+jwt");
   REQUIRE(identity->renew(renewal,now,verified)==Error::ok && verified.sequence==2);
   REQUIRE(identity->renew(renewal,now,verified)==Error::expired);
+}
+void sdp_profile() {
+  std::string fingerprint;for(int n=0;n<31;++n)fingerprint+="AA:";fingerprint+="AA";
+  const std::string prefix="v=0\r\na=fingerprint:sha-256 "+fingerprint+"\r\n";
+  const std::string video="m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\n";
+  const std::string data="m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n";
+  const auto check=[&](const std::string& value){return valid_sdp_profile(value,fingerprint,[](std::string_view c){return c=="candidate:direct";});};
+  REQUIRE(check(prefix+video+data));
+  REQUIRE(check(prefix+video+"a=candidate:direct\r\n"+data));
+  REQUIRE(!check(prefix+video+"a=candidate:relay\r\n"+data));
+  REQUIRE(!check(prefix+video+data+"m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"));
+  REQUIRE(!check(prefix+video+video+data));REQUIRE(!check(prefix+video+data+data));
+  REQUIRE(!check(prefix+"m=video 0 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\n"+data));
+  REQUIRE(!check(prefix+"m=video 9 TCP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\n"+data));
+  REQUIRE(!check(prefix+"m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 H264/90000\r\n"+data));
+  REQUIRE(!check(prefix+"m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:97 VP8/90000\r\n"+data));
+  REQUIRE(!check(prefix+video));REQUIRE(!check(video+data));
 }
 std::string compact(const Json::Value& value) {
   const auto& parts = value["jws_parts"];
@@ -256,6 +276,6 @@ int main(int argc,char** argv) {
 #pragma clang unsafe_buffer_usage end
   const std::string text((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
   Json::Value vectors;REQUIRE(strict_json(text,vectors));
-  strict_parser();authorization(vectors);keyset_rotation(vectors);native_identity(vectors);
+  strict_parser();authorization(vectors);keyset_rotation(vectors);native_identity(vectors);sdp_profile();
   std::puts("Native authorization: strict JSON, public JWK, raw ES256, signed binding negatives, permission/lease limits and signed keyset rotation passed");
 }

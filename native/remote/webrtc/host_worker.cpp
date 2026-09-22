@@ -1,5 +1,6 @@
 // Private, bounded IPC Windows capture and input host.
 #include "peer_identity.hpp"
+#include "sdp_policy.hpp"
 #include "../generated/host_version.hpp"
 #include "../src/platform/windows_input.hpp"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
@@ -183,22 +184,8 @@ bool direct_candidate(std::string_view value){
   if(c.type()!=webrtc::IceCandidateType::kHost || name.size()<7 || name.size()>69 || !name.ends_with(".local"))return false;
   return std::all_of(name.begin(),name.end()-6,[](char ch){return (ch>='a'&&ch<='z') || (ch>='A'&&ch<='Z') || (ch>='0'&&ch<='9') || ch=='-';});
 }
-bool valid_sdp(std::string_view sdp,std::string_view expected_fingerprint={}){
-  if(sdp.empty() || sdp.size()>24576 || sdp.find('\0')!=std::string_view::npos)return false;
-  std::istringstream input{std::string(sdp)};std::string line;bool fingerprint=false;
-  while(std::getline(input,line)){
-    if(!line.empty() && line.back()=='\r')line.pop_back();
-    if(line.starts_with("a=candidate:") && !direct_candidate(std::string_view(line).substr(2)))return false;
-    if(line.starts_with("m=")){std::istringstream m(line);std::string media,port,protocol;m>>media>>port>>protocol;
-      if(protocol!="UDP/TLS/RTP/SAVPF" && protocol!="UDP/DTLS/SCTP")return false;}
-    if(line.starts_with("a=fingerprint:")){
-      std::istringstream f(line.substr(14));std::string algorithm,value;f>>algorithm>>value;
-      if(algorithm!="sha-256" || value.size()!=95 || (!expected_fingerprint.empty() && value!=expected_fingerprint))return false;
-      fingerprint=true;
-    }
-  }
-  return fingerprint;
-}
+bool valid_sdp(std::string_view sdp,std::string_view expected_fingerprint={}){return valid_sdp_profile(sdp,expected_fingerprint,direct_candidate);}
+
 class HostSession;
 class ChannelObserver : public webrtc::DataChannelObserver {
  public:ChannelObserver(HostSession& owner,unsigned slot):owner_(owner),slot_(slot){}
@@ -243,6 +230,12 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     auto connection=factory_.CreatePeerConnectionOrError(config,webrtc::PeerConnectionDependencies(this));if(!connection.ok())return false;
     connection_=connection.MoveValue();source_=webrtc::make_ref_counted<ScreenSource>();auto track=factory_.CreateVideoTrack(source_,"desktop");
     if(!connection_->AddTrack(track,{"home-tunnel-desktop"}).ok())return false;
+    std::vector<webrtc::RtpCodecCapability> codecs;
+    for(const auto& codec:factory_.GetRtpSenderCapabilities(webrtc::MediaType::VIDEO).codecs)
+      if(codec.name=="VP8" || codec.name=="rtx")codecs.push_back(codec);
+    if(codecs.empty())return false;
+    for(const auto& transceiver:connection_->GetTransceivers())
+      if(!transceiver->SetCodecPreferences(codecs).ok() || !transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendOnly).ok())return false;
     started_=true;started_at_=steady_ms();Tick();return true;
   }
   bool Signal(const Json::Value& message){
