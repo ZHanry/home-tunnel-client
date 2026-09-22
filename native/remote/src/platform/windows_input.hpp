@@ -1,12 +1,12 @@
 #pragma once
 #if defined(_WIN32)
 #include "../session_gate.hpp"
+#include "display_geometry.hpp"
 #include <cstdint>
 #include <memory>
 #include <string_view>
 
 namespace ht::rd {
-struct DisplayGeometry { int32_t x=0, y=0, width=0, height=0; uint16_t slot=0; };
 // Construction never injects input. The release guard starts on the session tick.
 class WindowsInputSink final : public InputSink {
 public:

@@ -1,9 +1,9 @@
-// Private, bounded IPC Windows capture and input host.
+// Private, bounded IPC native capture and input host.
 #include "peer_identity.hpp"
 #include "sdp_policy.hpp"
 #include "clipboard.hpp"
+#include "host_platform.hpp"
 #include "../generated/host_version.hpp"
-#include "../src/platform/windows_input.hpp"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/create_peerconnection_factory.h"
@@ -20,13 +20,14 @@
 #include "modules/desktop_capture/desktop_capture_options.h"
 #include "modules/desktop_capture/desktop_capturer.h"
 #include "modules/desktop_capture/desktop_frame.h"
-#include "modules/desktop_capture/win/screen_capture_utils.h"
 #include "pc/video_track_source.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/ssl_adapter.h"
 #include "rtc_base/thread.h"
 #include "rtc_base/time_utils.h"
+#if defined(WEBRTC_WIN)
 #include "rtc_base/win32_socket_init.h"
+#endif
 #include "third_party/libyuv/include/libyuv.h"
 #include <algorithm>
 #include <atomic>
@@ -37,19 +38,16 @@
 #include <fcntl.h>
 #include <functional>
 #include <future>
-#include <io.h>
 #include <map>
 #include <mutex>
 #include <sstream>
 #include <thread>
-#include <windows.h>
-#include <objbase.h>
 
 namespace {
 using namespace ht::rd;
 using namespace std::chrono_literals;
 constexpr uint32_t maximum_ipc=262144;
-constexpr uint64_t supported_permissions=protocol::PERMISSION_VIEW|protocol::PERMISSION_INPUT_KEYBOARD|protocol::PERMISSION_INPUT_POINTER|protocol::PERMISSION_INPUT_TEXT|protocol::PERMISSION_CLIPBOARD_READ|protocol::PERMISSION_CLIPBOARD_WRITE;
+constexpr uint64_t supported_permissions=HOST_PERMISSIONS;
 uint32_t input_target_process=0;
 int64_t wall_ms(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();}
 uint64_t steady_ms(){return static_cast<uint64_t>(webrtc::TimeMillis());}
@@ -97,18 +95,8 @@ bool read_frame(Json::Value& value){
   std::string body(size,'\0');if(std::fread(body.data(),1,size,stdin)!=size)return false;
   return auth::strict_json(body,value,maximum_ipc);
 }
-struct Screen {webrtc::DesktopCapturer::SourceId id;webrtc::DesktopRect rect;std::wstring device_key;std::string name;};
-std::vector<Screen> displays(){
-  std::vector<Screen> result;webrtc::DesktopCapturer::SourceList sources;
-  if(!WindowsInputSink::ordinary_desktop() || !webrtc::GetScreenList(&sources) || sources.size()>16)return result;
-  for(const auto& source:sources){
-    std::wstring key;if(!webrtc::IsScreenValid(source.id,&key))continue;
-    auto rect=webrtc::GetScreenRect(source.id,key);
-    if(rect.width()<1 || rect.height()<1 || rect.width()>16384 || rect.height()>16384)continue;
-    result.push_back({source.id,rect,key,"Display "+std::to_string(result.size()+1)});
-  }
-  return result;
-}
+using Screen=HostScreen;
+std::vector<Screen> displays(){return host_displays();}
 std::vector<webrtc::RtpCodecCapability> preferred_video_codecs(webrtc::PeerConnectionFactoryInterface& factory){
   const auto available=factory.GetRtpSenderCapabilities(webrtc::MediaType::VIDEO);std::vector<webrtc::RtpCodecCapability> selected;
   for(const auto name:{"H264","VP8","rtx"})for(const auto& codec:available.codecs){
@@ -130,7 +118,12 @@ Json::Value capabilities(webrtc::PeerConnectionFactoryInterface& factory){
   Json::Value value;const auto sources=displays();value["codecs"]=codec_names(preferred_video_codecs(factory));
   const bool available=!sources.empty() && !value["codecs"].empty();value["available"]=available;
   value["status"]=available?"ready":"unavailable";value["unattended_enabled"]=false;
-  value["permissions"]=Json::Value(Json::arrayValue);if(available)for(const auto name:{"view","input.keyboard","input.pointer","input.text","clipboard.read","clipboard.write"})value["permissions"].append(name);
+  value["permissions"]=Json::Value(Json::arrayValue);if(available){
+    for(const auto name:{"view","input.keyboard","input.pointer"})value["permissions"].append(name);
+    if(supported_permissions&protocol::PERMISSION_INPUT_TEXT)value["permissions"].append("input.text");
+    if(supported_permissions&protocol::PERMISSION_CLIPBOARD_READ)value["permissions"].append("clipboard.read");
+    if(supported_permissions&protocol::PERMISSION_CLIPBOARD_WRITE)value["permissions"].append("clipboard.write");
+  }
   value["displays"]=Json::Value(Json::arrayValue);
   for(const auto& source:sources){Json::Value item;item["id"]=std::to_string(source.id);item["name"]=source.name;
     item["width"]=source.rect.width();item["height"]=source.rect.height();value["displays"].append(item);}
@@ -164,16 +157,16 @@ class Capture : public webrtc::DesktopCapturer::Callback {
   std::atomic<bool> active{true},failed{false};std::atomic<unsigned> frames{0};std::atomic<uint64_t> last_frame{0};
  private:
   void run(){
-    const auto com=CoInitializeEx(nullptr,COINIT_MULTITHREADED);if(FAILED(com)){failed=true;return;}
-    auto options=webrtc::DesktopCaptureOptions::CreateDefault();options.set_allow_directx_capturer(true);
+    if(!host_thread_enter()){failed=true;return;}
+    auto options=host_capture_options();
     auto capturer=webrtc::DesktopCapturer::CreateScreenCapturer(options);
-    if(!capturer || !capturer->SelectSource(screen_.id)){failed=true;CoUninitialize();return;}
+    if(!capturer || !capturer->SelectSource(screen_.id)){failed=true;host_thread_leave();return;}
     capturer->Start(this);capturer->SetMaxFrameRate(20);
     while(active){
-      if(!WindowsInputSink::ordinary_desktop() || !webrtc::GetScreenRect(screen_.id,screen_.device_key).equals(screen_.rect)){failed=true;break;}
+      if(!HostInputSink::ordinary_desktop() || !host_screen_current(screen_)){failed=true;break;}
       capturer->CaptureFrame();std::this_thread::sleep_for(50ms);
     }
-    capturer.reset();CoUninitialize();
+    capturer.reset();host_thread_leave();
   }
   Screen screen_;webrtc::scoped_refptr<ScreenSource> source_;std::thread thread_;
 };
@@ -233,7 +226,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     available_screens_=displays();
     bool found=false;for(const auto& display:available_screens_)if(text(request["display_id"],std::to_string(display.id))){screen_=display;found=true;break;}
     if(!found || gate_.authorize(lease,wall_ms(),steady_ms())!=GateResult::ok)return false;
-    sink_=WindowsInputSink({screen_.rect.left(),screen_.rect.top(),screen_.rect.width(),screen_.rect.height(),0},input_target_process);
+    sink_=HostInputSink({screen_.rect.left(),screen_.rect.top(),screen_.rect.width(),screen_.rect.height(),0},input_target_process);
     webrtc::PeerConnectionInterface::RTCConfiguration config;config.sdp_semantics=webrtc::SdpSemantics::kUnifiedPlan;
     config.tcp_candidate_policy=webrtc::PeerConnectionInterface::kTcpCandidatePolicyDisabled;
     config.bundle_policy=webrtc::PeerConnectionInterface::kBundlePolicyMaxBundle;
@@ -253,15 +246,19 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     if(codec_capabilities_.empty())return false;
     for(const auto& transceiver:connection_->GetTransceivers())
       if(!transceiver->SetCodecPreferences(codecs).ok() || !transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendOnly).ok())return false;
-    clipboard_storage_=windows_clipboard();
-    clipboard_=std::make_unique<ClipboardTransfer>(*clipboard_storage_,[this](uint8_t type,std::span<const uint8_t> payload){SendBinary(4,type,payload,0);return !closed_;},
+    clipboard_storage_=host_clipboard();
+    if(clipboard_storage_)clipboard_=std::make_unique<ClipboardTransfer>(*clipboard_storage_,[this](uint8_t type,std::span<const uint8_t> payload){SendBinary(4,type,payload,0);return !closed_;},
       [this]{const auto channel=channels_.find(4);return channel!=channels_.end() && channel->second.first->state()==webrtc::DataChannelInterface::kOpen && channel->second.first->buffered_amount()<32768;},
       [this](std::string_view permission){Json::Value result;result["permission"]=std::string(permission);result["enabled"]=false;result["error_code"]="RD_CLIPBOARD_UNAVAILABLE";Send(protocol::FEATURE_STATE,result);});
     started_=true;started_at_=steady_ms();Tick();return true;
   }
   bool Signal(const Json::Value& message){
     if(closed_ || !started_)return false;
-    if(text(message["type"],"session.lease")){VerifiedLease lease;return identity_->renew(message,wall_ms(),lease)==auth::Error::ok && gate_.renew(lease,wall_ms(),steady_ms())==GateResult::ok;}
+    if(text(message["type"],"session.lease")){VerifiedLease lease;
+      const bool verified=identity_->renew(message,wall_ms(),lease)==auth::Error::ok && gate_.renew(lease,wall_ms(),steady_ms())==GateResult::ok;
+      if(verified && !pending_ready_.isNull() && pending_ready_["lease_seq"].asUInt64()<=gate_.lease_sequence())ControllerReady(pending_ready_);
+      return verified && !closed_;
+    }
     if(text(message["type"],"local.signed_signal")){
       if(!text(message["envelope"]["type"],"peer.answer"))return true;
       if(identity_->signed_answer(message["envelope"],wall_ms())!=auth::Error::ok)return false;
@@ -346,8 +343,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
       if(!text(body["capability_hash"],capability_hash_) || body["permissions"]!=identity_->permissions()){Close("RD_SCOPE_DENIED");return;}capabilities_ack_=true;return;
     }
     if(frame.type==protocol::SESSION_READY){
-      if(!capabilities_ack_ || !number(body["epoch"],identity_->epoch()) || !number(body["lease_seq"],gate_.lease_sequence()) || body["permissions"]!=identity_->permissions()){Close("RD_STATE_CONFLICT");return;}
-      if(!capture_){capture_=std::make_unique<Capture>(screen_,source_);capture_->start();Event("verified_ready");}return;
+      ControllerReady(body);return;
     }
     if(frame.type==protocol::FEATURE_REQUEST){
       const auto permission=body["permission"].asString();const bool enabled=body["enabled"].asBool();
@@ -490,6 +486,21 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     gate_.release_control();input_pending_=false;input_request_.clear();input_permissions_=0;
     if(notify){Json::Value body;body["reason"]=std::string(reason);Send(protocol::CONTROL_RELEASED,body);}
   }
+  void ControllerReady(const Json::Value& body){
+    if(!capabilities_ack_ || !number(body["epoch"],identity_->epoch()) || !body["lease_seq"].isUInt64() || !body["lease_seq"].asUInt64() ||
+       body["permissions"]!=identity_->permissions() || gate_.tick(steady_ms())!=GateResult::ok || !gate_.media_allowed()){
+      Close("RD_STATE_CONFLICT");return;
+    }
+    if(body["lease_seq"].asUInt64()>gate_.lease_sequence()){
+      // A controller may observe a signed renewal before this host's WSS
+      // channel. Wait for this host to verify it; READY never renews authority.
+      if(pending_ready_.isNull()){pending_ready_=body;pending_ready_at_=steady_ms();}
+      else if(pending_ready_!=body)Close("RD_STATE_CONFLICT");
+      return;
+    }
+    pending_ready_=Json::Value();
+    if(!capture_){capture_=std::make_unique<Capture>(screen_,source_);capture_->start();Event("verified_ready");}
+  }
   void MaybeReady(){
     if(closed_ || ready_ || !identity_->authenticated() || !path_verified_)return;
     auto type=[](const std::string& value){return value=="host"?Candidate::host:value=="srflx"?Candidate::server_reflexive:Candidate::peer_reflexive;};
@@ -516,7 +527,8 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     const bool controlled=gate_.input_allowed();
     if(gate_.tick(now)!=GateResult::ok){Close("RD_LEASE_EXPIRED");return;}
     if((controlled && !gate_.input_allowed()) || (input_pending_ && now-input_requested_at_>=5000))ReleaseInput("RD_INPUT_WATCHDOG",true);
-    if(!WindowsInputSink::ordinary_desktop()){Close("RD_DESKTOP_UNAVAILABLE");return;}
+    if(!HostInputSink::ordinary_desktop()){Close("RD_DESKTOP_UNAVAILABLE");return;}
+    if(!pending_ready_.isNull() && now-pending_ready_at_>=5000){Close("RD_STATE_CONFLICT");return;}
     if(!ready_ && now-started_at_>protocol::ICE_DEADLINE_MS){Close("RD_NO_DIRECT_PATH");return;}
     if(capture_){const auto last=capture_->last_frame.load();if(capture_->failed || (now>=last && now-last>=1750)){Close("RD_CAPTURE_FAILED");return;}}
     if(ready_ && clipboard_)clipboard_->tick(now);
@@ -525,12 +537,12 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     auto weak=weak_from_this();signaling_.PostDelayedTask([weak]{if(auto self=weak.lock())self->Tick();},webrtc::TimeDelta::Millis(250));
   }
   std::unique_ptr<PeerIdentity> identity_;webrtc::Thread& signaling_;webrtc::PeerConnectionFactoryInterface& factory_;
-  WindowsInputSink sink_;SessionGate gate_;Screen screen_{};std::vector<Screen> available_screens_;
+  HostInputSink sink_;SessionGate gate_;Screen screen_{};std::vector<Screen> available_screens_;
   std::unique_ptr<ClipboardStorage> clipboard_storage_;std::unique_ptr<ClipboardTransfer> clipboard_;
   webrtc::scoped_refptr<webrtc::PeerConnectionInterface> connection_;webrtc::scoped_refptr<ScreenSource> source_;std::unique_ptr<Capture> capture_;
   std::map<unsigned,std::pair<webrtc::scoped_refptr<webrtc::DataChannelInterface>,std::unique_ptr<ChannelObserver>>> channels_;
   std::array<uint32_t,5> received_{};std::vector<Json::Value> pending_candidates_;Json::Value pending_hello_;
-  std::array<uint64_t,6> input_diagnostics_{};Json::Value codec_capabilities_,video_diagnostics_;
+  std::array<uint64_t,6> input_diagnostics_{};Json::Value codec_capabilities_,video_diagnostics_,pending_ready_;uint64_t pending_ready_at_=0;
   std::string pending_offer_,proof_request_,selected_pair_,local_type_,remote_type_,capability_hash_;
   std::string input_request_;std::set<std::array<uint8_t,16>> request_ids_;
   std::array<uint32_t,5> sent_sequence_{};uint32_t local_candidates_=0,remote_candidates_=0,request_input_epoch_=0;uint64_t started_at_=0,input_requested_at_=0,input_permissions_=0;
@@ -577,9 +589,8 @@ int serve(webrtc::PeerConnectionFactoryInterface& factory,webrtc::Thread& signal
 int main(int argc,char** argv){
   // Desktop capture and wire coordinates are physical pixels. Adopt the same
   // space before creating any threads/windows or consulting client rectangles.
-  if(!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) &&
-     GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext())!=DPI_AWARENESS_PER_MONITOR_AWARE)return 7;
-  const auto guard_result=WindowsInputSink::run_release_guard(argc,argv);if(guard_result>=0)return guard_result;
+  if(!host_prepare_process())return 7;
+  const auto guard_result=HostInputSink::run_release_guard(argc,argv);if(guard_result>=0)return guard_result;
 #pragma clang unsafe_buffer_usage begin
   if((argc!=2 && argc!=3) || std::string_view(argv[1])!="--host-inherited-pipe")return 2;
   if(argc==3){
@@ -589,11 +600,13 @@ int main(int argc,char** argv){
     if(parsed.ec!=std::errc{} || parsed.ptr!=std::to_address(value.end()) || !input_target_process)return 2;
   }
 #pragma clang unsafe_buffer_usage end
-  if(GetFileType(GetStdHandle(STD_INPUT_HANDLE))!=FILE_TYPE_PIPE || GetFileType(GetStdHandle(STD_OUTPUT_HANDLE))!=FILE_TYPE_PIPE)return 3;
-  if(_setmode(_fileno(stdin),_O_BINARY)==-1 || _setmode(_fileno(stdout),_O_BINARY)==-1)return 3;
-  webrtc::WinsockInitializer winsock;const auto com=CoInitializeEx(nullptr,COINIT_MULTITHREADED);if(FAILED(com))return 4;
+  if(!host_pipe_transport())return 3;
+#if defined(WEBRTC_WIN)
+  webrtc::WinsockInitializer winsock;
+#endif
+  if(!host_thread_enter())return 4;
   webrtc::LogMessage::LogToDebug(webrtc::LS_NONE);webrtc::LogMessage::SetLogToStderr(false);
-  if(!webrtc::InitializeSSL()){CoUninitialize();return 5;}int result=6;
+  if(!webrtc::InitializeSSL()){host_thread_leave();return 5;}int result=6;
   {
     auto network=webrtc::Thread::CreateWithSocketServer(),signaling=webrtc::Thread::Create();
     if(network->Start() && signaling->Start()){
@@ -603,5 +616,5 @@ int main(int argc,char** argv){
       if(factory)result=serve(*factory,*signaling);factory=nullptr;
     }
   }
-  webrtc::CleanupSSL();CoUninitialize();return result;
+  webrtc::CleanupSSL();host_thread_leave();return result;
 }

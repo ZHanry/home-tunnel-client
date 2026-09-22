@@ -1,4 +1,10 @@
 import("//webrtc.gni")
+if (is_linux) {
+  import("//build/config/linux/pkg_config.gni")
+  pkg_config("home_tunnel_x11") {
+    packages = [ "x11", "xtst", "xrandr", "libsystemd" ]
+  }
+}
 
 # Explicit local integration probe. It is not linked into the public C ABI and
 # never accepts remote signaling or grants from another process.
@@ -32,16 +38,18 @@ if (is_win) {
     deps = []
     libs = [ "user32.lib" ]
   }
-  rtc_executable("home_tunnel_remote_host") {
+}
+template("home_tunnel_host") {
+  x11_testing = invoker.testing
+  rtc_executable(target_name) {
     sources = [
       "host_worker.cpp",
+      "host_platform.cpp",
       "authorization.cpp",
       "peer_identity.cpp",
       "clipboard.cpp",
-      "clipboard_windows.cpp",
       "../src/protocol.cpp",
       "../src/session_gate.cpp",
-      "../src/platform/windows_input.cpp",
     ]
     deps = [
       "//api:create_peerconnection_factory",
@@ -57,12 +65,38 @@ if (is_win) {
       "//rtc_base:ssl_adapter",
       "//rtc_base:threading",
       "//rtc_base:timeutils",
-      "//rtc_base:win32_socket_init",
       "//third_party/boringssl",
       "//third_party/jsoncpp",
       "//third_party/libyuv",
     ]
-    libs = [ "ole32.lib", "user32.lib" ]
+    if (is_win) {
+      sources += [ "clipboard_windows.cpp", "../src/platform/windows_input.cpp" ]
+      deps += [ "//rtc_base:win32_socket_init" ]
+      libs = [ "ole32.lib", "user32.lib" ]
+    } else {
+      sources += [ "../src/platform/x11_input.cpp", "../src/platform/x11_session.cpp" ]
+      configs += [ ":home_tunnel_x11" ]
+    }
+    if (x11_testing) {
+      defines = [ "HT_RD_X11_TESTING" ]
+    }
+  }
+}
+if (is_win || is_linux) {
+  home_tunnel_host("home_tunnel_remote_host") {
+    testing = false
+  }
+}
+if (is_linux) {
+  # Separate, non-distributable CI binary. The production host never compiles
+  # the test-only Xvfb session allowance.
+  home_tunnel_host("home_tunnel_remote_host_xvfb") {
+    testing = true
+  }
+  rtc_executable("home_tunnel_x11_input_tests") {
+    sources = [ "../tests/x11_input_tests.cpp", "../src/platform/x11_input.cpp", "../src/platform/x11_session.cpp" ]
+    defines = [ "HT_RD_X11_TESTING" ]
+    configs += [ ":home_tunnel_x11" ]
   }
 }
 
