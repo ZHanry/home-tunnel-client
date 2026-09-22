@@ -128,6 +128,8 @@ def main():
         if hashlib.sha256(patch_file.read_bytes()).hexdigest() != patch["sha256"]:
             raise SystemExit("Reviewed upstream patch differs from lock")
         repository = source / patch["repository"]
+        if subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=repository, env=env):
+            raise SystemExit("Refusing staged changes in a reviewed upstream patch repository")
         difference = subprocess.check_output(["git", "diff", "--binary"], cwd=repository, env=env)
         if not difference:
             run(["git", "apply", "--check", patch_file], repository, env)
@@ -138,9 +140,11 @@ def main():
     build = source / "out/home_tunnel"
     build.mkdir(parents=True, exist_ok=True)
     gn_args = dict(lock["gn_args"], target_os=target, target_cpu=args.target_cpu)
+    windows_toolchain_identity = None
     if target == "win":
         if args.windows_toolchain:
             manifest = json.loads(args.windows_toolchain.read_text())
+            windows_toolchain_identity = {key: manifest[key] for key in ("visual_studio_version", "msvc_version", "windows_sdk_version", "sdk_package_sha256")}
             for key in ["visual_studio_path", "visual_studio_version", "windows_sdk_path", "windows_sdk_version", "wdk_path"]:
                 gn_args[key] = manifest[key].replace("\\", "/")
             if manifest["windows_sdk_version"] != lock["toolchain"]["windows_sdk_version"]:
@@ -200,6 +204,8 @@ def main():
                              "webrtc_revision": lock["webrtc"]["revision"],
                              "deps_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
                              "authorization_tests": "passed", "toolchain": lock["toolchain"]}
+            host_manifest["actual_windows_toolchain"] = windows_toolchain_identity
+            host_manifest["webrtc_source_patch_sha256"] = hashlib.sha256(subprocess.check_output(["git", "diff", "--binary"], cwd=source, env=env)).hexdigest()
             run([sys.executable, ROOT / "scripts/generate-remote-notices.py", "--source", source,
                  "--build", build, "--gn", gn], source, env)
             notices = build / "LICENSE.md"

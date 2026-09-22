@@ -29,6 +29,8 @@ try {
     python scripts/build-remote-webrtc.py --build --windows-toolchain (Join-Path $cache 'windows-toolchain/portable-toolchain.json') --jobs $Jobs --media-probe
     if ($LASTEXITCODE -ne 0) { throw 'Native source build, authorization checks or dependency notices failed' }
     $build = Join-Path $cache 'checkout/src/out/home_tunnel'
+    python scripts/package-remote-sdk.py --build $build --output $output
+    if ($LASTEXITCODE -ne 0) { throw 'Actual native library/header SDK packaging failed' }
     foreach ($name in @('home_tunnel_remote_host.exe', 'remote-host-build.json', 'remote-source-manifest.json', 'LICENSE.md')) {
         Copy-Item -LiteralPath (Join-Path $build $name) -Destination (Join-Path $output $name) -Force
     }
