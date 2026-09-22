@@ -26,7 +26,7 @@ def run(command, cwd, env):
     subprocess.run([str(item) for item in command], cwd=cwd, env=env, check=True)
 
 
-def checkout(repository, revision, path, env):
+def checkout(repository, revision, path, env, reviewed_difference=b""):
     path.mkdir(parents=True, exist_ok=True)
     if not (path / ".git").exists():
         run(["git", "init", "--quiet", path], ROOT, env)
@@ -35,7 +35,8 @@ def checkout(repository, revision, path, env):
     if origin != repository:
         raise SystemExit("Refusing to reuse a checkout belonging to a different upstream")
     dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=path, env=env, text=True)
-    if dirty:
+    difference = subprocess.check_output(["git", "diff", "--binary"], cwd=path, env=env)
+    if dirty and (not reviewed_difference or difference != reviewed_difference or subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=path, env=env)):
         raise SystemExit("Refusing to overwrite modified dependency sources")
     run(["git", "-c", "core.longpaths=true", "fetch", "--depth=1", "origin", revision], path, env)
     run(["git", "-c", "core.longpaths=true", "checkout", "--detach", revision], path, env)
@@ -83,13 +84,17 @@ def main():
     depot = cache / "depot_tools"
     source = cache / "checkout/src"
     for spec, path in [(lock["depot_tools"], depot), (lock["webrtc"], source)]:
+        source_patches = [patch for patch in lock["patches"] if patch["repository"] == "."] if path == source else []
+        reviewed_difference = b"".join((NATIVE / patch["path"]).read_bytes() for patch in source_patches)
         if args.build_existing:
             revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, env=env, text=True).strip()
             dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=path, env=env, text=True)
-            if revision != spec["revision"] or dirty:
+            difference = subprocess.check_output(["git", "diff", "--binary"], cwd=path, env=env)
+            staged = subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=path, env=env)
+            if revision != spec["revision"] or (dirty and (not reviewed_difference or difference != reviewed_difference or staged)):
                 raise SystemExit("Existing checkout differs from the immutable source lock")
         else:
-            checkout(spec["repository"], spec["revision"], path, env)
+            checkout(spec["repository"], spec["revision"], path, env, reviewed_difference)
     # Hash the committed blob: Windows Git may check text out with CRLF.
     deps_blob = subprocess.check_output(["git", "show", "HEAD:DEPS"], cwd=source, env=env)
     if hashlib.sha256(deps_blob).hexdigest() != lock["webrtc"]["deps_sha256"]:

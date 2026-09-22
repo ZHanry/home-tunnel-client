@@ -1,0 +1,13 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index d466b07..4f7b2b4 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -848,7 +848,7 @@ group("poison_software_video_codecs") {
+ group("poison_default_neural_residual_echo_estimator") {
+ }
+ 
+-if (!build_with_chromium) {
++if (!build_with_chromium && current_toolchain == default_toolchain) {
+   # Write debug logs to gn_logs.txt.
+   # This is also required for Siso builds.
+   import("//build/gn_logs.gni")

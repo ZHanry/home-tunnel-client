@@ -51,6 +51,12 @@
       "path": "upstream/0001-external-runtime-dirs-type.patch",
       "sha256": "0bbc37e37e0351f00797451f41a56dde1961646361d532a8c25287dafbc617e7",
       "reason": "Support isolated SDK SetEnv and /winsysroot without Google toolchain acquisition, fix runtime argument type, and omit debugger DLL copying for static-engine-only builds."
+    },
+    {
+      "repository": ".",
+      "path": "upstream/0002-default-toolchain-gn-logs.patch",
+      "sha256": "a50524c44d5c65a3554f60c6f077688eacd8b566976ff146402265906c586814",
+      "reason": "Only the default GN toolchain may write the shared gn_logs.txt; concurrent Windows writers otherwise race with ERROR_SHARING_VIOLATION."
     }
   ],
   "verified_builds": {
