@@ -65,6 +65,11 @@ depot_tools revision, clang revision/subrevision, GN flags and license digest.
 The checked-in `upstream/DEPS` records every upstream git/CIPD dependency. Source
 pinning is not a claim of successful media build or hardware interoperability.
 
+The Windows x64 release engine has now been built with the pinned compiler and
+SDK. `verified_builds` records its real archive hash and the scope of a passing
+local media probe. Linux/macOS/Android engine builds and device interoperability
+have not been established by this Windows evidence.
+
 ```powershell
 python scripts/build-remote-webrtc.py --build
 ```
@@ -99,6 +104,26 @@ Android upstream WebRTC builds require a Linux build host; use
 `remote-webrtc-build.json` with the *actual* static library hash. The wrapper,
 capture/codec/input adapters, signed authorization handshake, selected-pair
 statistics and complete media tests still have to be integrated and verified.
+
+`--media-probe` additionally builds `home_tunnel_webrtc_probe` with the same GN
+flags and libraries. `--run-local-probe` explicitly runs its local desktop
+capture -> conversion/scaling -> encoder -> two in-process PeerConnections ->
+decoder/frame-sink pipeline, plus a data-channel round trip. There is no external
+signaling, STUN/TURN server or input injection. The probe requires a nominated,
+succeeded UDP host/host pair and connected DTLS before capturing. Its output
+contains only frame counts, dimensions and transport verdicts; no screen pixels,
+SDP, addresses or private keys are saved. This development probe does not enable
+the product backend or constitute browser/device/network interoperability proof.
+
+The same GN build compiles and runs the native authorization verifier using the
+engine's pinned BoringSSL and JsonCpp. It checks raw ES256 signatures, strict JSON
+and public JWKs, ticket/lease/grant identity and permission ceilings, including
+single-session request binding. Server trust advances only from a protected
+local pin through sequential old-active-key-signed rotation proofs; foreign
+instances, rollback, unsigned same-version substitutions and incomplete chains
+are rejected. Tests use the shared public authorization vectors and ephemeral
+test signing keys. These helpers still need integration into the session worker;
+passing helper tests never enables the public media capability.
 
 ## Android consumer artifact
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "source-pinned-build-unverified",
+  "status": "source-pinned-windows-x64-local-media-verified",
   "webrtc": {
     "repository": "https://webrtc.googlesource.com/src",
     "revision": "94e682e18fbcc0751463be2257b09d2a646a5a68",
@@ -53,9 +53,18 @@
       "reason": "Support isolated SDK SetEnv and /winsysroot without Google toolchain acquisition, fix runtime argument type, and omit debugger DLL copying for static-engine-only builds."
     }
   ],
-  "artifact_sha256": null,
+  "verified_builds": {
+    "windows-x64": {
+      "status": "upstream-engine-built-local-probe-passed-product-not-integrated",
+      "artifact_sha256": "e5f09fb58609412cd7e38f14da4aa421ee3d636524ea338e25e1893eff1b9de0",
+      "artifact_bytes": 368482204,
+      "visual_studio_version": "2022",
+      "msvc_version": "14.44.35207",
+      "verification_scope": "In-process Windows desktop capture, encode/decode, UDP host-host with DTLS, data-channel echo. No screen content saved. Other platforms and product integration remain unverified."
+    }
+  },
   "notes": [
-    "Source revisions and DEPS/toolchain digests were read from immutable upstream URLs. No media build or interoperability claim is made.",
+    "Source revisions and DEPS/toolchain digests were read from immutable upstream URLs. Only the explicitly listed platform build and local probe have been verified; this does not establish device/network interoperability.",
     "Native host capture/input/hardware codecs and app microphone injection are separate implementation work.",
     "H.264/HEVC distribution terms and each compiled dependency NOTICE must be reviewed before a public media package.",
     "Protobuf debug recordings and standalone upstream tools are disabled; RTP/DTLS/SRTP/SCTP and built-in audio/video codecs remain enabled."

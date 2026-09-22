@@ -3,5 +3,6 @@
   "source_path": "contracts/remote-desktop.v1.json",
   "registry_sha256": "2a78014b00b8c1f0938a6fedab23b75140d66aa4f991cc17f424482563d4d8bb",
   "vectors_sha256": "e4c47ea288cf92266f09ea2b40e595c1dd333132dc3262d42e86ef9ea042b168",
+  "authorization_vectors_sha256": "6ddafdaeb937cd8500c736e62bc21cb3ee92148173c4ae984d3fb9121a26cece",
   "header_sha256": "fd4dd9488f2d61f2b61a2a7d59062e92a2eea8c3bcce1bfc3a493eff372a6631"
 }

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -47,9 +48,15 @@ def main():
     parser.add_argument("--target-os", choices=["win", "linux", "mac", "android"])
     parser.add_argument("--target-cpu", choices=["x64", "arm64"], default="x64")
     parser.add_argument("--jobs", type=int, default=4, help="Maximum local compiler jobs")
+    parser.add_argument("--media-probe", action="store_true", help="Also build the explicit local-only desktop media probe")
+    parser.add_argument("--run-local-probe", action="store_true", help="Run an in-memory desktop loopback; no screen contents are saved")
     args = parser.parse_args()
     if args.jobs < 1 or args.jobs > 64:
         parser.error("--jobs must be between 1 and 64")
+    if args.run_local_probe and not args.media_probe:
+        parser.error("--run-local-probe requires --media-probe")
+    if args.media_probe and not (args.build or args.build_existing):
+        parser.error("--media-probe requires --build or --build-existing")
     lock_bytes = (NATIVE / "remote-deps.lock.json").read_bytes()
     lock = json.loads(lock_bytes)
     for name, expected in [("DEPS", lock["webrtc"]["deps_sha256"]), ("WEBRTC-LICENSE", lock["webrtc"]["license_sha256"])]:
@@ -59,7 +66,7 @@ def main():
         if hashlib.sha256((NATIVE / patch["path"]).read_bytes()).hexdigest() != patch["sha256"]:
             raise SystemExit("Reviewed upstream patch differs from lock")
     if not args.fetch and not args.build and not args.build_existing:
-        print("Remote dependency source lock verified; media build remains unverified")
+        print("Remote dependency source lock verified; platform evidence is recorded separately in verified_builds")
         return
     env = os.environ.copy()
     for key in ("https", "http"):
@@ -137,10 +144,23 @@ def main():
             raise SystemExit("Locked WebRTC requires Windows SDK " + lock["toolchain"]["windows_sdk_version"] + "; use prepare-remote-windows-sdk.py for an isolated SDK")
     (build / "args.gn").write_text("\n".join(f"{name} = {json.dumps(value)}" for name, value in gn_args.items()) + "\n", encoding="utf-8")
     gn = source / "buildtools" / {"Windows": "win", "Linux": "linux64", "Darwin": "mac"}[platform.system()] / ("gn.exe" if os.name == "nt" else "gn")
-    run([gn, "gen", build], source, env)
+    gn_command = [gn, "gen", build]
+    targets = ["webrtc"]
+    if args.media_probe:
+        overlay = source / "home_tunnel_remote"
+        overlay.mkdir(exist_ok=True)
+        for path in NATIVE.rglob("*"):
+            if path.is_file():
+                destination = overlay / path.relative_to(NATIVE)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if not destination.is_file() or destination.read_bytes() != path.read_bytes():
+                    shutil.copyfile(path, destination)
+        gn_command += ["--root-target=//home_tunnel_remote/webrtc"]
+        targets += ["home_tunnel_webrtc_probe", "home_tunnel_authorization_tests"]
+    run(gn_command, source, env)
     print(f"Building with {args.jobs} jobs; compiler output: {build / 'remote-build.log'}", flush=True)
     with (build / "remote-build.log").open("w", encoding="utf-8") as log:
-        result = subprocess.run([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs), "webrtc"], cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
+        result = subprocess.run([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs), *targets], cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
     if result.returncode:
         print("\n".join((build / "remote-build.log").read_text(encoding="utf-8", errors="replace").splitlines()[-80:]))
         raise SystemExit(result.returncode)
@@ -151,6 +171,20 @@ def main():
                 "deps_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(), "target_os": target,
                 "target_cpu": args.target_cpu, "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
                 "artifact_bytes": artifact.stat().st_size, "gn_args": gn_args}
+    if args.media_probe:
+        auth_tests = build / ("home_tunnel_authorization_tests.exe" if target == "win" else "home_tunnel_authorization_tests")
+        run([auth_tests, NATIVE / "generated/remote-authorization-vectors.json"], build, env)
+        probe = build / ("home_tunnel_webrtc_probe.exe" if target == "win" else "home_tunnel_webrtc_probe")
+        manifest["probe_sha256"] = hashlib.sha256(probe.read_bytes()).hexdigest()
+        if args.run_local_probe:
+            result = subprocess.run([str(probe), "--local-desktop-loopback"], cwd=build, env=env, capture_output=True, text=True, timeout=90)
+            if result.returncode:
+                # The probe emits bounded stage diagnostics only, never SDP/IPs.
+                print(result.stderr[-4096:])
+                raise SystemExit("Local native desktop media probe failed")
+            evidence = json.loads(result.stdout)
+            (build / "remote-media-probe.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+            manifest["local_probe"] = evidence
     (build / "remote-webrtc-build.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print("Upstream engine built; artifact identity recorded. Host/codec integration must be verified separately.")
 

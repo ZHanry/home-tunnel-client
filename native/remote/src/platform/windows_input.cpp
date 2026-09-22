@@ -1,7 +1,9 @@
 #if defined(_WIN32)
 #include "windows_input.hpp"
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <array>
 #include <vector>

@@ -21,7 +21,7 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     paths = sorted(path for path in NATIVE.rglob("*") if path.is_file() and
-                   (path.suffix in {".cpp", ".hpp", ".h", ".json", ".md", ".patch"} or path.name in {"CMakeLists.txt", "DEPS", "WEBRTC-LICENSE"}))
+                   (path.suffix in {".cpp", ".hpp", ".h", ".json", ".md", ".patch", ".gn"} or path.name in {"CMakeLists.txt", "DEPS", "WEBRTC-LICENSE"}))
     entries = {path.relative_to(NATIVE).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
     identity = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     source = args.output / f"home-tunnel-remote-source-{identity[:12]}.tar.gz"

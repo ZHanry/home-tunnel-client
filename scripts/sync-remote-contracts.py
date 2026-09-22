@@ -11,7 +11,7 @@ DESTINATION = ROOT / "native/remote/generated"
 def generate(registry):
     channels = list(registry["channels"])
     lines = ["// Generated from server-owned remote-desktop.v1.json; do not edit.",
-             "#pragma once", "#include <array>", "#include <cstdint>",
+             "#pragma once", "#include <array>", "#include <cstdint>", "#include <string_view>",
              "namespace ht::rd::protocol {",
              "struct MessageRule { std::uint8_t type, channel; std::uint16_t flags; std::uint32_t payload; bool json; };",
              "inline constexpr std::array<std::uint32_t, 6> CHANNEL_LIMITS = {" +
@@ -24,6 +24,8 @@ def generate(registry):
     lines += ["}};", "inline constexpr std::uint64_t ALL_PERMISSIONS = " + str((1 << len(registry["permissions"])) - 1) + "u;"]
     for bit, name in enumerate(registry["permissions"]):
         lines.append("inline constexpr std::uint64_t PERMISSION_" + name.upper().replace(".", "_") + f" = {1 << bit}u;")
+    lines.append("inline constexpr std::array<std::string_view, " + str(len(registry["permissions"])) + "> PERMISSION_NAMES = {" +
+                 ",".join(json.dumps(name) for name in registry["permissions"]) + "};")
     lines += ["}", ""]
     return "\n".join(lines).encode()
 
@@ -39,6 +41,9 @@ def main():
                              ("remote-test-vectors.json", args.source / "remote-test-vectors.json")]:
             DESTINATION.mkdir(parents=True, exist_ok=True)
             (DESTINATION / name).write_bytes(source.read_bytes())
+        authorization = args.source / "remote-authorization-vectors.json"
+        if authorization.is_file():
+            (DESTINATION / authorization.name).write_bytes(authorization.read_bytes())
     registry_bytes = (DESTINATION / "remote-desktop.v1.json").read_bytes()
     expected = generate(json.loads(registry_bytes))
     vectors = json.loads((DESTINATION / "remote-test-vectors.json").read_bytes())
@@ -52,6 +57,7 @@ def main():
     manifest = {"source_repository": "https://github.com/ZHanry/home-tunnel-server",
                 "source_path": "contracts/remote-desktop.v1.json", "registry_sha256": digest,
                 "vectors_sha256": hashlib.sha256((DESTINATION / "remote-test-vectors.json").read_bytes()).hexdigest(),
+                "authorization_vectors_sha256": hashlib.sha256((DESTINATION / "remote-authorization-vectors.json").read_bytes()).hexdigest(),
                 "header_sha256": hashlib.sha256((DESTINATION / "remote_protocol.hpp").read_bytes()).hexdigest()}
     manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode()
     if args.check:

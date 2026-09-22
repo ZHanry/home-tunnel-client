@@ -14,7 +14,11 @@ CryptoResult sha256(std::span<const uint8_t> input, std::array<uint8_t,32>& dige
     if(input.size()>65536) return CryptoResult::invalid;
     BCRYPT_ALG_HANDLE algorithm=nullptr;
     if(BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)!=0) return CryptoResult::unavailable;
-    const auto status=BCryptHash(algorithm,nullptr,0,const_cast<PUCHAR>(input.data()),static_cast<ULONG>(input.size()),digest.data(),static_cast<ULONG>(digest.size()));
+    BCRYPT_HASH_HANDLE hash=nullptr;
+    auto status=BCryptCreateHash(algorithm,&hash,nullptr,0,nullptr,0,0);
+    if (status>=0) status=BCryptHashData(hash,const_cast<PUCHAR>(input.data()),static_cast<ULONG>(input.size()),0);
+    if (status>=0) status=BCryptFinishHash(hash,digest.data(),static_cast<ULONG>(digest.size()),0);
+    if (hash) BCryptDestroyHash(hash);
     BCryptCloseAlgorithmProvider(algorithm,0);
     return status==0 ? CryptoResult::valid : CryptoResult::invalid;
 #else

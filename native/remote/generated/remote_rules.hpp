@@ -2,6 +2,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <string_view>
 namespace ht::rd::protocol {
 struct MessageRule { std::uint8_t type, channel; std::uint16_t flags; std::uint32_t payload; bool json; };
 inline constexpr std::array<std::uint32_t, 6> CHANNEL_LIMITS = {16384,8192,256,2048,16384,17408};
@@ -61,4 +62,5 @@ inline constexpr std::uint64_t PERMISSION_CLIPBOARD_READ = 64u;
 inline constexpr std::uint64_t PERMISSION_CLIPBOARD_WRITE = 128u;
 inline constexpr std::uint64_t PERMISSION_FILES_SEND = 256u;
 inline constexpr std::uint64_t PERMISSION_FILES_RECEIVE = 512u;
+inline constexpr std::array<std::string_view, 10> PERMISSION_NAMES = {"view","input.keyboard","input.pointer","input.text","audio.system","audio.microphone","clipboard.read","clipboard.write","files.send","files.receive"};
 }
