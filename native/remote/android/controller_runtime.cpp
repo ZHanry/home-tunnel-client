@@ -17,7 +17,6 @@
 #include "rtc_base/ssl_adapter.h"
 #include "rtc_base/thread.h"
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <functional>
 #include <map>
@@ -482,10 +481,19 @@ void ChannelObserver::OnStateChange() { owner_.State(slot_); }
 void ChannelObserver::OnMessage(const webrtc::DataBuffer& message) { owner_.Receive(slot_,message); }
 void Statistics::OnStatsDelivered(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) { if (const auto owner=owner_.lock()) owner->Path(*report); }
 
-std::mutex registry_mutex;
-std::map<ht_rd_handle,std::shared_ptr<Controller>> registry;
-std::atomic<uint64_t> next_handle{1};
-std::shared_ptr<Controller> find(ht_rd_handle handle) { std::lock_guard lock(registry_mutex); const auto found=registry.find(handle); return found==registry.end()?nullptr:found->second; }
+struct Registry {
+  std::mutex mutex;
+  std::map<ht_rd_handle,std::shared_ptr<Controller>> controllers;
+  uint64_t next_handle=1;
+};
+// Match the factory's process lifetime. Releasing a handle still destroys its
+// controller on the signaling thread; VM shutdown must not run global map or
+// mutex destructors while WebRTC callbacks can still be active.
+Registry& registry() { static Registry* value = new Registry(); return *value; }
+std::shared_ptr<Controller> find(ht_rd_handle handle) {
+  auto& state=registry(); std::lock_guard lock(state.mutex);
+  const auto found=state.controllers.find(handle); return found==state.controllers.end()?nullptr:found->second;
+}
 template<class T> bool compatible(const T* value) { return value && value->size==sizeof(T) && value->abi_version==HT_RD_ABI_V1; }
 ht_rd_result json_call(ht_rd_handle handle,const uint8_t* bytes,size_t size,bool start) {
   if (!bytes || !size || size>HT_RD_MAX_SIGNAL_BYTES) return HT_RD_INVALID_ARGUMENT;
@@ -504,9 +512,10 @@ ht_rd_result ht_rd_create(const ht_rd_config_v1* config,const ht_rd_callbacks_v1
   if (!compatible(config) || !compatible(callbacks)) return HT_RD_ABI_MISMATCH;
   if (config->role!=1 || config->reserved) return HT_RD_INVALID_ARGUMENT;
   if (!runtime().factory) return HT_RD_BACKEND_UNAVAILABLE;
-  std::lock_guard lock(registry_mutex); if (registry.size()>=4) return HT_RD_RESOURCE_LIMIT;
-  const auto handle=next_handle.fetch_add(1); if (!handle) return HT_RD_RESOURCE_LIMIT;
-  registry.emplace(handle,std::make_shared<Controller>(*callbacks)); *output=handle; return HT_RD_OK;
+  auto& state=registry(); std::lock_guard lock(state.mutex);
+  if (state.controllers.size()>=4 || !state.next_handle) return HT_RD_RESOURCE_LIMIT;
+  const auto handle=state.next_handle++;
+  state.controllers.emplace(handle,std::make_shared<Controller>(*callbacks)); *output=handle; return HT_RD_OK;
 }
 ht_rd_result ht_rd_get_capabilities(ht_rd_handle handle,ht_rd_capabilities_v1* output) {
   if (!compatible(output)) return HT_RD_ABI_MISMATCH; if (!find(handle)) return HT_RD_INVALID_HANDLE;
@@ -529,7 +538,8 @@ ht_rd_result ht_rd_pause(ht_rd_handle handle,uint32_t) { const auto owner=find(h
 ht_rd_result ht_rd_close(ht_rd_handle handle,uint32_t) { const auto owner=find(handle); if (!owner) return HT_RD_INVALID_HANDLE; runtime().signaling->BlockingCall([&] { owner->Close("RD_LOCAL_CLOSE"); }); return HT_RD_OK; }
 void ht_rd_release(ht_rd_handle handle) {
   std::shared_ptr<Controller> owner;
-  { std::lock_guard lock(registry_mutex); const auto found=registry.find(handle); if (found==registry.end()) return; owner=std::move(found->second); registry.erase(found); }
+  { auto& state=registry(); std::lock_guard lock(state.mutex); const auto found=state.controllers.find(handle);
+    if (found==state.controllers.end()) return; owner=std::move(found->second); state.controllers.erase(found); }
   runtime().signaling->BlockingCall([&] { owner->Destroy(); });
 }
 }
