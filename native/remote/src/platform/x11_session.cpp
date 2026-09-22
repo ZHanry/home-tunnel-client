@@ -45,7 +45,12 @@ bool valid_xauthority(){
     close(descriptor);return valid;
 }
 [[maybe_unused]] bool unlocked_session(std::string_view display_name){
-    char* raw=nullptr;if(sd_pid_get_session(0,&raw)<0)return false;OwnedText session(raw);
+    char* raw=nullptr;
+    // Desktop launchers may place applications in the user's systemd manager
+    // rather than the login scope. Only logind's primary graphical session for
+    // this exact uid is an acceptable fallback; environment session ids are not.
+    if(sd_pid_get_session(0,&raw)<0 && sd_uid_get_display(getuid(),&raw)<0)return false;
+    OwnedText session(raw);
     uid_t owner=static_cast<uid_t>(-1);
     if(sd_session_get_uid(session.get(),&owner)<0 || owner!=getuid() ||
        sd_session_is_active(session.get())<=0 || sd_session_is_remote(session.get())!=0)return false;

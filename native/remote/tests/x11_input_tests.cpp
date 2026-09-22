@@ -32,6 +32,8 @@ void collect(Display* display,KeyCode key,Events& events){
     }
 }
 bool held(Display* display,KeyCode key){std::array<char,32> keys{};XQueryKeymap(display,keys.data());return (static_cast<unsigned char>(keys[key/8])&(1u<<(key%8)))!=0;}
+bool left_held(Display* display){Window root=0,child=0;int rx=0,ry=0,wx=0,wy=0;unsigned mask=0;
+    REQUIRE(XQueryPointer(display,DefaultRootWindow(display),&root,&child,&rx,&ry,&wx,&wy,&mask));return (mask&Button1Mask)!=0;}
 int child(std::string_view mode,uint32_t target){
     ht::rd::X11InputSink sink({0,0,800,600,0},target);REQUIRE(sink.watchdog_tick());
     REQUIRE(sink.pointer(0,24576,32768));REQUIRE(sink.key(4,true,false));REQUIRE(sink.button(1,true));
@@ -78,8 +80,24 @@ int main(int argc,char** argv){
     XChangeProperty(display,window,property,XA_CARDINAL,32,PropModeReplace,reinterpret_cast<const unsigned char*>(&owner),1);
     XSelectInput(display,window,KeyPressMask|KeyReleaseMask|ButtonPressMask|ButtonReleaseMask);XMapRaised(display,window);XSync(display,False);
     const auto key=XKeysymToKeycode(display,XK_a),unrelated=XKeysymToKeycode(display,XK_b);REQUIRE(key && unrelated);
+    XSetInputFocus(display,window,RevertToParent,CurrentTime);XSync(display,False);
+    REQUIRE(XTestFakeKeyEvent(display,key,True,CurrentTime));XSync(display,False);
+    {
+        ht::rd::X11InputSink sink({0,0,800,600,0},static_cast<uint32_t>(getpid()));REQUIRE(sink.watchdog_tick());
+        REQUIRE(!sink.key(4,true,false));sink.watchdog_stop();
+    }
+    std::this_thread::sleep_for(100ms);REQUIRE(held(display,key));
+    REQUIRE(XTestFakeKeyEvent(display,key,False,CurrentTime));XSync(display,False);
+    REQUIRE(XTestFakeMotionEvent(display,-1,300,300,CurrentTime));
+    REQUIRE(XTestFakeButtonEvent(display,1,True,CurrentTime));XSync(display,False);
+    {
+        ht::rd::X11InputSink sink({0,0,800,600,0},static_cast<uint32_t>(getpid()));REQUIRE(sink.watchdog_tick());
+        REQUIRE(sink.pointer(0,24576,32768));REQUIRE(!sink.button(1,true));sink.watchdog_stop();
+    }
+    std::this_thread::sleep_for(100ms);REQUIRE(left_held(display));
+    REQUIRE(XTestFakeButtonEvent(display,1,False,CurrentTime));XSync(display,False);
     const auto live=run_case(display,window,"live",key,unrelated),stalled=run_case(display,window,"stall",key,unrelated),crashed=run_case(display,window,"crash",key,unrelated);
     XDestroyWindow(display,window);XCloseDisplay(display);
-    std::printf("{\"status\":\"passed\",\"scope\":\"isolated-xvfb-real-xtest-input\",\"live_release_ms\":%ld,\"heartbeat_release_ms\":%ld,\"worker_crash_release_ms\":%ld,\"unrelated_key_preserved\":true,\"physical_xorg_acceptance\":false}\n",live,stalled,crashed);
+    std::printf("{\"status\":\"passed\",\"scope\":\"isolated-xvfb-real-xtest-input\",\"live_release_ms\":%ld,\"heartbeat_release_ms\":%ld,\"worker_crash_release_ms\":%ld,\"unrelated_key_preserved\":true,\"already_held_key_preserved\":true,\"physical_xorg_acceptance\":false}\n",live,stalled,crashed);
     return 0;
 }

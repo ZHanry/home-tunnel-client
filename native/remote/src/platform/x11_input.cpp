@@ -45,6 +45,15 @@ bool lock_ledger(Ledger& ledger,int milliseconds=50){
     return status==0;
 }
 bool alive(int pidfd){pollfd item{pidfd,POLLIN,0};return pidfd>=0 && poll(&item,1,0)==0;}
+bool key_held(Display* display,unsigned key){
+    std::array<char,32> keys{};XQueryKeymap(display,keys.data());
+    return (static_cast<unsigned char>(keys[key/8])&(1u<<(key%8)))!=0;
+}
+bool button_held(Display* display,unsigned button){
+    if(button>5)return false;
+    Window root=0,child=0;int rx=0,ry=0,wx=0,wy=0;unsigned mask=0;
+    return !XQueryPointer(display,DefaultRootWindow(display),&root,&child,&rx,&ry,&wx,&wy,&mask) || (mask&(Button1Mask<<(button-1)))!=0;
+}
 bool release(Ledger& ledger,Display* display){
     if(!display || !x11_ordinary_desktop())return false;
     bool empty=true;
@@ -154,7 +163,7 @@ bool X11InputSink::key(uint16_t usage,bool down,bool){
     auto& state=*impl_;if(usage>=state.keys.size() || !state.keys[usage] || (down && !state.ensure()) || !state.guard || !state.guard->ledger)return false;
     auto& ledger=*state.guard->ledger;if(!lock_ledger(ledger))return false;bool sent=false;const auto code=state.keys[usage];
     if(!down && !ledger.keys[code])sent=true;
-    else if(ordinary_desktop() && (!down || (state.guard->healthy() && state.focused()))){const auto previous=ledger.keys[code];if(down)ledger.keys[code]=1;
+    else if(ordinary_desktop() && (!down || (state.guard->healthy() && state.focused() && (ledger.keys[code] || !key_held(state.display,code))))){const auto previous=ledger.keys[code];if(down)ledger.keys[code]=1;
         sent=XTestFakeKeyEvent(state.display,code,down,CurrentTime)!=0;XSync(state.display,False);
         if(down && !sent)ledger.keys[code]=previous;
         if(!down && sent)ledger.keys[code]=0;}
@@ -173,7 +182,7 @@ bool X11InputSink::button(uint8_t button,bool down){
     if(button<1 || button>5 || (down && !state.ensure()) || !state.guard || !state.guard->ledger)return false;
     const auto code=buttons[button-1];auto& ledger=*state.guard->ledger;if(!lock_ledger(ledger))return false;bool sent=false;
     if(!down && !ledger.buttons[code])sent=true;
-    else if(ordinary_desktop() && (!down || (state.guard->healthy() && state.point && state.at_point(state.px,state.py)))){
+    else if(ordinary_desktop() && (!down || (state.guard->healthy() && state.point && state.at_point(state.px,state.py) && (ledger.buttons[code] || !button_held(state.display,code))))){
         const auto previous=ledger.buttons[code];if(down)ledger.buttons[code]=1;
         sent=(!down || XTestFakeMotionEvent(state.display,-1,state.px,state.py,CurrentTime)) && XTestFakeButtonEvent(state.display,code,down,CurrentTime);
         XSync(state.display,False);if(down && !sent)ledger.buttons[code]=previous;if(!down && sent)ledger.buttons[code]=0;}
