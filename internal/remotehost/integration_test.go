@@ -19,7 +19,8 @@ func TestRealControlCenterInterop(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "node", "testdata/fixture-server.mjs")
+	processCtx, cancelProcess := context.WithTimeout(context.Background(), 45*time.Second)
+	command := exec.CommandContext(processCtx, "node", "testdata/fixture-server.mjs")
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	stdout, e := command.StdoutPipe()
@@ -33,7 +34,18 @@ func TestRealControlCenterInterop(t *testing.T) {
 	if e = command.Start(); e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { _ = stdin.Close(); cancel(); _ = command.Wait() })
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		finished := make(chan error, 1)
+		go func() { finished <- command.Wait() }()
+		select {
+		case <-finished:
+		case <-time.After(3 * time.Second):
+			cancelProcess()
+			<-finished
+		}
+		cancelProcess()
+	})
 	lines := make(chan []byte, 8)
 	go func() {
 		defer close(lines)
