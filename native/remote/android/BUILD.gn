@@ -19,8 +19,15 @@ config("controller_exports") {
   ]
 }
 
-rtc_shared_library("home_tunnel_android_controller") {
+# JNI is owned by the app's separately built NDK bridge. rtc_shared_library on
+# Android injects Chromium Java registration, which this C ABI does not use.
+shared_library("home_tunnel_android_controller") {
   output_name = "home_tunnel_remote"
+  configs += [ ":controller_exports" ]
+  deps = [ ":controller_objects" ]
+}
+
+rtc_source_set("controller_objects") {
   sources = [
     "../src/protocol.cpp",
     "../webrtc/authorization.cpp",
@@ -32,7 +39,6 @@ rtc_shared_library("home_tunnel_android_controller") {
     "HT_RD_BUILD",
     "HT_RD_SHARED",
   ]
-  configs += [ ":controller_exports" ]
   deps = [
     ":home_tunnel_android_surface",
     "//api:create_peerconnection_factory",
