@@ -31,6 +31,7 @@ bool fixture(std::wstring_view mode,DWORD expected){
 int main(int argc,char** argv){
     using ht::rd::WindowsInputSink;
     const auto guard=WindowsInputSink::run_release_guard(argc,argv);if(guard>=0)return guard;
+    if(WindowsInputSink::scan_code(70)!=0xe037 || WindowsInputSink::scan_code(72)!=0xe145)return 14;
 #if defined(__clang__)
 #pragma clang unsafe_buffer_usage begin
 #endif

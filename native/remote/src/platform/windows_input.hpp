@@ -38,6 +38,8 @@ private:
     uint32_t target_process_ = 0;
     std::unique_ptr<ReleaseGuard> guard_;
     bool guard_failed_ = false;
+    int64_t pointer_x_ = 0, pointer_y_ = 0;
+    bool pointer_known_ = false;
 };
 }
 #endif

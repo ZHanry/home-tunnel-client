@@ -34,6 +34,9 @@ bool lock_ledger(HANDLE mutex,DWORD timeout=50){
     return status==WAIT_OBJECT_0 || status==WAIT_ABANDONED;
 }
 INPUT key_event(uint16_t usage,bool down){
+    // Pause has an E1 multi-byte hardware sequence and cannot be represented
+    // as a single E0 scan code. Let Windows map VK_PAUSE for this special key.
+    if(usage==72){INPUT event{};event.type=INPUT_KEYBOARD;event.ki.wVk=VK_PAUSE;event.ki.dwFlags=down?0:KEYEVENTF_KEYUP;return event;}
     const auto scan=WindowsInputSink::scan_code(usage);
     INPUT event{};event.type=INPUT_KEYBOARD;event.ki.wScan=scan&0xff;
     event.ki.dwFlags=KEYEVENTF_SCANCODE | (scan>0xff ? KEYEVENTF_EXTENDEDKEY : 0) | (down ? 0 : KEYEVENTF_KEYUP);
@@ -49,6 +52,14 @@ INPUT button_event(uint8_t button,bool down){
       default:break;
     }
     return event;
+}
+bool pointer_event(int64_t x,int64_t y,INPUT& event){
+    const int origin_x=GetSystemMetrics(SM_XVIRTUALSCREEN),origin_y=GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int width=GetSystemMetrics(SM_CXVIRTUALSCREEN),height=GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if(width<=1 || height<=1 || x<origin_x || y<origin_y || x>=int64_t(origin_x)+width || y>=int64_t(origin_y)+height)return false;
+    event={};event.type=INPUT_MOUSE;
+    event.mi.dx=static_cast<LONG>((x-origin_x)*65535/(width-1));event.mi.dy=static_cast<LONG>((y-origin_y)*65535/(height-1));
+    event.mi.dwFlags=MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK;return true;
 }
 bool release_ledger(InputLedger& ledger){
     bool empty=true;
@@ -193,7 +204,7 @@ uint16_t WindowsInputSink::scan_code(uint16_t usage) {
         map[45]=0x0c;map[46]=0x0d;map[47]=0x1a;map[48]=0x1b;map[49]=0x2b;
         map[51]=0x27;map[52]=0x28;map[53]=0x29;map[54]=0x33;map[55]=0x34;map[56]=0x35;map[57]=0x3a;
         for(uint16_t n=0;n<10;++n) map[n+58]=n+0x3b;
-        map[68]=0x57;map[69]=0x58;map[71]=0x46;
+        map[68]=0x57;map[69]=0x58;map[70]=0xe037;map[71]=0x46;map[72]=0xe145;
         map[73]=0xe052;map[74]=0xe047;map[75]=0xe049;map[76]=0xe053;map[77]=0xe04f;map[78]=0xe051;
         map[79]=0xe04d;map[80]=0xe04b;map[81]=0xe050;map[82]=0xe048;
         map[83]=0x45;map[84]=0xe035;map[85]=0x37;map[86]=0x4a;map[87]=0x4e;map[88]=0xe01c;
@@ -223,36 +234,38 @@ bool WindowsInputSink::key(uint16_t usage,bool down,bool) {
         auto event=key_event(usage,down);
         // Persist before injection: a crash after SendInput must still be
         // observable to the guard. An extra up after a failed down is safe.
+        const auto previous=guard_->ledger->keys[usage];
         if(down)guard_->ledger->keys[usage]=1;
         sent=SendInput(1,&event,sizeof(event))==1;
+        if(down && !sent)guard_->ledger->keys[usage]=previous;
         if(!down && sent)guard_->ledger->keys[usage]=0;
     }
     ReleaseMutex(guard_->mutex);return sent;
 }
 bool WindowsInputSink::button(uint8_t button,bool down) {
     if(button<1 || button>5 || (down && !ensure_guard()) || !guard_ || !guard_->ledger || !lock_ledger(guard_->mutex))return false;
-    POINT point{};bool sent=false;
-    if(ordinary_desktop() && (!down || (guard_->healthy() && GetCursorPos(&point) && target_at_point(point.x,point.y)))){
-        auto event=button_event(button,down);
+    bool sent=false;
+    if(ordinary_desktop() && (!down || (guard_->healthy() && pointer_known_ && target_at_point(pointer_x_,pointer_y_)))){
+        std::array<INPUT,2> events{};events[down?1:0]=button_event(button,down);
+        // MOVE completion is asynchronous. Use the button's own validated
+        // coordinates in the SAME SendInput batch, rather than reading the
+        // old cursor position immediately after a queued pointer event.
+        if(down && !pointer_event(pointer_x_,pointer_y_,events[0])){ReleaseMutex(guard_->mutex);return false;}
+        const auto previous=guard_->ledger->buttons[button-1];
         if(down)guard_->ledger->buttons[button-1]=1;
-        sent=SendInput(1,&event,sizeof(event))==1;
+        const UINT count=down?2:1;sent=SendInput(count,events.data(),sizeof(INPUT))==count;
+        if(down && !sent)guard_->ledger->buttons[button-1]=previous;
         if(!down && sent)guard_->ledger->buttons[button-1]=0;
     }
     ReleaseMutex(guard_->mutex);return sent;
 }
 bool WindowsInputSink::pointer(uint16_t slot,uint16_t x,uint16_t y) {
     if(slot!=display_.slot || display_.width<=0 || display_.height<=0 || !ordinary_desktop() || !target_focused() || !ensure_guard()) return false;
-    const int virtual_x=GetSystemMetrics(SM_XVIRTUALSCREEN),virtual_y=GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int width=GetSystemMetrics(SM_CXVIRTUALSCREEN),height=GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    if(width<=1 || height<=1) return false;
     const int64_t px=int64_t(display_.x)+int64_t(x)*(display_.width-1)/65535;
     const int64_t py=int64_t(display_.y)+int64_t(y)*(display_.height-1)/65535;
-    if(px<virtual_x || py<virtual_y || px>=int64_t(virtual_x)+width || py>=int64_t(virtual_y)+height) return false;
-    if(!target_at_point(px,py) || !lock_ledger(guard_->mutex))return false;
-    INPUT event{};event.type=INPUT_MOUSE;
-    event.mi.dx=static_cast<LONG>((px-virtual_x)*65535/(width-1));event.mi.dy=static_cast<LONG>((py-virtual_y)*65535/(height-1));
-    event.mi.dwFlags=MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK;
+    INPUT event{};if(!pointer_event(px,py,event) || !target_at_point(px,py) || !lock_ledger(guard_->mutex))return false;
     const bool sent=guard_->healthy() && ordinary_desktop() && target_at_point(px,py) && SendInput(1,&event,sizeof(event))==1;
+    if(sent){pointer_x_=px;pointer_y_=py;pointer_known_=true;}
     ReleaseMutex(guard_->mutex);return sent;
 }
 bool WindowsInputSink::target_focused() const {
@@ -273,10 +286,10 @@ bool WindowsInputSink::wheel(int32_t dx,int32_t dy) {
     for(const auto axis:{0,1}) {
         const auto delta=axis? -dy:dx;if(!delta)continue;
         if(!lock_ledger(guard_->mutex))return false;
-        POINT point{};
-        INPUT event{};event.type=INPUT_MOUSE;event.mi.dwFlags=axis?MOUSEEVENTF_WHEEL:MOUSEEVENTF_HWHEEL;
-        event.mi.mouseData=static_cast<DWORD>(delta);
-        const bool sent=guard_->healthy() && ordinary_desktop() && GetCursorPos(&point) && target_at_point(point.x,point.y) && SendInput(1,&event,sizeof(event))==1;
+        std::array<INPUT,2> events{};events[1].type=INPUT_MOUSE;events[1].mi.dwFlags=axis?MOUSEEVENTF_WHEEL:MOUSEEVENTF_HWHEEL;
+        events[1].mi.mouseData=static_cast<DWORD>(delta);
+        const bool sent=guard_->healthy() && ordinary_desktop() && pointer_known_ && target_at_point(pointer_x_,pointer_y_) &&
+            pointer_event(pointer_x_,pointer_y_,events[0]) && SendInput(2,events.data(),sizeof(INPUT))==2;
         ReleaseMutex(guard_->mutex);if(!sent)return false;
     }
     return true;
@@ -296,7 +309,7 @@ bool WindowsInputSink::text(std::string_view text) {
         pair[0].ki.dwFlags=KEYEVENTF_UNICODE;pair[1].ki.dwFlags=KEYEVENTF_UNICODE|KEYEVENTF_KEYUP;
         guard_->ledger->unicode_unit=static_cast<WORD>(unit);guard_->ledger->unicode_pending=1;
         const auto sent=SendInput(2,pair.data(),sizeof(INPUT));
-        if(sent==2 || (sent==1 && SendInput(1,&pair[1],sizeof(INPUT))==1))guard_->ledger->unicode_pending=0;
+        if(sent==0 || sent==2 || (sent==1 && SendInput(1,&pair[1],sizeof(INPUT))==1))guard_->ledger->unicode_pending=0;
         ReleaseMutex(guard_->mutex);if(sent!=2)return false;
     }
     return true;
