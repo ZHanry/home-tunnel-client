@@ -48,15 +48,15 @@ func TestPackageAssetMatchesCurrentOS(t *testing.T) {
 			Name string `json:"name"`
 			URL  string `json:"browser_download_url"`
 		}{
-			{Name: "HomeTunnel-Setup-3.2.1-x64.exe", URL: "https://example.com/win.zip"},
-			{Name: "HomeTunnel-Setup-3.2.1-x64.exe.sha256", URL: "https://example.com/win.sha256"},
+			{Name: "HomeTunnel-Windows-3.2.1-x64.zip", URL: "https://example.com/win.zip"},
+			{Name: "HomeTunnel-Windows-3.2.1-x64.zip.sha256", URL: "https://example.com/win.sha256"},
 			{Name: "home-tunnel-linux-3.2.1-amd64.tar.gz", URL: "https://example.com/linux.tgz"},
 			{Name: "home-tunnel-macos-3.2.1-arm64.tar.gz", URL: "https://example.com/mac.tgz"},
 		},
 	}
 	name, url, checksum := packageAsset(release)
 	if runtime.GOOS == "windows" {
-		if name != "HomeTunnel-Setup-3.2.1-x64.exe" || url == "" || checksum == "" {
+		if name != "HomeTunnel-Windows-3.2.1-x64.zip" || url == "" || checksum == "" {
 			t.Fatalf("windows asset %q %q %q", name, url, checksum)
 		}
 	}
@@ -106,7 +106,7 @@ func TestDownloadUpdateVerifiesSHA256(t *testing.T) {
 	var assetName string
 	switch runtime.GOOS {
 	case "windows":
-		assetName = "HomeTunnel-Setup-9.9.9-x64.exe"
+		assetName = "HomeTunnel-Windows-9.9.9-x64.zip"
 	case "linux":
 		assetName = "home-tunnel-linux-9.9.9-" + runtime.GOARCH + ".tar.gz"
 	case "darwin":
@@ -189,7 +189,7 @@ func TestDownloadUpdateRejectsBadChecksum(t *testing.T) {
 	var assetName string
 	switch runtime.GOOS {
 	case "windows":
-		assetName = "HomeTunnel-Setup-9.9.9-x64.exe"
+		assetName = "HomeTunnel-Windows-9.9.9-x64.zip"
 	case "linux":
 		assetName = "home-tunnel-linux-9.9.9-" + runtime.GOARCH + ".tar.gz"
 	case "darwin":

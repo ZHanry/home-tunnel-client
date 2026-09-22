@@ -31,8 +31,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\home-tunnel-gui.exe
 WizardStyle=modern
-CloseApplications=yes
-CloseApplicationsFilter=home-tunnel-gui.exe,home-tunnel-agent.exe,home_tunnel_remote_host.exe
+; The native worker and its release guard share an executable name. Restart
+; Manager must never force-close both while remote keys are still held.
+CloseApplications=no
 RestartApplications=no
 
 [Languages]
@@ -73,6 +74,46 @@ Name: "{autodesktop}\Home Tunnel"; Filename: "{app}\home-tunnel-gui.exe"; IconFi
 Filename: "{app}\home-tunnel-gui.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function OpenUpgradeTarget(FileName: String; DesiredAccess, ShareMode: LongWord;
+  SecurityAttributes: NativeUInt; CreationDisposition, FlagsAndAttributes: LongWord;
+  TemplateFile: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+
+function CloseUpgradeTarget(Handle: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+function UpgradeTargetAvailable(Name: String): Boolean;
+var
+  Target: String;
+  Handle: THandle;
+begin
+  Target := AddBackslash(ExpandConstant('{app}')) + Name;
+  Result := True;
+  if not FileExists(Target) then
+    Exit;
+  { OPEN_EXISTING never creates, truncates or modifies a package file. Loaded
+    executable sections reject writable opens, including a still-running
+    release guard that is waiting to release input after desktop unlock. }
+  Handle := OpenUpgradeTarget(Target, $C0000000, 0, 0, 3, 0, 0);
+  Result := Handle <> THandle(-1);
+  if Result then
+    CloseUpgradeTarget(Handle);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not UpgradeTargetAvailable('home-tunnel-gui.exe') or
+     not UpgradeTargetAvailable('home-tunnel-agent.exe') or
+     not UpgradeTargetAvailable('home_tunnel_remote_host.exe') then
+  begin
+    if ActiveLanguage = 'chinesesimplified' then
+      Result := '请先在 Home Tunnel 界面或托盘选择“退出程序”，等待远程会话结束、按键释放和后台进程退出，然后重试。关闭窗口只会隐藏到托盘。若仍无法继续，请检查安装目录写入权限。'
+    else
+      Result := 'Choose Quit in the Home Tunnel window or tray and wait for remote input release and all background processes to exit, then retry. Closing the window only hides it. If this persists, check write permission for the installation directory.';
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   PreviousLocation: String;

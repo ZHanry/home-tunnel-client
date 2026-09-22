@@ -118,12 +118,44 @@ func fetchLatestRelease(request *http.Request) (githubRelease, error) {
 }
 
 func packageAsset(release githubRelease) (name, address, checksumURL string) {
+	executable, _ := os.Executable()
+	return packageAssetFor(release, runtime.GOOS, runtime.GOARCH, windowsInstalledPackage(executable))
+}
+
+// Inno Setup installs its uninstaller alongside the GUI. A portable directory
+// has no such marker and must keep using the complete portable bundle.
+func windowsInstalledPackage(executable string) bool {
+	if executable == "" {
+		return false
+	}
+	info, err := os.Lstat(filepath.Join(filepath.Dir(executable), "unins000.exe"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+func packageAssetFor(release githubRelease, platform, architecture string, installed bool) (name, address, checksumURL string) {
 	latest := strings.TrimPrefix(release.TagName, "v")
-	want := map[string]string{
-		"windows": "HomeTunnel-Setup-" + latest + "-x64.exe",
-		"linux":   "home-tunnel-linux-" + latest + "-" + runtime.GOARCH + ".tar.gz",
-		"darwin":  "home-tunnel-macos-" + latest + "-" + runtime.GOARCH + ".tar.gz",
-	}[runtime.GOOS]
+	if _, err := parseUpdateVersion(release.TagName); err != nil {
+		return "", "", ""
+	}
+	want := ""
+	switch platform {
+	case "windows":
+		if architecture != "amd64" {
+			return "", "", ""
+		}
+		want = "HomeTunnel-Windows-" + latest + "-x64.zip"
+		if installed {
+			want = "HomeTunnel-Setup-" + latest + "-x64.exe"
+		}
+	case "linux", "darwin":
+		if architecture != "amd64" && architecture != "arm64" {
+			return "", "", ""
+		}
+		if platform == "darwin" {
+			platform = "macos"
+		}
+		want = "home-tunnel-" + platform + "-" + latest + "-" + architecture + ".tar.gz"
+	}
 	if want == "" {
 		return "", "", ""
 	}
@@ -166,6 +198,7 @@ func (server *Server) update(writer http.ResponseWriter, request *http.Request) 
 		"current": current, "latest": strings.TrimPrefix(release.TagName, "v"),
 		"newer": comparison > 0, "url": release.HTMLURL, "asset": name,
 		"download_url": address, "checksum_url": checksumURL,
+		"channel": "stable", "automatic_install": false,
 	})
 }
 
@@ -206,11 +239,20 @@ func (server *Server) downloadUpdate(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusBadGateway, err.Error())
 		return
 	}
-	hint := fmt.Sprintf("已保存到 %s。退出客户端后，解压到客户端安装目录，再重新打开客户端。", destination)
-	if runtime.GOOS == "windows" {
-		hint = fmt.Sprintf("已保存到 %s。退出客户端后运行此安装程序，按安装向导完成升级。", destination)
+	hint := updateInstallHint(runtime.GOOS, name, destination)
+	writeJSON(writer, map[string]any{"path": destination, "sha256": actual, "verified": true, "hint": hint,
+		"channel": "stable", "automatic_install": false})
+}
+
+func updateInstallHint(platform, name, destination string) string {
+	prefix := fmt.Sprintf("完整更新包已保存并校验：%s。先在界面或托盘选择「退出程序」，结束远程会话并释放输入；关闭窗口仍会在后台运行。", destination)
+	if platform == "windows" && strings.HasSuffix(name, ".exe") {
+		return prefix + "备份原安装目录及用户数据后运行完整安装程序。保留上一版本完整安装包供失败时恢复。"
 	}
-	writeJSON(writer, map[string]any{"path": destination, "sha256": actual, "verified": true, "hint": hint})
+	if platform == "windows" {
+		return prefix + "将完整 ZIP 解压到新目录，再从新目录启动；保留旧完整目录和用户数据备份供恢复。"
+	}
+	return prefix + "将完整归档解压到新目录。系统安装版按包内说明运行 install.sh --upgrade；便携运行请保留目录结构并从新目录启动。保留旧完整包和用户数据备份供恢复。"
 }
 
 func saveVerifiedUpdate(request *http.Request, address, destination, expected string, limit int64) (string, error) {
@@ -245,7 +287,7 @@ func saveVerifiedUpdate(request *http.Request, address, destination, expected st
 	if err = file.Close(); err != nil {
 		return "", err
 	}
-	if err = os.Rename(file.Name(), destination); err != nil {
+	if err = replaceVerifiedDownload(file.Name(), destination); err != nil {
 		return "", err
 	}
 	return actual, nil

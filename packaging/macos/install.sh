@@ -42,6 +42,22 @@ service_loaded() {
   launchctl print "system/$label" >/dev/null 2>&1
 }
 
+# The GUI's Quit action closes remote sessions before its process exits.
+if ! command -v pgrep >/dev/null 2>&1; then
+  echo "pgrep is required to verify that the desktop client has exited" >&2
+  exit 1
+fi
+if pgrep -x home-tunnel-gui >/dev/null 2>&1; then
+  echo "Choose Quit in every Home Tunnel window or tray and wait for remote sessions to stop before changing the installation." >&2
+  exit 1
+else
+  process_check=$?
+  if [[ $process_check -ne 1 ]]; then
+    echo "Could not verify that the desktop client has exited" >&2
+    exit 1
+  fi
+fi
+
 if [[ "$mode" == "uninstall" ]]; then
   if service_loaded; then
     launchctl bootout "system/$label"
@@ -73,35 +89,64 @@ fi
 
 backup_dir=$(mktemp -d /var/tmp/home-tunnel-install.XXXXXX)
 committed=false
+backups_complete=false
+files_modified=false
+service_stopped=false
 was_loaded=false
 if service_loaded; then
   was_loaded=true
 fi
 rollback() {
-  if ! $committed; then
+  exit_code=$?
+  trap - EXIT INT TERM
+  recovery_failed=false
+  if ! $committed && $backups_complete && $files_modified; then
+    if $service_stopped && service_loaded && ! launchctl bootout "system/$label"; then
+      echo "Could not stop the service for rollback; previous files are retained at $backup_dir" >&2
+      exit 1
+    fi
     for target in "$client_target" "$gui_target" "$agent_target" "$plist_target" "$enroll_target"; do
       name=$(printf '%s' "$target" | tr '/' '_')
       if [[ -f "$backup_dir/$name" ]]; then
-        cp -p -- "$backup_dir/$name" "$target"
+        if ! cp -p -- "$backup_dir/$name" "$target"; then recovery_failed=true; fi
       elif [[ -e "$target" ]]; then
-        rm -f -- "$target"
+        if ! rm -f -- "$target"; then recovery_failed=true; fi
       fi
     done
-    if $was_loaded && ! service_loaded && [[ -f "$plist_target" ]]; then
-      launchctl bootstrap system "$plist_target" 2>/dev/null || true
-    fi
   fi
-  rm -rf -- "$backup_dir"
+  if ! $committed && $service_stopped && ! $recovery_failed && ! service_loaded && [[ -f "$plist_target" ]]; then
+    if ! launchctl bootstrap system "$plist_target"; then recovery_failed=true; fi
+  fi
+  if $recovery_failed; then
+    echo "Upgrade recovery failed; previous files are retained at $backup_dir. Keep the service stopped until recovery is complete." >&2
+    exit 1
+  fi
+  if ! rm -rf -- "$backup_dir"; then
+    echo "Could not remove temporary backup directory: $backup_dir" >&2
+    if [[ $exit_code -eq 0 ]]; then exit_code=1; fi
+  fi
+  exit "$exit_code"
 }
-trap rollback EXIT INT TERM
+trap rollback EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for target in "$client_target" "$gui_target" "$agent_target" "$plist_target" "$enroll_target"; do
+  if [[ -L "$target" ]]; then
+    echo "Refusing to replace a linked installation target: $target" >&2
+    exit 1
+  fi
   if [[ -f "$target" ]]; then
     cp -p -- "$target" "$backup_dir/$(printf '%s' "$target" | tr '/' '_')"
+  elif [[ -e "$target" ]]; then
+    echo "Refusing to replace a non-file installation target: $target" >&2
+    exit 1
   fi
 done
+backups_complete=true
 
 if $was_loaded; then
   launchctl bootout "system/$label"
+  service_stopped=true
 fi
 
 # free_system_id prints an ID that is unused as both a UID and a GID; macOS
@@ -151,6 +196,7 @@ install -d -o "$service_user" -g "$service_user" -m 0700 "$state_dir"
 # launchd opens StandardOutPath/StandardErrorPath in the daemon's context, so
 # the log directory must be writable by the service user.
 install -d -o "$service_user" -g "$service_user" -m 0755 "$log_dir"
+files_modified=true
 install -m 0755 "$client_source" "$client_target"
 install -m 0755 "$gui_source" "$gui_target"
 install -m 0755 "$agent_source" "$agent_target"
