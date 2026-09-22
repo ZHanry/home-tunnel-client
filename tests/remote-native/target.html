@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Home Tunnel isolated input test target</title>
+<body><h1>Isolated native acceptance target</h1>
+<p>This is a real browser window on the captured desktop. No synthetic media track is used.</p>
+<label>Reserved input test field <input id="input-target" autocomplete="off"></label>
+<output id="clock"></output>
+<script>
+const clock = document.querySelector('#clock');
+setInterval(() => { clock.textContent = new Date().toISOString(); document.body.style.background = `hsl(${Date.now() / 100 % 360} 65% 85%)`; }, 100);
+window.nativeInputTarget = { events: [] };
+for (const type of ['keydown', 'keyup', 'pointerdown', 'pointerup', 'input']) document.querySelector('#input-target').addEventListener(type, event => {
+  if (event.isTrusted) window.nativeInputTarget.events.push({ type, timestamp: performance.now() });
+});
+</script></body></html>
