@@ -1,0 +1,24 @@
+import("//webrtc.gni")
+
+assert(is_android && current_cpu == "arm64")
+
+group("default") {
+  deps = [
+    ":home_tunnel_android_surface",
+    "//:webrtc",
+  ]
+}
+
+# Compiled with the exact same headers/toolchain/stdlib as WebRTC. This archive
+# is an internal controller building block, not a separately loadable app ABI.
+rtc_static_library("home_tunnel_android_surface") {
+  sources = [
+    "surface_renderer.cpp",
+    "surface_renderer.hpp",
+  ]
+  deps = [
+    "//api/video:video_frame",
+    "//third_party/libyuv",
+  ]
+  libs = [ "android" ]
+}

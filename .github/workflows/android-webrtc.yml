@@ -1,0 +1,62 @@
+name: Android pinned WebRTC engine
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["codex/8.0.0-remote-desktop"]
+    paths:
+      - ".github/workflows/android-webrtc.yml"
+      - "scripts/build-remote-android-webrtc.py"
+      - "native/remote/android/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arm64:
+    name: Linux → Android arm64 engine (not device acceptance)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check immutable build policy
+        run: |
+          python3 scripts/build-remote-android-webrtc.py
+          python3 -m unittest discover -s scripts -p test_remote_android_build.py
+      - name: Prepare isolated hosted build machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The Android engine uses its DEPS-pinned SDK/NDK. These preinstalled
+          # SDKs belong only to the disposable hosted runner, not the project.
+          test "${RUNNER_ENVIRONMENT}" = "github-hosted"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ca-certificates git ninja-build pkg-config libglib2.0-dev libnss3-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libgbm-dev libdrm-dev
+          df -h .
+      - name: Build pinned WebRTC and real Surface sink
+        run: python3 scripts/build-remote-android-webrtc.py --build --jobs 4
+      - name: Independently verify engine artifact inventory
+        run: python3 scripts/build-remote-android-webrtc.py --verify-artifact outputs/android-webrtc-arm64
+      - name: Archive internal SDK
+        run: tar -C outputs -czf outputs/android-webrtc-arm64.tar.gz android-webrtc-arm64
+      - name: Preserve verified build products
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-webrtc-arm64-engine
+          path: outputs/android-webrtc-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve compilation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-webrtc-arm64-build-log
+          path: .downloads/remote-webrtc-android/checkout/src/out/home_tunnel_android_arm64/android-build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
