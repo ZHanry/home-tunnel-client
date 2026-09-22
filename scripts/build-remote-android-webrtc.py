@@ -45,6 +45,9 @@ def locks():
     for name, expected in [("DEPS", upstream["webrtc"]["deps_sha256"]), ("WEBRTC-LICENSE", upstream["webrtc"]["license_sha256"])]:
         if sha(NATIVE / "upstream" / name) != expected:
             raise SystemExit("Pinned upstream source snapshot mismatch")
+    for patch in upstream["patches"]:
+        if sha(NATIVE / patch["path"]) != patch["sha256"]:
+            raise SystemExit("Reviewed upstream patch differs from the source lock")
     return upstream, android
 
 
@@ -127,10 +130,25 @@ def main():
         run([sys.executable, depot / "gclient.py", "runhooks"], source.parent, env)
     for folder, expected in [(source, upstream["webrtc"]["revision"]), (depot, upstream["depot_tools"]["revision"]),
                              (source / "tools", upstream["toolchain"]["chromium_tools_revision"]), (source / "build", upstream["toolchain"]["chromium_build_revision"])]:
-        if run(["git", "rev-parse", "HEAD"], folder, env, True).strip() != expected or run(["git", "status", "--porcelain", "--untracked-files=no"], folder, env, True).strip():
+        reviewed = "".join((NATIVE / patch["path"]).read_text(encoding="utf-8") for patch in upstream["patches"] if source / patch["repository"] == folder)
+        difference = run(["git", "diff", "--binary"], folder, env, True)
+        if (run(["git", "rev-parse", "HEAD"], folder, env, True).strip() != expected or
+                run(["git", "diff", "--cached", "--name-only"], folder, env, True).strip() or (difference and difference != reviewed)):
             raise SystemExit("Android dependency source is modified or differs from the immutable revision")
     if sha(source / "DEPS") != upstream["webrtc"]["deps_sha256"] or sha(source / "tools/clang/scripts/update.py") != upstream["toolchain"]["clang_update_script_sha256"]:
         raise SystemExit("Android DEPS/compiler identity mismatch")
+    for patch in upstream["patches"]:
+        repository = source / patch["repository"]
+        patch_file = NATIVE / patch["path"]
+        if run(["git", "diff", "--cached", "--name-only"], repository, env, True).strip():
+            raise SystemExit("Refusing staged changes in an upstream patch repository")
+        difference = run(["git", "diff", "--binary"], repository, env, True)
+        if not difference:
+            run(["git", "apply", "--check", patch_file], repository, env)
+            run(["git", "apply", patch_file], repository, env)
+            difference = run(["git", "diff", "--binary"], repository, env, True)
+        if difference != patch_file.read_text(encoding="utf-8"):
+            raise SystemExit("Android upstream changes differ from the reviewed patch")
     entries = dependency_entries(source.parent / ".gclient_entries")
     # Dependencies are revision-pinned by DEPS; record the resolved source inventory.
     entries["src"] = upstream["webrtc"]["repository"] + "@" + upstream["webrtc"]["revision"]
@@ -220,6 +238,7 @@ def main():
     licenses.LicenseBuilder([str(build)], ["//:webrtc", "//home_tunnel_remote/android:home_tunnel_android_controller"]).generate_license_text(str(output))
     source_manifest = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "revision": revision, "source_modified": False,
                        "dependency_sources": entries, "upstream_lock": upstream, "android_recipe": android,
+                       "reviewed_upstream_patches": upstream["patches"],
                        "rebuild": "Use Linux x64 and run python3 scripts/build-remote-android-webrtc.py --build from the exact clean client revision."}
     (output / "source-manifest.json").write_text(json.dumps(source_manifest, indent=2, sort_keys=True) + "\n")
     files = {path.relative_to(output).as_posix(): sha(path) for path in sorted(output.rglob("*")) if path.is_file()}

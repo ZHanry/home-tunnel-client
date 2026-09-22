@@ -175,7 +175,11 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
       body["jkt"] = identity_->expected().controller_jkt; body["signature"] = auth::base64url(signature);
       Send(protocol::SESSION_PROOF, body); MaybeReady(); return !closed_;
     }
-    if (text(message["type"], "local.resume")) { paused_ = false; path_reported_ = false; MaybeReady(); return true; }
+    if (text(message["type"], "local.resume")) {
+      paused_ = false; path_reported_ = false;
+      if (ready_ && !first_frame_) ready_at_ = steady_ms();
+      MaybeReady(); return true;
+    }
     if (text(message["type"], "session.lease_updated")) {
       if (!text(message["session_id"], identity_->session_id()) || !number(message["connection_epoch"], identity_->epoch())) return false;
       VerifiedLease lease{};
@@ -211,6 +215,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   bool Surface(ANativeWindow* window, uint64_t generation) {
     if (closed_ || !renderer_.Attach(window, generation)) return false;
     surface_ = window != nullptr; if (!surface_) ReleaseInput("surface_detached");
+    else if (ready_ && !first_frame_) ready_at_ = steady_ms();
     UpdateRendering(); return true;
   }
   void Pause() { if (!closed_) { paused_ = true; ReleaseInput("background"); renderer_.SetAuthorized(false); Emit(HT_RD_EVENT_PAUSED, {}); } }

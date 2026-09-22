@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "status": "build-recipe-surface-layer-device-acceptance-required",
-  "upstream_lock_sha256": "6635df27fd89b837b46e744f5985c8fccd92aac207cb102ad39698a0f0570def",
+  "upstream_lock_sha256": "f0b0e46823e19a989fa14fece5d243be35939e742b247e77f45c6a17c714585d",
   "host": "linux-x64",
   "target": "arm64-v8a",
   "android_api": 26,
