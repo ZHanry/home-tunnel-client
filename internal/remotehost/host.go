@@ -231,7 +231,7 @@ func (s *Service) loadSession(ctx context.Context, id string) (Session, error) {
 	if e != nil {
 		return session, e
 	}
-	if session.SessionID != id || session.ID != id || session.HostEndpointID != s.config.Store.snapshot().EndpointID || session.ConnectionEpoch < 1 || session.ConnectionEpoch > 4 {
+	if session.SessionID != id || session.ID != id || session.HostEndpointID != s.config.Store.snapshot().EndpointID || session.ConnectionEpoch < 1 || session.ConnectionEpoch > 0xffffffff {
 		return session, ErrAuthorization
 	}
 	return session, nil

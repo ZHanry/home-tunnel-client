@@ -15,10 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/ZHanry/home-tunnel-client/internal/model"
@@ -26,6 +28,23 @@ import (
 )
 
 const maximumFrame = 262144
+
+// Progress is expendable display state. Keep it outside the capacity reserved
+// for offers, terminal results and control events while the consumer waits on
+// HTTP renewal. Neither class can grow without bound.
+const criticalEventLimit = 256
+const progressEventLimit = 64
+
+type fileEventKey struct {
+	remotehost.SessionRef
+	ID string
+}
+
+type queuedEvent struct {
+	event            remotehost.EngineEvent
+	key              fileEventKey
+	progress, queued bool
+}
 
 type Options struct {
 	ExecutablePath string
@@ -45,18 +64,23 @@ type response struct {
 }
 
 type Engine struct {
-	command *exec.Cmd
-	input   io.WriteCloser
-	output  io.ReadCloser
-	events  chan remotehost.EngineEvent
-	done    chan struct{}
-	stopped chan struct{}
-	writeMu sync.Mutex
-	mu      sync.Mutex
-	next    uint64
-	pending map[uint64]chan response
-	err     error
-	once    sync.Once
+	command       *exec.Cmd
+	input         io.WriteCloser
+	output        io.ReadCloser
+	events        chan remotehost.EngineEvent
+	done          chan struct{}
+	stopped       chan struct{}
+	writeMu       sync.Mutex
+	mu            sync.Mutex
+	next          uint64
+	pending       map[uint64]chan response
+	err           error
+	once          sync.Once
+	eventMu       sync.Mutex
+	eventQueue    []*queuedEvent
+	eventProgress map[fileEventKey]*queuedEvent
+	eventCritical int
+	eventWake     chan struct{}
 }
 
 var _ remotehost.HostEngine = (*Engine)(nil)
@@ -89,7 +113,8 @@ func New(parent context.Context, options Options) (*Engine, error) {
 		_ = output.Close()
 		return nil, err
 	}
-	engine := &Engine{command: command, input: input, output: output, events: make(chan remotehost.EngineEvent, 64), done: make(chan struct{}), stopped: make(chan struct{}), pending: map[uint64]chan response{}}
+	engine := &Engine{command: command, input: input, output: output, events: make(chan remotehost.EngineEvent), done: make(chan struct{}), stopped: make(chan struct{}), pending: map[uint64]chan response{}, eventWake: make(chan struct{}, 1), eventProgress: map[fileEventKey]*queuedEvent{}}
+	go engine.dispatchEvents()
 	go engine.read()
 	go func() {
 		select {
@@ -138,7 +163,8 @@ func verifyExecutable(options Options) error {
 }
 
 func environment() []string {
-	allowed := map[string]bool{"SYSTEMROOT": true, "WINDIR": true, "TEMP": true, "TMP": true, "USERPROFILE": true, "HOME": true, "LANG": true, "LC_ALL": true}
+	allowed := map[string]bool{"SYSTEMROOT": true, "WINDIR": true, "TEMP": true, "TMP": true, "USERPROFILE": true, "HOME": true, "LANG": true, "LC_ALL": true,
+		"DISPLAY": true, "XAUTHORITY": true, "XDG_SESSION_TYPE": true, "XDG_SESSION_ID": true, "XDG_RUNTIME_DIR": true, "WAYLAND_DISPLAY": true}
 	var values []string
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
@@ -170,7 +196,6 @@ func (e *Engine) fail(err error) {
 
 func (e *Engine) read() {
 	defer close(e.stopped)
-	defer close(e.events)
 	defer func() {
 		// Continue consuming shutdown events so the worker cannot block while
 		// releasing input. The fail deadline still bounds a malformed worker.
@@ -203,10 +228,8 @@ func (e *Engine) read() {
 				e.fail(errors.New("invalid native host event"))
 				return
 			}
-			select {
-			case e.events <- *reply.Event:
-			default:
-				e.fail(errors.New("native host event queue exceeded"))
+			if err := e.enqueueEvent(*reply.Event); err != nil {
+				e.fail(err)
 				return
 			}
 			continue
@@ -228,6 +251,9 @@ func validEvent(event remotehost.EngineEvent) bool {
 		return false
 	}
 	switch event.Kind {
+	case "file":
+		_, valid := nativeFileEvent(event)
+		return valid
 	case "outgoing_signal":
 		return len(event.Transcript) == 0 && (event.SignalType == "peer.answer" || event.SignalType == "peer.candidates" || event.SignalType == "peer.candidates_done")
 	case "sign_peer_proof":
@@ -236,6 +262,193 @@ func validEvent(event remotehost.EngineEvent) bool {
 		return len(event.Transcript) == 0
 	}
 	return false
+}
+
+var nativeFileID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+func nativeFileEvent(event remotehost.EngineEvent) (remotehost.FileEvent, bool) {
+	var result remotehost.FileEvent
+	if event.Kind != "file" || event.SignalType != "" || event.RequestID != "" || len(event.Transcript) != 0 || !nativeFileID.MatchString(event.SessionID) || len(event.Payload) > 4096 {
+		return result, false
+	}
+	var fields struct {
+		Event      *string `json:"event"`
+		ID         *string `json:"id"`
+		Name       *string `json:"name"`
+		Size       *uint64 `json:"size"`
+		Offset     *uint64 `json:"offset"`
+		Outgoing   *bool   `json:"outgoing"`
+		ErrorCode  *string `json:"error_code"`
+		MayBeSaved *bool   `json:"may_be_saved"`
+	}
+	if decode(event.Payload, &fields) != nil || fields.Event == nil || fields.Outgoing == nil {
+		return result, false
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(event.Payload, &raw) != nil {
+		return result, false
+	}
+	for _, value := range raw {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return result, false
+		}
+	}
+	result.Event, result.Outgoing = *fields.Event, *fields.Outgoing
+	if fields.ErrorCode != nil {
+		result.ErrorCode = *fields.ErrorCode
+		if !strings.HasPrefix(result.ErrorCode, "RD_") || len(result.ErrorCode) > 80 {
+			return result, false
+		}
+		for _, c := range result.ErrorCode {
+			if c != '_' && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+				return result, false
+			}
+		}
+	}
+	// The native source picker can fail before individual transfers exist.
+	if len(raw) == 3 && result.Event == "error" && result.Outgoing && result.ErrorCode != "" {
+		return result, true
+	}
+	if fields.ID == nil || fields.Name == nil || fields.Size == nil || !nativeFileID.MatchString(*fields.ID) || !nativeFilename(*fields.Name) || *fields.Size > 8<<30 {
+		return result, false
+	}
+	result.ID, result.Name, result.Size = *fields.ID, *fields.Name, *fields.Size
+	if fields.Offset != nil {
+		result.Offset = *fields.Offset
+	}
+	if fields.MayBeSaved != nil {
+		result.MayBeSaved = *fields.MayBeSaved
+	}
+	if result.Offset > result.Size {
+		return result, false
+	}
+	switch result.Event {
+	case "offer":
+		return result, result.Offset == 0 && result.ErrorCode == "" && !result.MayBeSaved
+	case "progress":
+		return result, fields.Offset != nil && result.ErrorCode == "" && !result.MayBeSaved
+	case "complete":
+		return result, fields.Offset != nil && result.Offset == result.Size && result.ErrorCode == "" && !result.MayBeSaved
+	case "cancelled", "error":
+		return result, result.ErrorCode != ""
+	default:
+		return result, false
+	}
+}
+
+func nativeFilename(name string) bool {
+	if name == "" || len(name) > 1020 || !utf8.ValidString(name) || len(utf16.Encode([]rune(name))) > 255 || strings.ContainsAny(name, `/\:<>"|?*`) || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+		return false
+	}
+	for _, c := range name {
+		if c < 32 {
+			return false
+		}
+	}
+	base, _, _ := strings.Cut(strings.ToUpper(name), ".")
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" || len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9' {
+		return false
+	}
+	return true
+}
+
+func (e *Engine) removeEventLocked(item *queuedEvent) {
+	if !item.queued {
+		return
+	}
+	item.queued = false
+	for index, pending := range e.eventQueue {
+		if pending == item {
+			copy(e.eventQueue[index:], e.eventQueue[index+1:])
+			e.eventQueue[len(e.eventQueue)-1] = nil
+			e.eventQueue = e.eventQueue[:len(e.eventQueue)-1]
+			break
+		}
+	}
+	if item.progress {
+		delete(e.eventProgress, item.key)
+	} else {
+		e.eventCritical--
+	}
+}
+
+func (e *Engine) enqueueEvent(event remotehost.EngineEvent) error {
+	e.eventMu.Lock()
+	defer e.eventMu.Unlock()
+	defer func() {
+		select {
+		case e.eventWake <- struct{}{}:
+		default:
+		}
+	}()
+	item := &queuedEvent{event: event, queued: true}
+	if event.Kind == "file" {
+		file, valid := nativeFileEvent(event)
+		if !valid {
+			return errors.New("invalid native file event")
+		}
+		item.key = fileEventKey{SessionRef: event.SessionRef, ID: file.ID}
+		if file.Event == "progress" {
+			if pending := e.eventProgress[item.key]; pending != nil {
+				pending.event = event
+				return nil
+			}
+			if len(e.eventProgress) >= progressEventLimit {
+				return nil
+			}
+			item.progress = true
+			e.eventProgress[item.key] = item
+		} else if file.Event == "complete" || file.Event == "cancelled" || file.Event == "error" {
+			if pending := e.eventProgress[item.key]; pending != nil {
+				e.removeEventLocked(pending)
+			}
+		}
+	}
+	if !item.progress {
+		if e.eventCritical >= criticalEventLimit {
+			return errors.New("native host important event queue exceeded")
+		}
+		e.eventCritical++
+	}
+	e.eventQueue = append(e.eventQueue, item)
+	return nil
+}
+
+// This is the sole sender/closer of events. A blocked consumer never blocks the
+// IPC reader from delivering command replies, cancelling, or coalescing progress.
+// Important events keep FIFO order. On worker shutdown, queued UI state is
+// discarded and the channel closes; the host then takes its fail-closed path.
+func (e *Engine) dispatchEvents() {
+	defer close(e.events)
+	defer func() {
+		e.eventMu.Lock()
+		e.eventQueue = nil
+		clear(e.eventProgress)
+		e.eventCritical = 0
+		e.eventMu.Unlock()
+	}()
+	for {
+		e.eventMu.Lock()
+		var item *queuedEvent
+		var event remotehost.EngineEvent
+		var output chan remotehost.EngineEvent
+		if len(e.eventQueue) > 0 {
+			item = e.eventQueue[0]
+			event = item.event
+			output = e.events
+		}
+		e.eventMu.Unlock()
+		select {
+		case <-e.done:
+			return
+		case <-e.eventWake:
+			continue
+		case output <- event:
+			e.eventMu.Lock()
+			e.removeEventLocked(item)
+			e.eventMu.Unlock()
+		}
+	}
 }
 
 func (e *Engine) call(parent context.Context, operation string, payload any, result any) error {

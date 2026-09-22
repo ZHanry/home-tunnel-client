@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -200,6 +201,41 @@ func TestUnavailableEngineNeverRegistersOrEnables(t *testing.T) {
 	}
 	if requests != 0 || service.State(context.Background()).Capabilities.Available {
 		t.Fatal("unavailable engine made authenticated traffic")
+	}
+}
+
+func TestLoadSessionUsesUint32EpochAfterRepeatedDisplaySwitches(t *testing.T) {
+	id, endpoint := randomID(), randomID()
+	var epoch atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/rd/sessions/"+id || request.Header.Get("DPoP") == "" {
+			t.Error("unexpected unauthenticated session request")
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(Session{ID: id, SessionRef: SessionRef{SessionID: id, ConnectionEpoch: epoch.Load()}, HostEndpointID: endpoint})
+	}))
+	defer server.Close()
+	store := testStore(t)
+	if err := store.update(func(value *diskState) error { value.EndpointID = endpoint; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Config{Origin: server.URL, Store: store, AllowInsecureLoopback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.token = onlineToken{Token: "local-test-token", Nonce: strings.Repeat("a", 43), ExpiresAt: time.Now().Add(time.Minute * 5)}
+	for _, value := range []int64{1, 4, 5, 100, 0xffffffff} {
+		epoch.Store(value)
+		session, err := s.loadSession(context.Background(), id)
+		if err != nil || session.ConnectionEpoch != value {
+			t.Fatalf("valid display reconnect epoch %d rejected: %v", value, err)
+		}
+	}
+	for _, value := range []int64{-1, 0, 0x100000000} {
+		epoch.Store(value)
+		if _, err := s.loadSession(context.Background(), id); !errors.Is(err, ErrAuthorization) {
+			t.Fatalf("invalid epoch %d accepted: %v", value, err)
+		}
 	}
 }
 func authorityFixture(t *testing.T) (*Service, *runningSession, *ecdsa.PrivateKey) {
