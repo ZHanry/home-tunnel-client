@@ -2,6 +2,8 @@
 
 # Home Tunnel Client
 
+当前源码为 **8.0.0 开发版**，只允许预发布；原生远控媒体尚不可用。下方 7.0.0 链接仍指向已有正式版。详见 [开发状态与验证边界](native/remote/README.md)。
+
 **连接 Windows、macOS、Linux 与 NAS**
 
 [![Stable 7.0.0](https://img.shields.io/badge/stable-7.0.0-176653)](https://github.com/ZHanry/home-tunnel-client/releases/tag/v7.0.0) [![License Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)

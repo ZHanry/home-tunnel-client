@@ -1,18 +1,23 @@
-# Home Tunnel 7.0.0
+# Home Tunnel 8.0.0 development
 
-All first-party components and the managed Agent now use 7.0.0. Upgrade the server,
-desktop/CLI and Android together; FRP remains at its independent 0.70.1 version.
+This source is restricted to prereleases (`stage=internal-testing`). The existing
+7.0 API contract and tunnel behavior remain supported; the managed Agent version
+is 8.0.0 and upstream FRP remains 0.70.1.
 
-- Fix Web multi-tab refresh, stale access-policy writes and persistent backup health.
-- Reject unverified/incomplete desktop updates and use stable semantic versions.
-- Add full REST OpenAPI/JSON Schema and capability-driven Android transport controls.
-- Add TOTP/recovery codes, session management and single-use enrollment codes.
-- Add OS credential protection, redacted diagnostics and host-only admin recovery.
-- Add encrypted off-host backup, verified fresh-volume restore, preflight/NAS
-  templates, monitoring and alert rules.
-- Add encrypted Android server profiles, tags/favorites and per-item batch operations.
-- Publish checksums, SBOMs, provenance and verification evidence as durable assets.
+The new remote work includes a C++20 ABI, pinned WebRTC source/build inputs,
+server-owned protocol snapshots, lease/epoch/UDP-path/input watchdog safety tests,
+four-session ownership boundaries, private worker capability probing and bounded
+text/file receive primitives. Windows ordinary-desktop input adapter groundwork
+is compiled; no system input is injected by automated tests.
 
-Windows/macOS have no publisher certificates configured and are explicitly unsigned;
-their signing/notarization workflow is ready. Android retains its release signing
-identity. Read the migration and platform-security guides before upgrading.
+**Native remote media is not operational in this build.** It does not yet provide
+remote hosting/viewing, audio or virtual microphone routing, connected clipboard
+or file-transfer UI, or verified AV1/HEVC. Capability queries report unavailable.
+The plan's cross-platform, real-network, hardware, permissions, long-running and
+signing gates remain outstanding. A successful core build is not evidence that
+these features work.
+
+Windows/macOS publisher-signature status must be read from each artifact's actual
+evidence; source checksums and CI do not replace certificates. The original
+stable download links continue pointing to 7.0.0 until real prerelease artifacts
+are available. See [native implementation status](../native/remote/README.md).

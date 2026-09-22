@@ -1,0 +1,59 @@
+diff --git a/config/win/visual_studio_version.gni b/config/win/visual_studio_version.gni
+index bd41166..003a6ac 100644
+--- a/config/win/visual_studio_version.gni
++++ b/config/win/visual_studio_version.gni
+@@ -40,7 +40,7 @@ if (visual_studio_path == "") {
+          "You must set the windows_sdk_version if you set the path")
+   assert(wdk_path != "",
+          "You must set the wdk_path if you set the visual studio path")
+-  visual_studio_runtime_dirs = []
++  visual_studio_runtime_dirs = "None"
+ }
+ 
+ visual_studio_version_logs = [ "windows_sdk_version=${windows_sdk_version}" ]
+diff --git a/toolchain/win/setup_toolchain.py b/toolchain/win/setup_toolchain.py
+index e7651ec..2b94193 100644
+--- a/toolchain/win/setup_toolchain.py
++++ b/toolchain/win/setup_toolchain.py
+@@ -116,7 +116,7 @@ def _LoadToolchainEnv(cpu, toolchain_root, sdk_dir, target_store):
+     # the setup script from the SDK if so. |cpu| should be either
+     # 'x86' or 'x64' or 'arm' or 'arm64'.
+     assert cpu in ('x86', 'x64', 'arm', 'arm64')
+-    if bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', 1))) and sdk_dir:
++    if (bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', 1))) or os.environ.get('HT_RD_PORTABLE_WINDOWS_SDK') == '1') and sdk_dir:
+         # Load environment from json file.
+         env = os.path.normpath(
+             os.path.join(sdk_dir, 'bin/SetEnv.%s.json' % cpu)
+@@ -347,7 +347,7 @@ def main():
+     print(f'include_flags_I_list = {ListToArgList(include_I)}')
+     assert include_imsvc
+     if (
+-        bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', 1)))
++        (bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', 1))) or os.environ.get('HT_RD_PORTABLE_WINDOWS_SDK') == '1')
+         and win_sdk_path
+     ):
+         flags = ['/winsysroot' + relflag(toolchain_root)]
+@@ -361,7 +361,7 @@ def main():
+     print(f'libpath_flags = {ListToArgString(libpath_flags)}')
+     print(f'libpath_flags_list = {ListToArgList(libpath_flags)}')
+     if (
+-        bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', 1)))
++        (bool(int(os.environ.get('DEPOT_TOOLS_WIN_TOOLCHAIN', 1))) or os.environ.get('HT_RD_PORTABLE_WINDOWS_SDK') == '1')
+         and win_sdk_path
+     ):
+         flags = ['/winsysroot:' + relflag(toolchain_root)]
+diff --git a/vs_toolchain.py b/vs_toolchain.py
+index 8bcba3e..57e7da7 100755
+--- a/vs_toolchain.py
++++ b/vs_toolchain.py
+@@ -492,6 +492,10 @@ def _CopyDebugger(target_dir, target_cpu):
+     msdia140.dll is needed for tools like symupload.exe and dump_syms.exe. In
+     SDK version 10.0.28000+, it's also needed for dbghelp.dll.
+     """
++    # A static WebRTC archive neither runs nor distributes debugger DLLs.
++    if os.environ.get('HT_RD_STATIC_ENGINE_BUILD') == '1':
++        return
++
+     win_sdk_dir = SetEnvironmentAndGetSDKDir()
+     if not win_sdk_dir:
+         return

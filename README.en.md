@@ -2,6 +2,8 @@
 
 # Home Tunnel Client
 
+The current source is **8.0.0 development**, restricted to prereleases. Native remote media is not available yet. The 7.0.0 links below remain the existing stable downloads. See [implementation status and verification limits](native/remote/README.md).
+
 **Connect Windows, macOS, Linux and NAS hosts**
 
 [![Stable 7.0.0](https://img.shields.io/badge/stable-7.0.0-176653)](https://github.com/ZHanry/home-tunnel-client/releases/tag/v7.0.0) [![License Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)

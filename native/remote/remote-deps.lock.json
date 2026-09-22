@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "status": "source-pinned-build-unverified",
+  "webrtc": {
+    "repository": "https://webrtc.googlesource.com/src",
+    "revision": "94e682e18fbcc0751463be2257b09d2a646a5a68",
+    "deps_sha256": "d92343c460ab45dbf4399c40ac03d9c75b489687b0cf40c47f62c832ffcbbea4",
+    "license_sha256": "ab00a482b6a3902e40211b43c5d0441962ea99b6cc7c25c0f243fa270b78d482"
+  },
+  "depot_tools": {
+    "repository": "https://chromium.googlesource.com/chromium/tools/depot_tools",
+    "revision": "55a39e603bee1ad299545508bc96e2a5d29d3cc4"
+  },
+  "toolchain": {
+    "chromium_tools_revision": "c60db23bebc8938b6bfa250eee92fefee66bd571",
+    "clang_revision": "llvmorg-24-init-7747-g62397f8b",
+    "clang_sub_revision": 29,
+    "clang_update_script_sha256": "b3e6cf906e75bc5ab18fe6ef0b600897b5d95aa7ac019cfb098224616f8025e4",
+    "windows_visual_studio_reference": "2026",
+    "windows_visual_studio_supported": [
+      "2026",
+      "2022",
+      "2019",
+      "2017"
+    ],
+    "windows_sdk_version": "10.0.28000.0",
+    "windows_sdk_package_version": "10.0.28000.2270",
+    "windows_sdk_packages": {
+      "microsoft.windows.sdk.cpp": "0a4887a64d1b17128f9ffd80032f20debabf943f34eea927aac00cc46cb32879",
+      "microsoft.windows.sdk.cpp.x64": "72076d00b16c3882bf9eab0c80e350f33d8bc65e5f29e2f0e9b66a3f2569ccb1",
+      "microsoft.windows.sdk.cpp.x86": "5bf7b8811cd8e7640b5475ddbbf0a873f90077622c73bc6f6c2f1d368d5d55e3"
+    },
+    "android_ndk": "2@30.0.16248370",
+    "chromium_build_revision": "0a2808e883f9443b41ed1f49eb0aa4da0cfe3cf6"
+  },
+  "gn_args": {
+    "is_debug": false,
+    "is_component_build": false,
+    "rtc_include_tests": false,
+    "rtc_build_examples": false,
+    "rtc_use_h264": true,
+    "proprietary_codecs": true,
+    "rtc_include_internal_audio_device": true,
+    "rtc_use_h265": true,
+    "rtc_enable_protobuf": false,
+    "rtc_build_tools": false
+  },
+  "patches": [
+    {
+      "repository": "build",
+      "path": "upstream/0001-external-runtime-dirs-type.patch",
+      "sha256": "0bbc37e37e0351f00797451f41a56dde1961646361d532a8c25287dafbc617e7",
+      "reason": "Support isolated SDK SetEnv and /winsysroot without Google toolchain acquisition, fix runtime argument type, and omit debugger DLL copying for static-engine-only builds."
+    }
+  ],
+  "artifact_sha256": null,
+  "notes": [
+    "Source revisions and DEPS/toolchain digests were read from immutable upstream URLs. No media build or interoperability claim is made.",
+    "Native host capture/input/hardware codecs and app microphone injection are separate implementation work.",
+    "H.264/HEVC distribution terms and each compiled dependency NOTICE must be reviewed before a public media package.",
+    "Protobuf debug recordings and standalone upstream tools are disabled; RTP/DTLS/SRTP/SCTP and built-in audio/video codecs remain enabled."
+  ]
+}

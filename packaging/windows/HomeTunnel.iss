@@ -1,6 +1,6 @@
 #define AppName "Home Tunnel"
 #ifndef AppVersion
-  #define AppVersion "7.0.0"
+  #define AppVersion "8.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "."

@@ -1,5 +1,13 @@
 # Changelog
 
+## 8.0.0 — development (not a stable release)
+
+- Adds the shared C++20 remote ABI, locked WebRTC source/build inputs, protocol framing/transcript tests, UDP selected-pair/lease/epoch safety gates, keyboard and mouse watchdog tests, and Windows input adapter groundwork.
+- Adds four-session ownership/focus isolation, hash-checked inherited-pipe worker diagnostics, and bounded text/file receipt with integrity and no-overwrite checks.
+- Adds native-core CI on Windows, macOS and Linux. The 7.0 API contract remains pinned for existing tunnels; remote contracts have a separate source digest.
+- **Remote media remains unavailable.** These changes do not yet provide a complete remote host/controller, audio or virtual microphone, connected clipboard/file UI, or verified AV1/HEVC. Real platform/network, signing and long-running release gates are still outstanding. Only prerelease tags are allowed while `stage=internal-testing`.
+
+
 ## 7.0.0 — 2026-09-19
 
 All first-party components and the managed Agent now use 7.0.0. Upgrade the server,

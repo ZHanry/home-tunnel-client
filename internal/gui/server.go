@@ -86,6 +86,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/quit", server.quitProcess)
 	mux.HandleFunc("/local/update", server.update)
 	mux.HandleFunc("/local/update/download", server.downloadUpdate)
+	mux.HandleFunc("/local/remote/capabilities", server.remoteCapabilities)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
 	mux.HandleFunc("/local/doctor", server.doctor)
 	mux.HandleFunc("/local/device/metadata", server.deviceMetadata)
