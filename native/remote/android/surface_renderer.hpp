@@ -16,14 +16,14 @@ class SurfaceRenderer final : public webrtc::VideoSinkInterface<webrtc::VideoFra
   SurfaceRenderer(const SurfaceRenderer&) = delete;
   SurfaceRenderer& operator=(const SurfaceRenderer&) = delete;
   bool Attach(ANativeWindow* window, uint64_t generation);
-  void SetAuthorized(bool authorized);
+  void SetAuthorized(bool authorized, uint64_t deadline_ms = 0);
   void Close();
   void OnFrame(const webrtc::VideoFrame& frame) override;
   uint64_t presented_frames() const;
  private:
   mutable std::mutex mutex_;
   ANativeWindow* window_ = nullptr;
-  uint64_t generation_ = 0, frames_ = 0;
+  uint64_t generation_ = 0, frames_ = 0, deadline_ms_ = 0;
   int width_ = 0, height_ = 0;
   bool authorized_ = false, closed_ = false;
 };

@@ -1,4 +1,6 @@
 #include "surface_renderer.hpp"
+#include <chrono>
+#include <cstring>
 
 #include "api/video/i420_buffer.h"
 #include "third_party/libyuv/include/libyuv.h"
@@ -19,9 +21,10 @@ bool SurfaceRenderer::Attach(ANativeWindow* window, uint64_t generation) {
   return true;
 }
 
-void SurfaceRenderer::SetAuthorized(bool authorized) {
+void SurfaceRenderer::SetAuthorized(bool authorized, uint64_t deadline_ms) {
   std::lock_guard lock(mutex_);
-  authorized_ = authorized && !closed_;
+  authorized_ = authorized && !closed_ && deadline_ms;
+  deadline_ms_ = deadline_ms;
 }
 
 void SurfaceRenderer::Close() {
@@ -39,7 +42,8 @@ uint64_t SurfaceRenderer::presented_frames() const {
 
 void SurfaceRenderer::OnFrame(const webrtc::VideoFrame& frame) {
   std::lock_guard lock(mutex_);
-  if (closed_ || !authorized_ || !window_ || !frame.video_frame_buffer()) return;
+  const auto now = [] { return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); };
+  if (closed_ || !authorized_ || now() >= deadline_ms_ || !window_ || !frame.video_frame_buffer()) return;
   if (frame.width() < 1 || frame.height() < 1 || frame.width() > 8192 ||
       frame.height() > 8192 || int64_t(frame.width()) * frame.height() > 33554432) return;
   auto planar = frame.video_frame_buffer()->ToI420();
@@ -66,6 +70,9 @@ void SurfaceRenderer::OnFrame(const webrtc::VideoFrame& frame) {
     written = libyuv::I420ToABGR(planar->DataY(), planar->StrideY(), planar->DataU(), planar->StrideU(),
                                planar->DataV(), planar->StrideV(), static_cast<uint8_t*>(output.bits),
                                output.stride * 4, width, height) == 0;
+  }
+  if (now() >= deadline_ms_ && output.bits && output.format == WINDOW_FORMAT_RGBA_8888 && output.stride > 0 && output.stride <= 16384 && output.height > 0 && output.height <= 8192) {
+    std::memset(output.bits, 0, static_cast<size_t>(output.stride) * output.height * 4); written = false;
   }
   const bool posted = ANativeWindow_unlockAndPost(window_) == 0;
   if (written && posted) ++frames_;

@@ -56,8 +56,11 @@ def dependency_entries(path):
     if not isinstance(result, dict) or not all(isinstance(k, str) and isinstance(v, str) and v.startswith(("https://", "gs://")) for k, v in result.items()):
         raise SystemExit("Unexpected gclient source entry")
     for name in result:
-        relative = PurePosixPath(name)
-        if relative.is_absolute() or ".." in relative.parts or "\\" in name or ":" in name:
+        # gclient records CIPD/CAS packages as "checkout/path:package/name".
+        # Only the part before ':' is a filesystem path. The suffix stays data.
+        checkout_path, separator, package = name.partition(":")
+        relative = PurePosixPath(checkout_path)
+        if relative.is_absolute() or ".." in relative.parts or "\\" in name or relative.parts[0] != "src" or (separator and (not package or ":" in package)):
             raise SystemExit("Unsafe gclient source path")
     return result
 
@@ -166,6 +169,8 @@ def main():
     # Preserve paths exactly so the inventory can be compared with source revisions.
     header_bytes = 0
     for entry in sorted(entries):
+        if ":" in entry:
+            continue  # Binary package metadata does not identify a Git checkout.
         folder = source.parent / entry
         if not folder.is_dir() or not (folder / ".git").exists():
             continue

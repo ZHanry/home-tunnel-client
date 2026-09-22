@@ -11,6 +11,12 @@ SPEC.loader.exec_module(BUILD)
 
 
 class AndroidArtifactPolicy(unittest.TestCase):
+    def test_cipd_package_suffix_is_metadata_not_a_filesystem_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gclient_entries"
+            path.write_text("entries = {'src/buildtools/linux64:gn/gn/linux-amd64': 'https://chrome-infra-packages.appspot.com/p/gn/gn/linux-amd64@version:1'}\n")
+            self.assertIn("src/buildtools/linux64:gn/gn/linux-amd64", BUILD.dependency_entries(path))
+
     def test_dependency_manifest_is_data_not_executable_code(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".gclient_entries"
