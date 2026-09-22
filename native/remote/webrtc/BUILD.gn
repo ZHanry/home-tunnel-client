@@ -37,6 +37,8 @@ if (is_win) {
       "host_worker.cpp",
       "authorization.cpp",
       "peer_identity.cpp",
+      "clipboard.cpp",
+      "clipboard_windows.cpp",
       "../src/protocol.cpp",
       "../src/session_gate.cpp",
       "../src/platform/windows_input.cpp",
@@ -79,4 +81,15 @@ rtc_executable("home_tunnel_authorization_tests") {
     "//third_party/jsoncpp",
     "//rtc_base:ssl",
   ]
+}
+
+rtc_executable("home_tunnel_clipboard_tests") {
+  sources = [
+    "clipboard_tests.cpp",
+    "clipboard.cpp",
+    "authorization.cpp",
+    "peer_identity.cpp",
+    "../src/protocol.cpp",
+  ]
+  deps = [ "//third_party/boringssl", "//third_party/jsoncpp", "//rtc_base:ssl" ]
 }

@@ -173,7 +173,7 @@ def main():
                 if not destination.is_file() or destination.read_bytes() != path.read_bytes():
                     shutil.copyfile(path, destination)
         gn_command += ["--root-target=//home_tunnel_remote/webrtc"]
-        targets += ["home_tunnel_webrtc_probe", "home_tunnel_authorization_tests"]
+        targets += ["home_tunnel_webrtc_probe", "home_tunnel_authorization_tests", "home_tunnel_clipboard_tests"]
         if target == "win":
             targets += ["home_tunnel_remote_host", "home_tunnel_input_guard_tests"]
     run(gn_command, source, env)
@@ -193,6 +193,7 @@ def main():
     if args.media_probe:
         auth_tests = build / ("home_tunnel_authorization_tests.exe" if target == "win" else "home_tunnel_authorization_tests")
         run([auth_tests, NATIVE / "generated/remote-authorization-vectors.json"], build, env)
+        run([build / ("home_tunnel_clipboard_tests.exe" if target == "win" else "home_tunnel_clipboard_tests")], build, env)
         if target == "win":
             run([build / "home_tunnel_input_guard_tests.exe"], build, env)
             host = build / "home_tunnel_remote_host.exe"
@@ -204,7 +205,7 @@ def main():
                              "sha256": hashlib.sha256(host.read_bytes()).hexdigest(),
                              "webrtc_revision": lock["webrtc"]["revision"],
                              "deps_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
-                             "authorization_tests": "passed", "toolchain": lock["toolchain"]}
+                             "authorization_tests": "passed", "clipboard_protocol_tests": "passed", "toolchain": lock["toolchain"]}
             host_manifest["actual_windows_toolchain"] = windows_toolchain_identity
             host_manifest["webrtc_source_patch_sha256"] = hashlib.sha256(subprocess.check_output(["git", "diff", "--binary"], cwd=source, env=env)).hexdigest()
             run([sys.executable, ROOT / "scripts/generate-remote-notices.py", "--source", source,

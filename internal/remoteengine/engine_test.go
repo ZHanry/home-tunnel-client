@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,7 +55,7 @@ func TestNativeHostProcess(t *testing.T) {
 	if err != nil || !capability.Available || capability.Status != "ready" || len(capability.Displays) == 0 {
 		t.Fatalf("native capability: %+v, %v", capability, err)
 	}
-	if len(capability.Permissions) != 4 || capability.Permissions[0] != "view" {
+	if !slices.Equal(capability.Permissions, []string{"view", "input.keyboard", "input.pointer", "input.text", "clipboard.read", "clipboard.write"}) {
 		t.Fatal("worker advertised unimplemented capabilities")
 	}
 	ref := remotehost.SessionRef{SessionID: "a0000000-0000-4000-8000-000000000001", ConnectionEpoch: 1}
