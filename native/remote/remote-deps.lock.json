@@ -57,7 +57,13 @@
       "repository": ".",
       "path": "upstream/0002-default-toolchain-gn-logs.patch",
       "sha256": "a50524c44d5c65a3554f60c6f077688eacd8b566976ff146402265906c586814",
-      "reason": "Only the default GN toolchain may write the shared gn_logs.txt; concurrent Windows writers otherwise race with ERROR_SHARING_VIOLATION."
+      "reason": "Restrict the top-level Siso gn_logs.txt writer to the default GN toolchain; libyuv uses a separate project-specific file."
+    },
+    {
+      "repository": "third_party/libyuv",
+      "path": "upstream/0003-libyuv-unique-gn-logs.patch",
+      "sha256": "038fc03914acfed76d58e634f02eac6a0ca97959572582ff13bb5f119a80283e",
+      "reason": "Keep libyuv debug output in gn_logs_libyuv.txt, with its existing default-toolchain guard, so it cannot race the top-level Siso gn_logs.txt writer on Windows."
     }
   ],
   "verified_builds": {
@@ -70,8 +76,24 @@
       "msvc_version": "14.44.35207",
       "probe_sha256": "baba53bf318b992cf5be149c5ee51c98ef10438923a548ff298ddf8c2811395d",
       "codecs": {
-        "H264": {"profile_level_id": "42e01f", "packetization_mode": 1, "encoder": "OpenH264", "decoder": "FFmpeg", "frames_encoded": 30, "frames_decoded": 30, "power_efficient_encoder": false, "power_efficient_decoder": false},
-        "VP8": {"encoder": "libvpx", "decoder": "libvpx", "frames_encoded": 30, "frames_decoded": 30, "power_efficient_encoder": false, "power_efficient_decoder": false}
+        "H264": {
+          "profile_level_id": "42e01f",
+          "packetization_mode": 1,
+          "encoder": "OpenH264",
+          "decoder": "FFmpeg",
+          "frames_encoded": 30,
+          "frames_decoded": 30,
+          "power_efficient_encoder": false,
+          "power_efficient_decoder": false
+        },
+        "VP8": {
+          "encoder": "libvpx",
+          "decoder": "libvpx",
+          "frames_encoded": 30,
+          "frames_decoded": 30,
+          "power_efficient_encoder": false,
+          "power_efficient_decoder": false
+        }
       },
       "verification_scope": "Two separate in-process Windows desktop capture/encode/decode probes at 1280x720 over UDP host-host with connected DTLS and a data-channel echo. H264 constrained baseline and VP8 were forced separately and verified through actual PeerConnection stats. Both paths are software. No screen content saved. This is not product/browser/device/network acceptance."
     }

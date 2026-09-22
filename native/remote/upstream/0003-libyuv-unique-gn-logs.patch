@@ -1,0 +1,21 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index e6913ef..e1b5e70 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -474,13 +474,13 @@ if (!build_with_chromium) {
+   # GN evaluates each .gn file once per toolchain, so restricting to default
+   # toolchain will ensure write_file() is called only once.
+   if (current_toolchain == default_toolchain) {
+-    # Write debug logs to gn_logs.txt.
++    # Give this project its own log; //BUILD.gn owns the Siso gn_logs.txt.
+     # This is also required for Siso builds.
+     import("//build/gn_logs.gni")
+     lines = [
+-              "Generated during 'gn gen' by //BUILD.gn.",
++              "Generated during 'gn gen' by //third_party/libyuv/BUILD.gn.",
+               "",
+             ] + build_gn_logs
+-    write_file("$root_build_dir/gn_logs.txt", lines)
++    write_file("$root_build_dir/gn_logs_libyuv.txt", lines)
+   }
+ }
