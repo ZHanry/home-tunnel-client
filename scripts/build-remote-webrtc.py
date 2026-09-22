@@ -1,7 +1,8 @@
 """Fetch/build the exact upstream WebRTC lock, without changing machine settings.
 
-This produces an upstream static engine only, not a working remote desktop backend.
-Default action verifies the checked-in source lock. Fetch/build require explicit flags.
+The optional media targets include the Windows host worker, native authorization
+tests and release-guard checks. Real browser/input acceptance remains a separate
+step. Default action verifies the source lock; fetching/building is explicit.
 """
 from pathlib import Path
 import argparse
@@ -226,7 +227,7 @@ def main():
             (build / "remote-media-probe.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
             manifest["local_probe"] = evidence
     (build / "remote-webrtc-build.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print("Upstream engine built; artifact identity recorded. Host/codec integration must be verified separately.")
+    print("Native artifacts and dependency sources recorded. Real browser/input and each advertised codec require separate acceptance.")
 
 
 if __name__ == "__main__":
