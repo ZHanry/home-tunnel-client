@@ -66,6 +66,7 @@ if (is_win) {
 
 rtc_executable("home_tunnel_authorization_tests") {
   sources = [
+    "../android/controller_identity.cpp",
     "authorization.cpp",
     "authorization.hpp",
     "authorization_tests.cpp",
