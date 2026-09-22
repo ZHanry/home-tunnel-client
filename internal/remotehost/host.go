@@ -444,6 +444,18 @@ func (s *Service) checkAuthority(r *runningSession) error {
 	return nil
 }
 func (s *Service) Stop(ctx context.Context, reason string) error {
+	session, present, engineError := s.stopLocal(ctx, reason)
+	if !present {
+		return engineError
+	}
+	networkError := s.request(ctx, "POST", "/sessions/"+url.PathEscape(session.SessionID)+"/close", map[string]any{}, "dpop", nil)
+	// Only a subsequent native closed event may produce close_ack and release slots.
+	if engineError != nil {
+		return engineError
+	}
+	return networkError
+}
+func (s *Service) stopLocal(ctx context.Context, reason string) (Session, bool, error) {
 	s.mu.Lock()
 	s.generation++
 	r := s.active
@@ -457,17 +469,12 @@ func (s *Service) Stop(ctx context.Context, reason string) error {
 	}
 	s.mu.Unlock()
 	if r == nil {
-		return nil
+		return Session{}, false, nil
 	}
 	s.engineMu.Lock()
 	engineError := s.config.Engine.Close(ctx, session.SessionRef, reason)
 	s.engineMu.Unlock()
-	networkError := s.request(ctx, "POST", "/sessions/"+url.PathEscape(session.SessionID)+"/close", map[string]any{}, "dpop", nil)
-	// Only a subsequent native closed event may produce close_ack and release slots.
-	if engineError != nil {
-		return engineError
-	}
-	return networkError
+	return session, true, engineError
 }
 func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 	var message struct {

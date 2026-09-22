@@ -234,3 +234,53 @@ func TestSTUNURLsForbidRelayCredentialsAndUnboundedPorts(t *testing.T) {
 		}
 	}
 }
+func TestDisablePersistsBeforeCloseNetworkWait(t *testing.T) {
+	s, r := approvalFixture(t)
+	s.active = r
+	entered, release := make(chan struct{}), make(chan struct{})
+	s.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/close") {
+			close(entered)
+			<-release
+		}
+		return fixtureResponse(nil), nil
+	})
+	result := make(chan error, 1)
+	go func() { result <- s.SetEnabled(context.Background(), false) }()
+	<-entered
+	if s.config.Store.snapshot().Enabled {
+		t.Fatal("network wait preceded durable disable")
+	}
+	engine := s.config.Engine.(*fakeEngine)
+	engine.mu.Lock()
+	closed := engine.closed
+	engine.mu.Unlock()
+	if closed == 0 {
+		t.Fatal("network wait preceded native close")
+	}
+	close(release)
+	if e := awaitResult(t, result); e != nil {
+		t.Fatal(e)
+	}
+}
+func TestFailedDisablePersistenceStillClosesNative(t *testing.T) {
+	s, r := approvalFixture(t)
+	s.active = r
+	s.config.Store.backend.(*memoryBackend).fail = true
+	s.http.Transport = fixtureTransport(func(*http.Request) (*http.Response, error) {
+		t.Fatal("storage failure should return before network wait")
+		return nil, errors.New("unexpected request")
+	})
+	if s.SetEnabled(context.Background(), false) == nil {
+		t.Fatal("storage failure lost")
+	}
+	engine := s.config.Engine.(*fakeEngine)
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.closed == 0 {
+		t.Fatal("storage failure skipped native close")
+	}
+	if s.State(context.Background()).Enabled {
+		t.Fatal("storage failure released disabled latch")
+	}
+}

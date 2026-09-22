@@ -384,9 +384,16 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 	generation := s.generation
 	s.mu.Unlock()
 	if !enabled {
-		_ = s.Stop(ctx, "RD_HOST_DISABLED")
+		session, present, engineError := s.stopLocal(ctx, "RD_HOST_DISABLED")
 		if e := s.config.Store.update(func(d *diskState) error { d.Enabled = false; return nil }); e != nil {
-			return e
+			return errors.Join(engineError, e)
+		}
+		// Native shutdown and the durable disable both precede any HTTP wait.
+		if present {
+			_ = s.request(ctx, "POST", "/sessions/"+url.PathEscape(session.SessionID)+"/close", map[string]any{}, "dpop", nil)
+		}
+		if engineError != nil {
+			return engineError
 		}
 	}
 	// Serialize capability revisions, but never hold this lock while stopping capture.
