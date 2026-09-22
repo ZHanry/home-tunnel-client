@@ -46,6 +46,7 @@ rtc_source_set("controller_objects") {
     "//api/audio_codecs:builtin_audio_encoder_factory",
     "//api/video_codecs:builtin_video_decoder_factory",
     "//api/video_codecs:builtin_video_encoder_factory",
+    "//modules/audio_device:audio_device_default",
     "//rtc_base:logging",
     "//rtc_base:ssl",
     "//rtc_base:ssl_adapter",

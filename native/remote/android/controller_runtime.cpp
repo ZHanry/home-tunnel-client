@@ -12,6 +12,7 @@
 #include "api/stats/rtc_stats_collector_callback.h"
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "api/video_codecs/builtin_video_encoder_factory.h"
+#include "modules/audio_device/include/audio_device_default.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/ssl_adapter.h"
 #include "rtc_base/thread.h"
@@ -43,18 +44,29 @@ bool candidate_allowed(std::string_view value) {
   const auto& parsed = candidate->candidate();
   return parsed.protocol() == "udp" && parsed.type() != webrtc::IceCandidateType::kRelay && parsed.address().port() > 0;
 }
+// The current controller advertises no audio. WebRTC still requires an ADM when
+// constructing its composite media engine, even for video-only transceivers.
+// This explicit device performs no capture/playout and never touches Java audio.
+class NoAudioDevice : public webrtc::webrtc_impl::AudioDeviceModuleDefault<webrtc::AudioDeviceModule> {
+ public:
+  int32_t ActiveAudioLayer(AudioLayer* layer) const override { *layer = kDummyAudio; return 0; }
+  int32_t PlayoutIsAvailable(bool* available) override { *available = false; return 0; }
+  int32_t RecordingIsAvailable(bool* available) override { *available = false; return 0; }
+  int32_t StartPlayout() override { return -1; }
+  int32_t StartRecording() override { return -1; }
+};
 class Runtime {
  public:
   Runtime() {
     webrtc::LogMessage::LogToDebug(webrtc::LS_NONE); webrtc::LogMessage::SetLogToStderr(false);
     if (!webrtc::InitializeSSL()) return;
-    network = webrtc::Thread::CreateWithSocketServer(); signaling = webrtc::Thread::Create();
-    if (!network || !signaling || !network->Start() || !signaling->Start()) return;
-    factory = webrtc::CreatePeerConnectionFactory(network.get(), network.get(), signaling.get(), nullptr,
+    network = webrtc::Thread::CreateWithSocketServer(); worker = webrtc::Thread::Create(); signaling = webrtc::Thread::Create();
+    if (!network || !worker || !signaling || !network->Start() || !worker->Start() || !signaling->Start()) return;
+    factory = webrtc::CreatePeerConnectionFactory(network.get(), worker.get(), signaling.get(), webrtc::make_ref_counted<NoAudioDevice>(),
       webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(),
       webrtc::CreateBuiltinVideoEncoderFactory(), webrtc::CreateBuiltinVideoDecoderFactory(), nullptr, nullptr);
   }
-  std::unique_ptr<webrtc::Thread> network, signaling;
+  std::unique_ptr<webrtc::Thread> network, worker, signaling;
   webrtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> factory;
 };
 // The VM keeps the loaded JNI/media library for the process lifetime. Avoid C++
@@ -248,7 +260,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if (permission == protocol::PERMISSION_INPUT_POINTER && (read_u32(frame.payload, 0) != layout_epoch_ || !display_slots_.contains(read_u16(frame.payload, 4)))) return false;
     if (frame.type == protocol::TEXT_COMMIT) {
       const auto id = auth::base64url(frame.payload.first(16));
-      if (pending_text_.size() >= 32 || !pending_text_.insert(id).second) return false;
+      if (pending_text_.size() >= 32 || !pending_text_.emplace(id, steady_ms() + 5000).second) return false;
     }
     SendBinary(rule->channel, frame.type, frame.payload, input_epoch_);
     if (!closed_ && frame.type == protocol::KEY) {
@@ -427,6 +439,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   }
   void Tick() {
     if (!Live()) return;
+    std::erase_if(pending_text_, [](const auto& item) { return steady_ms() >= item.second; });
     if (!ready_ && steady_ms()-started_ >= protocol::ICE_DEADLINE_MS) { Close("RD_NO_DIRECT_PATH"); return; }
     if (ready_ && !first_frame_ && !paused_ && surface_ && steady_ms()-ready_at_ >= 15000) { Close("RD_MEDIA_FAILED"); return; }
     State(0);
@@ -451,7 +464,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   std::vector<Json::Value> local_candidates_,remote_candidates_;
   std::set<uint16_t> display_slots_;
   std::set<uint16_t> held_keys_;
-  std::set<std::string> pending_text_;
+  std::map<std::string, uint64_t> pending_text_;
   uint64_t deadline_=0,lease_sequence_=0,started_=0,ready_at_=0,event_generation_=0,input_deadline_=0,heartbeat_version_=0;
   uint32_t input_epoch_=0,layout_epoch_=0,held_buttons_=0;
   unsigned local_candidate_count_=0,remote_candidate_count_=0;
