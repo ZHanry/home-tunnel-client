@@ -17,6 +17,7 @@ import (
 
 	"github.com/ZHanry/home-tunnel-client/internal/api"
 	"github.com/ZHanry/home-tunnel-client/internal/app"
+	"github.com/ZHanry/home-tunnel-client/internal/filedialog"
 	"github.com/ZHanry/home-tunnel-client/internal/model"
 	"github.com/ZHanry/home-tunnel-client/internal/remotehost"
 	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
@@ -33,6 +34,7 @@ type Options struct {
 	ExpectedAgentHash string
 	AgentVersion      string
 	RemoteEngine      remotehost.HostEngine
+	RemoteFilePicker  filedialog.Picker
 }
 
 type Server struct {
@@ -98,6 +100,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/remote/state", server.remoteState)
 	mux.HandleFunc("/local/remote/trust", server.remoteTrust)
 	mux.HandleFunc("/local/remote/action", server.remoteAction)
+	mux.HandleFunc("/local/remote/files", server.remoteFiles)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
 	mux.HandleFunc("/local/doctor", server.doctor)
 	mux.HandleFunc("/local/device/metadata", server.deviceMetadata)

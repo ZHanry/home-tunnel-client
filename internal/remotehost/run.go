@@ -283,9 +283,20 @@ func (s *Service) handleEngine(ctx context.Context, event EngineEvent, send func
 		return nil
 	}
 	switch event.Kind {
+	case "file":
+		var value FileEvent
+		if err := strictDecode(event.Payload, &value, true); err != nil {
+			return ErrAuthorization
+		}
+		return s.fileEvent(event.SessionRef, value)
 	case "sign_peer_proof":
 		return s.signPeerProof(ctx, r, event)
 	case "verified_ready":
+		s.mu.Lock()
+		if s.active == r && !r.Closing {
+			r.Verified = true
+		}
+		s.mu.Unlock()
 		for attempt := 0; attempt < 2; attempt++ {
 			current, e := s.loadSession(ctx, snapshot.Session.SessionID)
 			if e != nil {

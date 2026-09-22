@@ -72,6 +72,9 @@ type runningSession struct {
 	OfferJWS    string
 	AnswerJWS   string
 	Started     bool
+	Verified    bool
+	Files       map[string]FileEvent
+	FileOrder   []string
 	Closing     bool
 	Superseded  bool
 	Cancel      context.CancelFunc

@@ -74,7 +74,7 @@ func TestRemoteCapabilitiesRequireReadyNativeHost(t *testing.T) {
 func TestAllRemoteControlsRequireNativeWindowSession(t *testing.T) {
 	s := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "state.json")})
 	for _, item := range []struct{ method, path string }{
-		{"GET", "/local/remote/state"}, {"GET", "/local/remote/trust"}, {"POST", "/local/remote/action"},
+		{"GET", "/local/remote/state"}, {"GET", "/local/remote/trust"}, {"POST", "/local/remote/action"}, {"POST", "/local/remote/files"},
 	} {
 		req := trustedLocalRequest(item.method, item.path, strings.NewReader(`{"action":"enable"}`))
 		req.Header.Del("Authorization")

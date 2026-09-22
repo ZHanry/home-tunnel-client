@@ -500,14 +500,15 @@
       }
       }, "edit-error");
     };
-    let remoteHostLoading = false, remoteHostTrust = null, remoteHostListSignature = "", remoteHostGeneration = 0;
+    let remoteHostLoading = false, remoteHostTrust = null, remoteHostListSignature = "", remoteFileSignature = "", remoteHostGeneration = 0;
     let remoteHostAbort = new AbortController();
     function resetRemoteHostUI() {
       remoteHostGeneration++; remoteHostAbort.abort(); remoteHostAbort = new AbortController();
-      remoteHostTrust = null; remoteHostListSignature = "";
+      remoteHostTrust = null; remoteHostListSignature = ""; remoteFileSignature = "";
       $("rd-host-password").value = ""; $("rd-host-mfa").value = ""; $("rd-host-trust").textContent = "";
       $("rd-host-trust-confirm").checked = false; $("rd-host-enroll-submit").disabled = true;
       $("rd-host-pending").replaceChildren(); $("rd-host-grants").replaceChildren();
+      $("rd-host-files").replaceChildren();
       for (const id of ["enable", "disable", "stop"]) $("rd-host-" + id).disabled = true;
     }
     const remotePermissionNames = {
@@ -554,6 +555,36 @@
         row.append(detail, remoteActionButton("撤销授权并断开 / Revoke and disconnect", "revoke", {id:grant.id}, true)); $("rd-host-grants").append(row);
       }
     }
+    function renderRemoteFiles(files = {}) {
+      const signature = JSON.stringify(files);
+      if (signature === remoteFileSignature) return;
+      remoteFileSignature = signature;
+      const container = $("rd-host-files"); container.replaceChildren();
+      if (!files.session_id || !files.can_send && !files.can_receive) return;
+      const title = document.createElement("h3"), help = document.createElement("p");
+      title.textContent = "会话文件 / Session files";
+      help.textContent = "文件通过当前直连传输。请先在控制端开启文件权限；本机选择文件或保存位置，不覆盖已有文件。 / Enable file transfer on the controller, then choose files or a new destination here.";
+      container.append(title, help);
+      const button = (label, action, id) => {
+        const node = document.createElement("button"); node.type = "button"; node.className = "secondary"; node.textContent = label;
+        node.onclick = () => runAction(node, async () => {
+          try { await api("/local/remote/files", {method:"POST", body:JSON.stringify({action, id, session_id:files.session_id, connection_epoch:files.connection_epoch}), signal:remoteHostAbort.signal}); }
+          finally { void refreshRemoteHost(); }
+        }, "rd-host-error");
+        return node;
+      };
+      if (files.can_send) container.append(button("选择多个文件发送 / Select files to send", "send"));
+      for (const item of files.items || []) {
+        const row = document.createElement("div"), detail = document.createElement("p"); row.className = "settings-card";
+        const phases = {offer:"等待选择 / Awaiting selection", progress:"传输中 / Transferring", complete:"已完成 / Complete", cancelled:"已取消 / Cancelled", error:"传输失败 / Failed"};
+        detail.textContent = `${item.name || "文件 / File"} · ${item.outgoing ? "发送 / Send" : "接收 / Receive"} · ${phases[item.event] || item.event} · ${item.offset || 0} / ${item.size || 0} bytes${item.error_code ? " · " + item.error_code : ""}`;
+        detail.style.overflowWrap = "anywhere"; row.append(detail);
+        if (item.may_be_saved) { const note = document.createElement("p"); note.textContent = "文件可能已保存，请检查目标文件夹。 / The file may have been saved; check the destination folder."; row.append(note); }
+        if (item.event === "offer" && !item.outgoing && files.can_receive) row.append(button("选择保存位置 / Choose destination", "receive", item.id));
+        if (["offer", "progress"].includes(item.event)) row.append(button("取消此文件 / Cancel file", "cancel", item.id));
+        container.append(row);
+      }
+    }
     async function refreshRemoteHost() {
       if (remoteHostLoading || !$("rd-host-status") || !$("login").classList.contains("hidden")) return;
       remoteHostLoading = true;
@@ -570,6 +601,7 @@
         $("rd-host-enroll").classList.toggle("hidden", !ready || state.enrolled);
         if (state.enrolled || !ready) { $("rd-host-password").value = ""; $("rd-host-mfa").value = ""; }
         renderRemoteApprovals(state);
+        renderRemoteFiles(state.files);
         const count = (state.pending || []).filter(event => !event.display_code).length;
         $("settings-open").textContent = t("settings") + (count ? ` · ${count} 待批准 / pending` : "");
       } catch {

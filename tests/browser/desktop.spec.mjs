@@ -73,6 +73,31 @@ test("desktop requests use the native window's private session", async ({ page }
   await expect.poll(() => authorization).toBe("Bearer private-ui-test");
 });
 
+test("session files request local selection with the displayed epoch and render names as text", async ({page}) => {
+  const files = {session_id:"session-file",connection_epoch:3,can_send:true,can_receive:true,items:[{event:"offer",id:"file-one",name:"<img src=x onerror=alert(1)>.txt",size:24,outgoing:false}]};
+  await page.route("**/local/remote/state",route=>route.fulfill({json:{enrolled:true,enabled:true,running:true,capabilities:{available:true},pending:[],grants:[],files}}));
+  await services(page,undefined);
+  await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));
+  await page.locator("#settings-open").click();
+  await expect(page.locator("#rd-host-files")).toContainText(files.items[0].name);
+  await expect(page.locator("#rd-host-files img")).toHaveCount(0);
+  const actions=[];
+  await page.route("**/local/remote/files",route=>{actions.push(route.request().postDataJSON());return route.fulfill({json:{ok:true,cancelled:true}});});
+  await page.getByRole("button",{name:"选择保存位置 / Choose destination"}).click();
+  await expect.poll(()=>actions.length).toBe(1);
+  expect(actions[0]).toEqual({action:"receive",id:"file-one",session_id:"session-file",connection_epoch:3});
+  await page.getByRole("button",{name:"选择多个文件发送 / Select files to send"}).click();
+  await expect.poll(()=>actions.length).toBe(2);
+  expect(actions[1]).toEqual({action:"send",session_id:"session-file",connection_epoch:3});
+  files.items[0]={...files.items[0],event:"error",may_be_saved:true,error_code:"RD_FILE_CANCELLED"};
+  await page.evaluate(()=>refreshRemoteHost());
+  await expect(page.locator("#rd-host-files")).toContainText("文件可能已保存");
+  await expect(page.getByRole("button",{name:"选择保存位置 / Choose destination"})).toHaveCount(0);
+  files.session_id="";
+  await page.evaluate(()=>refreshRemoteHost());
+  await expect(page.locator("#rd-host-files")).toBeEmpty();
+});
+
 async function services(page, capabilities, connections = []) {
   await page.route("**/local/state", route => route.fulfill({json:{enrolled:true,agent_state:"Online",capabilities,connections}}));
   await page.route("**/local/update", route => route.fulfill({json:{newer:false}}));

@@ -18,6 +18,7 @@ type Status struct {
 	Pending         []ApprovalEvent `json:"pending"`
 	Grants          []LocalGrant    `json:"grants"`
 	ErrorCode       string          `json:"error_code,omitempty"`
+	Files           FileState       `json:"files"`
 }
 
 func (s *Service) State(ctx context.Context) Status {
@@ -28,6 +29,7 @@ func (s *Service) State(ctx context.Context) Status {
 		result.ErrorCode = "RD_BACKEND_UNAVAILABLE"
 		result.Capabilities.Available = false
 	}
+	result.Files = s.FileState()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result.Running = s.running
