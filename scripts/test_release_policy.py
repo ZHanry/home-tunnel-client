@@ -59,7 +59,9 @@ class ReleasePolicyTests(unittest.TestCase):
                  'deps_lock_sha256': provenance['engine']['lock_sha256'], 'authorization_tests': 'passed',
                  'notices_sha256': provenance['notices_sha256'], 'source_manifest_sha256': provenance['source_manifest_sha256']}
         report = {'status': 'passed', 'input': {'status': 'passed', **{key: True for key in ('keyboard_down_up', 'unicode_text', 'pointer_down_up',
-                  'native_process_confinement', 'os_foreground_verified', 'released')}}, 'worker_sha256': digest,
+                  'native_process_confinement', 'os_foreground_verified', 'released', 'stale_epoch_rejected')},
+                  'heartbeat_watchdog': {'passed': True, 'release_ms': 1750},
+                  'worker_crash': {'passed': True, 'key_release_ms': 100, 'button_release_ms': 100}}, 'worker_sha256': digest,
                   'sources': {'client': {'commit': 'revision', 'modified': False}, 'server': {'commit': server['revision'], 'modified': False}},
                   'server_build': {'fresh': True, 'source_commit': server['revision'], 'command': 'pnpm run build',
                                    'dist': {'file_count': 1, 'sha256': hashlib.sha256(b'fixture build').hexdigest()}},
@@ -126,6 +128,30 @@ class ReleasePolicyTests(unittest.TestCase):
                     bundle.writestr(alias, b'unverified replacement')
                 with self.assertRaisesRegex(SystemExit, 'Windows archive'):
                     module.verify_remote_build(directory, '6.0.1', 'revision')
+
+    def test_held_input_safety_requires_measured_deadlines_and_stale_epoch_rejection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for field, metrics in (('heartbeat_watchdog', ('release_ms',)),
+                                   ('worker_crash', ('key_release_ms', 'button_release_ms'))):
+                for metric in metrics:
+                    for invalid in (None, False, True, -1, 2001, '100', float('nan'), float('inf')):
+                        with self.subTest(field=field, metric=metric, invalid=invalid):
+                            _, report = self.remote_fixture(directory)
+                            report['input'][field][metric] = invalid
+                            (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(report))
+                            with self.assertRaisesRegex(SystemExit, 'two seconds'):
+                                module.verify_remote_evidence(directory, '6.0.1', 'revision')
+                _, report = self.remote_fixture(directory)
+                del report['input'][field]
+                (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(report))
+                with self.assertRaisesRegex(SystemExit, 'two seconds'):
+                    module.verify_remote_evidence(directory, '6.0.1', 'revision')
+            _, report = self.remote_fixture(directory)
+            report['input']['stale_epoch_rejected'] = False
+            (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(report))
+            with self.assertRaisesRegex(SystemExit, 'confined keyboard'):
+                module.verify_remote_evidence(directory, '6.0.1', 'revision')
 
     def test_publication_requires_scanned_bytes_and_successful_installation(self):
         with tempfile.TemporaryDirectory() as temporary:

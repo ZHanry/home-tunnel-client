@@ -207,8 +207,15 @@ def verify_remote_evidence(directory, version, revision):
     if acceptance.get('status') != 'passed' or acceptance.get('input', {}).get('status') != 'passed':
         raise SystemExit('Real native video and input acceptance must both pass')
     if any(acceptance['input'].get(check) is not True for check in ('keyboard_down_up', 'unicode_text', 'pointer_down_up',
-            'native_process_confinement', 'os_foreground_verified', 'released')):
+            'native_process_confinement', 'os_foreground_verified', 'released', 'stale_epoch_rejected')):
         raise SystemExit('Native acceptance does not prove actual confined keyboard, Unicode and pointer input')
+    for name, timings in (('heartbeat_watchdog', ('release_ms',)),
+                          ('worker_crash', ('key_release_ms', 'button_release_ms'))):
+        result = acceptance['input'].get(name, {})
+        if (not isinstance(result, dict) or result.get('passed') is not True or
+                any(type(result.get(timing)) not in (int, float) or not 0 <= result[timing] <= 2000
+                    for timing in timings)):
+            raise SystemExit('Native acceptance must prove held input release within two seconds after heartbeat loss and worker crash')
     if acceptance.get('worker_sha256') != worker['sha256']:
         raise SystemExit('Native acceptance must use the final distributed worker bytes')
     sources = acceptance.get('sources', {})
