@@ -40,6 +40,8 @@
 #if defined(WEBRTC_WIN)
 #include "rtc_base/win32_socket_init.h"
 #include <objbase.h>
+#elif defined(WEBRTC_LINUX) && !defined(WEBRTC_ANDROID)
+#include <X11/Xlib.h>
 #endif
 
 namespace {
@@ -409,6 +411,8 @@ int main(int argc, char** argv) {
   webrtc::WinsockInitializer winsock;
   const auto com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(com)) return 3;
+#elif defined(WEBRTC_LINUX) && !defined(WEBRTC_ANDROID)
+  if (!XInitThreads()) return 3;
 #endif
   webrtc::LogMessage::LogToDebug(webrtc::LS_ERROR);
   webrtc::LogMessage::SetLogToStderr(false);

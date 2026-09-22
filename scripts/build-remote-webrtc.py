@@ -1,6 +1,6 @@
 """Fetch/build the exact upstream WebRTC lock, without changing machine settings.
 
-The optional media targets include the Windows host worker, native authorization
+The optional media targets include the Windows/Linux host workers, native authorization
 tests and release-guard checks. Real browser/input acceptance remains a separate
 step. Default action verifies the source lock; fetching/building is explicit.
 """
@@ -104,6 +104,12 @@ def main():
     if os.name == "nt" and not (depot / "git.bat").exists():
         run(["cmd", "/d", "/c", depot / "bootstrap/win_tools.bat"], depot, env)
     target = args.target_os or {"Windows": "win", "Linux": "linux", "Darwin": "mac"}[platform.system()]
+    linux_recipe = None
+    if target == "linux":
+        linux_recipe = json.loads((NATIVE / "linux/linux-build.lock.json").read_text())
+        if (platform.system() != "Linux" or args.target_cpu != "x64" or
+                linux_recipe["upstream_lock_sha256"] != hashlib.sha256(lock_bytes).hexdigest()):
+            raise SystemExit("Linux native build requires a Linux x64 host and the exact reviewed upstream lock")
     if target == "android" and platform.system() != "Linux":
         raise SystemExit("The locked upstream Android build requires a Linux host")
     solution = {"name": "src", "url": lock["webrtc"]["repository"], "managed": False, "custom_deps": {}}
@@ -141,6 +147,8 @@ def main():
     build = source / "out/home_tunnel"
     build.mkdir(parents=True, exist_ok=True)
     gn_args = dict(lock["gn_args"], target_os=target, target_cpu=args.target_cpu)
+    if linux_recipe:
+        gn_args.update(linux_recipe["gn_args"])
     windows_toolchain_identity = None
     if target == "win":
         if args.windows_toolchain:
@@ -173,9 +181,11 @@ def main():
                 if not destination.is_file() or destination.read_bytes() != path.read_bytes():
                     shutil.copyfile(path, destination)
         gn_command += ["--root-target=//home_tunnel_remote/webrtc"]
-        targets += ["home_tunnel_webrtc_probe", "home_tunnel_authorization_tests", "home_tunnel_clipboard_tests"]
+        targets += ["home_tunnel_webrtc_probe", "home_tunnel_authorization_tests", "home_tunnel_clipboard_tests", "home_tunnel_file_transfer_tests"]
         if target == "win":
             targets += ["home_tunnel_remote_host", "home_tunnel_input_guard_tests"]
+        elif target == "linux":
+            targets += ["home_tunnel_remote_host", "home_tunnel_remote_host_xvfb", "home_tunnel_x11_input_tests"]
     run(gn_command, source, env)
     print(f"Building with {args.jobs} jobs; compiler output: {build / 'remote-build.log'}", flush=True)
     with (build / "remote-build.log").open("w", encoding="utf-8") as log:
@@ -194,9 +204,11 @@ def main():
         auth_tests = build / ("home_tunnel_authorization_tests.exe" if target == "win" else "home_tunnel_authorization_tests")
         run([auth_tests, NATIVE / "generated/remote-authorization-vectors.json"], build, env)
         run([build / ("home_tunnel_clipboard_tests.exe" if target == "win" else "home_tunnel_clipboard_tests")], build, env)
+        run([build / ("home_tunnel_file_transfer_tests.exe" if target == "win" else "home_tunnel_file_transfer_tests")], build, env)
         if target == "win":
             run([build / "home_tunnel_input_guard_tests.exe"], build, env)
-            host = build / "home_tunnel_remote_host.exe"
+        if target in ("win", "linux"):
+            host = build / ("home_tunnel_remote_host.exe" if target == "win" else "home_tunnel_remote_host")
             revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
             modified = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
             host_manifest = {"schema_version": 1, "status": "built-acceptance-required", "executable": str(host),
@@ -205,8 +217,13 @@ def main():
                              "sha256": hashlib.sha256(host.read_bytes()).hexdigest(),
                              "webrtc_revision": lock["webrtc"]["revision"],
                              "deps_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
-                             "authorization_tests": "passed", "clipboard_protocol_tests": "passed", "toolchain": lock["toolchain"]}
-            host_manifest["actual_windows_toolchain"] = windows_toolchain_identity
+                             "authorization_tests": "passed", "clipboard_protocol_tests": "passed", "file_transfer_tests": "passed", "toolchain": lock["toolchain"]}
+            if target == "win":
+                host_manifest["actual_windows_toolchain"] = windows_toolchain_identity
+            else:
+                host_manifest["linux_recipe_sha256"] = hashlib.sha256((NATIVE / "linux/linux-build.lock.json").read_bytes()).hexdigest()
+                host_manifest["linux_baseline"] = linux_recipe["baseline"]
+                host_manifest["xvfb_test_binary_sha256"] = hashlib.sha256((build / "home_tunnel_remote_host_xvfb").read_bytes()).hexdigest()
             host_manifest["webrtc_source_patch_sha256"] = hashlib.sha256(subprocess.check_output(["git", "diff", "--binary"], cwd=source, env=env)).hexdigest()
             run([sys.executable, ROOT / "scripts/generate-remote-notices.py", "--source", source,
                  "--build", build, "--gn", gn], source, env)
@@ -222,8 +239,8 @@ def main():
             entries["src"] = lock["webrtc"]["repository"] + "@" + lock["webrtc"]["revision"]
             sources = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "revision": revision,
                        "worker_sha256": host_manifest["sha256"], "deps_lock": lock, "dependency_sources": entries,
-                       "rebuild": "Check out the exact client revision and run scripts/build-native-windows.ps1. The source lock pins WebRTC, its DEPS, depot_tools, SDK packages and the reviewed upstream patch.",
-                       "scope": "Corresponding source locations and build recipes. Windows supports software H264 constrained baseline and VP8; optional compiled HEVC is not advertised as verified. Native codec probes do not replace product/browser acceptance."}
+                       "rebuild": "Check out the exact client revision and run " + ("scripts/build-native-windows.ps1" if target == "win" else "python3 scripts/build-native-linux.py --build") + ". The source locks pin WebRTC, its DEPS, depot_tools, build arguments and reviewed upstream patches.",
+                       "scope": "Corresponding source locations and build recipes. H264 constrained baseline and VP8 require separate actual codec evidence; optional compiled HEVC is not advertised as verified. Native probes and isolated Xvfb tests do not replace product/browser/physical-desktop acceptance."}
             sources_bytes = (json.dumps(sources, indent=2, sort_keys=True) + "\n").encode()
             (build / "remote-source-manifest.json").write_bytes(sources_bytes)
             host_manifest["source_manifest_sha256"] = hashlib.sha256(sources_bytes).hexdigest()

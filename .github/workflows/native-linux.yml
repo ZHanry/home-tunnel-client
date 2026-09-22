@@ -1,0 +1,70 @@
+name: Native Linux Xorg candidate build
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/8.0.0-remote-desktop]
+    paths:
+      - '.github/workflows/native-linux.yml'
+      - 'scripts/build-native-linux.py'
+      - 'scripts/build-remote-webrtc.py'
+      - 'scripts/generate-remote-notices.py'
+      - 'native/remote/**'
+permissions:
+  contents: read
+concurrency:
+  group: native-linux-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  x11-platform:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install isolated runner test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config libx11-dev libxtst-dev libxrandr-dev libsystemd-dev xvfb xauth
+      - name: Compile production and separate test-only Xorg platform
+        run: |
+          cmake -S native/remote -B outputs/linux-platform -G Ninja -DHT_RD_BUILD_X11_HOST_SUPPORT=ON
+          cmake --build outputs/linux-platform -j 4
+      - name: Verify real XTest injection, crash release, and production session boundary
+        run: HT_RD_XVFB_ISOLATED_TEST=1 XDG_SESSION_TYPE=x11 xvfb-run -a -s '-screen 0 800x600x24 -nolisten tcp' ctest --test-dir outputs/linux-platform --output-on-failure --timeout 20
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ always() }}
+        with:
+          name: linux-xorg-platform-tests
+          path: outputs/linux-platform/Testing/Temporary/LastTest.log
+          if-no-files-found: error
+          retention-days: 14
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify pinned Xorg build recipe
+        run: python3 scripts/build-native-linux.py
+      - name: Install native build dependencies on the isolated runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ca-certificates git ninja-build pkg-config libglib2.0-dev libnss3-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libxdamage-dev libxfixes-dev libxcomposite-dev libxrender-dev libxtst-dev libsystemd-dev libgbm-dev libdrm-dev xvfb xauth
+          df -h .
+      - name: Build pinned WebRTC and production Xorg host, then verify separate Xvfb host
+        run: python3 scripts/build-native-linux.py --build --jobs 4
+      - name: Archive candidate without the test-only executable
+        run: tar -C outputs -czf outputs/native-linux-x64-candidate.tar.gz native-linux-build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-linux-x64-candidate
+          path: outputs/native-linux-x64-candidate.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ always() }}
+        with:
+          name: native-linux-build-evidence
+          path: |
+            .downloads/remote-webrtc-linux/checkout/src/out/home_tunnel/remote-build.log
+            outputs/native-linux-build/linux-xvfb-evidence.json
+          if-no-files-found: ignore
+          retention-days: 14

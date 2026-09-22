@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "status": "build-recipe-awaiting-full-native-linux-acceptance",
+  "upstream_lock_sha256": "f0b0e46823e19a989fa14fece5d243be35939e742b247e77f45c6a17c714585d",
+  "target_os": "linux",
+  "target_cpu": "x64",
+  "baseline": "Ubuntu 24.04 x86_64; native Xorg with active unlocked local logind session",
+  "gn_args": {
+    "rtc_use_x11": true,
+    "rtc_use_pipewire": false,
+    "use_sysroot": false
+  },
+  "permissions": [
+    "view",
+    "input.keyboard",
+    "input.pointer"
+  ],
+  "test_scope": "Separate HT_RD_X11_TESTING binary only, isolated Xvfb capture/codec/input tests. Physical Xorg, Wayland, audio, Unicode text, clipboard and files are not accepted."
+}
