@@ -90,6 +90,59 @@ class ReleasePolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, 'Packaged native worker'):
                 module.verify_remote_evidence(directory, '6.0.1', 'revision')
 
+    def sdk_fixture(self, directory):
+        provenance, _ = self.remote_fixture(directory)
+        root = module.ROOT / 'native/remote'
+        lock = json.loads((root / 'remote-deps.lock.json').read_text())
+        payloads = {'lib/webrtc.lib': b'real library is built separately, this is only a policy fixture',
+                    'include/webrtc/api/peer_connection_interface.h': b'header fixture',
+                    'native/include/home_tunnel/remote.h': (root / 'include/home_tunnel/remote.h').read_bytes(),
+                    'remote-deps.lock.json': (root / 'remote-deps.lock.json').read_bytes(),
+                    'remote-source-manifest.json': (directory / 'remote-source-manifest.json').read_bytes(),
+                    'WEBRTC-THIRD-PARTY-NOTICES.md': b'fixture notices'}
+        for item in lock['patches']: payloads[item['path']] = (root / item['path']).read_bytes()
+        name = 'HomeTunnel-Remote-SDK-6.0.1-windows-x64.zip'
+        (directory / 'WEBRTC-THIRD-PARTY-NOTICES.md').write_bytes(payloads['WEBRTC-THIRD-PARTY-NOTICES.md'])
+        self.write_sdk(directory / name, payloads)
+        evidence = {'schema_version': 1, 'version': '6.0.1', 'repository_revision': 'revision',
+                    'source_modified': False, 'target_os': 'win', 'target_cpu': 'x64', 'abi_version': 1,
+                    'engine': provenance['engine'],
+                    'archive': {'name': name, 'sha256': hashlib.sha256((directory / name).read_bytes()).hexdigest()},
+                    'library': {'name': 'lib/webrtc.lib', 'sha256': hashlib.sha256(payloads['lib/webrtc.lib']).hexdigest(),
+                                'bytes': len(payloads['lib/webrtc.lib'])},
+                    'source_manifest_sha256': provenance['source_manifest_sha256'], 'notices_sha256': provenance['notices_sha256']}
+        (directory / 'remote-sdk-provenance.json').write_text(json.dumps(evidence))
+        return payloads, evidence
+
+    def write_sdk(self, path, payloads):
+        with zipfile.ZipFile(path, 'w') as bundle:
+            for name, data in payloads.items(): bundle.writestr(name, data)
+
+    def test_native_sdk_requires_exact_library_patches_abi_and_source_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.sdk_fixture(directory)
+            module.verify_remote_sdk(directory, '6.0.1', 'revision')
+            patch_path = json.loads((module.ROOT / 'native/remote/remote-deps.lock.json').read_text())['patches'][0]['path']
+            for field in ('lib/webrtc.lib', 'native/include/home_tunnel/remote.h', 'remote-deps.lock.json',
+                          'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', patch_path):
+                with self.subTest(field=field):
+                    payloads, evidence = self.sdk_fixture(directory)
+                    payloads[field] += b'changed'
+                    archive = directory / evidence['archive']['name']
+                    self.write_sdk(archive, payloads)
+                    # Even an archive re-sealed after tampering must fail its inner source/library checks.
+                    evidence['archive']['sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    (directory / 'remote-sdk-provenance.json').write_text(json.dumps(evidence))
+                    with self.assertRaises(SystemExit): module.verify_remote_sdk(directory, '6.0.1', 'revision')
+            payloads, evidence = self.sdk_fixture(directory)
+            payloads.pop('include/webrtc/api/peer_connection_interface.h')
+            archive = directory / evidence['archive']['name']
+            self.write_sdk(archive, payloads)
+            evidence['archive']['sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
+            (directory / 'remote-sdk-provenance.json').write_text(json.dumps(evidence))
+            with self.assertRaisesRegex(SystemExit, 'public headers'): module.verify_remote_sdk(directory, '6.0.1', 'revision')
+
     def test_view_only_dirty_stale_or_failed_native_runs_block_publication(self):
         changes = [
             lambda p, r: r['input'].update(status='not_verified'),

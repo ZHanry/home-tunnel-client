@@ -236,6 +236,12 @@ jobs:
       uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
       with:
         subject-path: windows-defender-scan.json
+    - name: Attest the reusable Windows native dependency and its source identity
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: |
+          outputs/native-windows-build/HomeTunnel-Remote-SDK-*-windows-x64.zip
+          outputs/native-windows-build/remote-sdk-provenance.json
     - name: Stage the public Windows asset set
       shell: pwsh
       run: |
@@ -246,6 +252,7 @@ jobs:
         Copy-Item windows-exe-smoke.json, windows-defender-scan.json, windows-installer-smoke.json, agent-provenance.json, agent-provenance.json.sigstore.json release-windows
         Copy-Item outputs/windows/windows-platform-signing.json release-windows
         Copy-Item outputs/windows/remote-host-provenance.json, outputs/windows/remote-host-build.json, outputs/windows/remote-source-manifest.json, outputs/windows/WEBRTC-THIRD-PARTY-NOTICES.md release-windows
+        Copy-Item outputs/native-windows-build/HomeTunnel-Remote-SDK-*-windows-x64.zip, outputs/native-windows-build/remote-sdk-provenance.json release-windows
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: windows-release

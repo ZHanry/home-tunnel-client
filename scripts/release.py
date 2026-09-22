@@ -67,7 +67,8 @@ def required_assets(directory, *, for_publication=True):
         expected = [f"HomeTunnel-Setup-{version}-x64.exe", f"HomeTunnel-Windows-{version}-x64.zip"]
         expected += [f"home-tunnel-{platform}-{version}-{arch}.tar.gz" for platform in ("linux","macos") for arch in ("amd64","arm64")]
         expected += ["agent-provenance.json", "windows-defender-scan.json", "windows-installer-smoke.json",
-                     "remote-host-provenance.json", "remote-host-build.json", "remote-source-manifest.json"]
+                     "remote-host-provenance.json", "remote-host-build.json", "remote-source-manifest.json",
+                     f"HomeTunnel-Remote-SDK-{version}-windows-x64.zip", "remote-sdk-provenance.json"]
         if for_publication:
             expected.append("windows-remote-native-acceptance.json")
     elif COMPONENT == "android":
@@ -83,6 +84,7 @@ def required_assets(directory, *, for_publication=True):
             raise SystemExit(f"Missing release asset: {name}")
     if COMPONENT == "client":
         verify_windows_evidence(directory, version, SHA)
+        verify_remote_sdk(directory, version, SHA)
         if for_publication:
             verify_remote_evidence(directory, version, SHA)
         else:
@@ -237,6 +239,56 @@ def verify_remote_evidence(directory, version, revision):
             media.get('closed') is not False or media.get('dtls_state') != 'connected' or
             type(media.get('frames_decoded')) is not int or media['frames_decoded'] < 5 or media.get('failures') != []):
         raise SystemExit('Native acceptance does not prove continuing authenticated UDP video')
+
+
+def verify_remote_sdk(directory, version, revision):
+    """Bind the reusable native dependency to the same reviewed source and lock."""
+    import zipfile
+    evidence = json.loads((directory / 'remote-sdk-provenance.json').read_text(encoding='utf-8'))
+    lock_bytes = (ROOT / 'native/remote/remote-deps.lock.json').read_bytes()
+    dependency = json.loads(lock_bytes)
+    expected = {'schema_version': 1, 'version': version, 'repository_revision': revision,
+                'source_modified': False, 'target_os': 'win', 'target_cpu': 'x64', 'abi_version': 1}
+    if (any(evidence.get(key) != value or type(evidence.get(key)) is not type(value) for key, value in expected.items()) or
+            evidence.get('engine') != {'revision': dependency['webrtc']['revision'],
+                                       'lock_sha256': hashlib.sha256(lock_bytes).hexdigest()}):
+        raise SystemExit('Native SDK source, target or dependency identity mismatch')
+    name = f'HomeTunnel-Remote-SDK-{version}-windows-x64.zip'
+    archive = evidence.get('archive', {})
+    with (directory / name).open('rb') as stream:
+        if archive.get('name') != name or hashlib.file_digest(stream, 'sha256').hexdigest() != archive.get('sha256'):
+            raise SystemExit('Native SDK archive differs from its recorded bytes')
+    library = evidence.get('library', {})
+    if library.get('name') != 'lib/webrtc.lib' or type(library.get('bytes')) is not int or library['bytes'] < 1:
+        raise SystemExit('Native SDK library identity is missing')
+    with zipfile.ZipFile(directory / name) as bundle:
+        validate_windows_archive(bundle)
+        names = set(bundle.namelist())
+        required = {'lib/webrtc.lib', 'include/webrtc/api/peer_connection_interface.h',
+                    'native/include/home_tunnel/remote.h', 'remote-deps.lock.json',
+                    'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md'}
+        if not required.issubset(names):
+            raise SystemExit('Native SDK library, public headers or notices are missing')
+        if bundle.getinfo('lib/webrtc.lib').file_size != library['bytes']:
+            raise SystemExit('Native SDK library size differs')
+        with bundle.open('lib/webrtc.lib') as stream:
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != library.get('sha256'):
+                raise SystemExit('Native SDK library digest differs')
+        expected_files = {'remote-deps.lock.json': lock_bytes,
+                          'native/include/home_tunnel/remote.h': (ROOT / 'native/remote/include/home_tunnel/remote.h').read_bytes()}
+        for patch in dependency['patches']:
+            data = (ROOT / 'native/remote' / patch['path']).read_bytes()
+            if hashlib.sha256(data).hexdigest() != patch['sha256']:
+                raise SystemExit('Native SDK patch lock is invalid')
+            expected_files[patch['path']] = data
+        for path, data in expected_files.items():
+            if path not in names or bundle.read(path) != data:
+                raise SystemExit('Native SDK ABI, dependency lock or reviewed patch differs')
+        for path, field in (('remote-source-manifest.json', 'source_manifest_sha256'),
+                            ('WEBRTC-THIRD-PARTY-NOTICES.md', 'notices_sha256')):
+            data = bundle.read(path)
+            if data != (directory / path).read_bytes() or hashlib.sha256(data).hexdigest() != evidence.get(field):
+                raise SystemExit('Native SDK source manifest or notices differ from the worker build')
 
 def seal(*, for_publication=True):
     directory = ROOT / "release"
