@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -123,5 +124,19 @@ func TestFileEventsStayLocalAndCannotChangeTransferIdentity(t *testing.T) {
 	}
 	if !s.FileState().Items[0].MayBeSaved {
 		t.Fatal("commit uncertainty was hidden")
+	}
+}
+
+func TestFileMetadataPreservesWindowsUnicodeNames(t *testing.T) {
+	s, r, _ := fileFixture(t)
+	for _, name := range []string{strings.Repeat("文", 200) + ".txt", strings.Repeat("🙂", 125) + ".txt"} {
+		if err := s.fileEvent(r.Session.SessionRef, FileEvent{Event: "offer", ID: randomID(), Name: name, Size: 1}); err != nil {
+			t.Fatal("valid Unicode name rejected", err)
+		}
+	}
+	for _, name := range []string{strings.Repeat("🙂", 126) + ".txt", strings.Repeat("文", 256), "../private.txt"} {
+		if err := s.fileEvent(r.Session.SessionRef, FileEvent{Event: "offer", ID: randomID(), Name: name, Size: 1}); err == nil {
+			t.Fatal("invalid name accepted")
+		}
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unicode/utf16"
+	"unicode/utf8"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -84,7 +86,7 @@ func runDialog(ctx context.Context, suggested string, multiple bool) ([]string, 
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if strings.ContainsAny(suggested, "\\/\x00") || len(suggested) > 255 {
+	if strings.ContainsAny(suggested, "\\/\x00") || len(suggested) > 1020 || !utf8.ValidString(suggested) || len(utf16.Encode([]rune(suggested))) > 255 {
 		return nil, errors.New("RD_FILE_NAME_INVALID")
 	}
 	runtime.LockOSThread()

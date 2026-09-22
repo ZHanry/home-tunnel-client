@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -93,7 +94,7 @@ func (s *Service) fileEvent(ref SessionRef, event FileEvent) error {
 	if event.ID == "" && event.Event == "error" && event.Name == "" && event.Size == 0 && event.Offset == 0 && event.ErrorCode != "" && !event.MayBeSaved {
 		event.ID = randomID()
 	}
-	if !fileUUID.MatchString(event.ID) || event.Size > 8<<30 || event.Offset > event.Size || len(event.Name) > 255 || !utf8.ValidString(event.Name) || strings.ContainsAny(event.Name, "\\/\x00\r\n") {
+	if !fileUUID.MatchString(event.ID) || event.Size > 8<<30 || event.Offset > event.Size || len(event.Name) > 1020 || !utf8.ValidString(event.Name) || len(utf16.Encode([]rune(event.Name))) > 255 || strings.ContainsAny(event.Name, "\\/\x00\r\n") {
 		return ErrAuthorization
 	}
 	if !slices.Contains([]string{"offer", "progress", "complete", "cancelled", "error"}, event.Event) {
