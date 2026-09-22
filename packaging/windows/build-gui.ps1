@@ -2,7 +2,7 @@
 # Requires Go 1.26+. Prefer packaging/windows/build-release.ps1 for the zip.
 
 param(
-    [string]$Version = "8.0.0",
+    [string]$Version = "8.0.0-rc.1",
     [string]$OutputDir = "",
     [string]$WindRes = $env:HOME_TUNNEL_WINDRES,
     [string]$AgentVersion = "",
@@ -16,11 +16,13 @@ if (-not $OutputDir) {
 }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 if (-not $WindRes -or -not (Test-Path -LiteralPath $WindRes -PathType Leaf)) { throw 'Pass the pinned windres executable to embed the application icon' }
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must be X.Y.Z' }
+if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta|rc)\.[1-9]\d*)?$') { throw 'Version must be X.Y.Z or X.Y.Z-rc.N/alpha.N/beta.N' }
+$numericVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+$versionFlags = if ($Version.Contains('-')) { '0x2L' } else { '0x0L' }
 $resourceDir = Join-Path $clientDir '.downloads\windows-gui-resources'
 New-Item -ItemType Directory -Force -Path $resourceDir | Out-Null
 $icon = (Join-Path $clientDir 'internal\desktop\icon.ico').Replace('\','/')
-$numbers = $Version.Replace('.', ',') + ',0'
+$numbers = $numericVersion.Replace('.', ',') + ',0'
 $resource = @"
 #include <winver.h>
 1 ICON "$icon"
@@ -28,7 +30,7 @@ $resource = @"
  FILEVERSION $numbers
  PRODUCTVERSION $numbers
  FILEFLAGSMASK 0x3fL
- FILEFLAGS 0x0L
+ FILEFLAGS $versionFlags
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN

@@ -116,7 +116,7 @@ jobs:
       name: Build the native Windows installer and portable archive
       shell: pwsh
       env:
-        VERSION: ${{ needs.metadata.outputs.base-version }}
+        VERSION: ${{ needs.metadata.outputs.version }}
         AGENT_VERSION: ${{ steps.agent.outputs.agent_version }}
         WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
         WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
@@ -165,13 +165,13 @@ jobs:
     - name: Scan the actual Windows release files with Microsoft Defender
       shell: pwsh
       env:
-        VERSION: ${{ needs.metadata.outputs.base-version }}
+        VERSION: ${{ needs.metadata.outputs.version }}
       run: |
         .\packaging\windows\scan-release.ps1 -Directory outputs/windows -Version $env:VERSION -ReportPath windows-defender-scan.json -UpdateSignatures
     - name: Verify native installation and uninstallation
       shell: pwsh
       env:
-        VERSION: ${{ needs.metadata.outputs.base-version }}
+        VERSION: ${{ needs.metadata.outputs.version }}
       run: |
         .\packaging\windows\test-installer.ps1 -Installer "$PWD/outputs/windows/HomeTunnel-Setup-$env:VERSION-x64.exe" -PayloadDirectory "$PWD/outputs/windows" -Version $env:VERSION -ReportPath windows-installer-smoke.json
     - name: Generate Windows SPDX SBOM
@@ -273,7 +273,7 @@ jobs:
     - name: Build package once from the tagged commit
       shell: bash
       env:
-        VERSION: ${{ needs.metadata.outputs.base-version }}
+        VERSION: ${{ needs.metadata.outputs.version }}
         ARCH: ${{ matrix.arch }}
         MACOS_DEVELOPER_ID_P12_BASE64: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
         MACOS_DEVELOPER_ID_PASSWORD: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_PASSWORD || '' }}
@@ -290,7 +290,7 @@ jobs:
       shell: bash
       env:
         PLATFORM: ${{ matrix.platform }}
-        VERSION: ${{ needs.metadata.outputs.base-version }}
+        VERSION: ${{ needs.metadata.outputs.version }}
         ARCH: ${{ matrix.arch }}
       run: |
         set -euo pipefail

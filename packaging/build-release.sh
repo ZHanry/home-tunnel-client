@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-version=${VERSION:-8.0.0}
+version=${VERSION:-8.0.0-rc.1}
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "VERSION must be X.Y.Z or X.Y.Z-rc.N" >&2; exit 2; }
 architecture=${ARCH:-$(go env GOARCH)}
 case "$architecture" in
@@ -20,12 +20,12 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 client_dir=$(cd -- "$script_dir/.." && pwd)
 workspace_dir="$client_dir"
 source_version=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' "$client_dir/internal/model/model.go")
-[[ "${version%%-rc.*}" == "$source_version" ]] || { echo "Linux client source version $source_version does not match release version $version" >&2; exit 1; }
+[[ "$version" == "$source_version" ]] || { echo "Linux client source version $source_version does not match release version $version" >&2; exit 1; }
 downloads_dir="$workspace_dir/.downloads"
 output_dir="$workspace_dir/outputs/linux"
 frp_version=0.70.1
 agent_version=$(tr -d '\r' < "$workspace_dir/agent/build-agent.ps1" | sed -n 's/^\$agentVersion = "\([^"]*\)"$/\1/p')
-[[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "unable to read the unified Agent version" >&2; exit 1; }
+[[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] || { echo "unable to read the unified Agent version" >&2; exit 1; }
 [[ "$agent_version" == "$source_version" ]] || { echo "Client and first-party Agent versions must match" >&2; exit 1; }
 frp_commit=fa3bcca2b0c4753cd4f0e2ab189dd6a5a6a15708
 frp_archive="$downloads_dir/frp-$frp_commit.zip"

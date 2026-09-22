@@ -1,6 +1,9 @@
 #define AppName "Home Tunnel"
 #ifndef AppVersion
-  #define AppVersion "8.0.0"
+  #define AppVersion "8.0.0-rc.1"
+#endif
+#ifndef AppNumericVersion
+  #define AppNumericVersion "8.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "."
@@ -10,6 +13,7 @@
 AppId={{8F3C1B2A-7D54-4E19-9A6C-2B0E5D8F4A11}
 AppName={#AppName}
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppNumericVersion}
 AppPublisher=Home Tunnel
 AppPublisherURL=https://github.com/ZHanry/home-tunnel-client
 AppSupportURL=https://github.com/ZHanry/home-tunnel-client/issues

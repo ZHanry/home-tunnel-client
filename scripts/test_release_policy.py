@@ -60,7 +60,12 @@ class ReleasePolicyTests(unittest.TestCase):
                     with self.assertRaises(SystemExit): module.verify_windows_evidence(directory, "6.0.1", "revision")
 
     def test_first_project_version_is_allowed_as_a_test_build(self):
-        self.assertEqual(module.validate_release_tag("v0.1.0-rc.1", "0.1.0", "internal-testing"), ("0.1.0", "1"))
+        self.assertEqual(module.validate_release_tag("v0.1.0-rc.1", "0.1.0-rc.1", "internal-testing"), ("0.1.0", "1"))
+
+    def test_candidate_identity_cannot_change_between_source_and_tag(self):
+        for tag, source in (("v8.0.0-rc.2", "8.0.0-rc.1"), ("v8.0.0", "8.0.0-rc.1"), ("v8.0.0-rc.1", "8.0.0")):
+            with self.subTest(tag=tag, source=source), self.assertRaisesRegex(SystemExit, "source version"):
+                module.validate_release_tag(tag, source, "internal-testing")
 
     def test_internal_testing_cannot_publish_a_stable_tag(self):
         with self.assertRaisesRegex(SystemExit, "prereleases only"):

@@ -6,7 +6,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Installer version must be X.Y.Z' }
+if ($Version -notmatch '^(\d+\.\d+\.\d+)(?:-rc\.[1-9]\d*)?$') { throw 'Installer version must be X.Y.Z or X.Y.Z-rc.N' }
+$numericVersion = $Matches[1]
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
 $compiler = (Resolve-Path -LiteralPath $IsccPath).Path
 $clientDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -22,7 +23,7 @@ Copy-Item -LiteralPath (Join-Path $clientDir 'packaging\nas') -Destination (Join
 foreach ($name in @('FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt')) {
     Copy-Item -LiteralPath (Join-Path $clientDir "agent\$name") -Destination (Join-Path $SourceDir $name) -Force
 }
-& $compiler '/Qp' "/DAppVersion=$Version" "/DSourceDir=$SourceDir" (Join-Path $PSScriptRoot 'HomeTunnel.iss')
+& $compiler '/Qp' "/DAppVersion=$Version" "/DAppNumericVersion=$numericVersion" "/DSourceDir=$SourceDir" (Join-Path $PSScriptRoot 'HomeTunnel.iss')
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed: $LASTEXITCODE" }
 $setup = Join-Path $SourceDir "HomeTunnel-Setup-$Version-x64.exe"
 if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Compiled installer is missing' }

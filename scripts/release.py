@@ -35,7 +35,7 @@ def validate_release_tag(tag, source_version, stage):
     if not match:
         raise SystemExit("Release tags must be vX.Y.Z or vX.Y.Z-rc.N")
     version, candidate = match.groups()
-    if version != source_version:
+    if tag.removeprefix("v") != source_version:
         raise SystemExit("Tag does not match this component's source version")
     if stage == "internal-testing" and candidate is None:
         raise SystemExit("Internal testing publishes prereleases only; use vX.Y.Z-rc.N")

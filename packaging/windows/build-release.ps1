@@ -1,6 +1,6 @@
 # Builds the unified Windows x64 desktop package: home-tunnel-gui.exe + Agent.
 param(
-    [string]$Version = "8.0.0",
+    [string]$Version = "8.0.0-rc.1",
     [string]$WindRes = "",
     [string]$OutputDir = "",
     [string]$IsccPath = $env:HOME_TUNNEL_ISCC
@@ -26,7 +26,7 @@ $agentLines = if ($WindRes) {
 }
 $agentLines | ForEach-Object { Write-Host $_ }
 $agentVersion = ($agentLines | Where-Object { $_ -like "AGENT_VERSION=*" } | Select-Object -First 1) -replace "^AGENT_VERSION=", ""
-if ($agentVersion -notmatch "^\d+\.\d+\.\d+$") {
+if ($agentVersion -notmatch '^\d+\.\d+\.\d+(?:-rc\.[1-9]\d*)?$') {
     throw "Agent version missing from build-agent.ps1"
 }
 $agentSha = ($agentLines | Where-Object { $_ -like "AGENT_SHA256=*" } | Select-Object -First 1) -replace "^AGENT_SHA256=", ""

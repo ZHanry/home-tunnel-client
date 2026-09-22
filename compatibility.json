@@ -4,12 +4,12 @@
   "api_major": 1,
   "contract_ref": "api-v1.1.0",
   "support_policy": "8.0 development line; prereleases only. Existing tunnels retain server 7.0 compatibility. Remote desktop requires negotiated capabilities and remains unavailable until a usable native media backend is integrated and verified. FRP follows its separate upstream version.",
-  "version": "8.0.0",
+  "version": "8.0.0-rc.1",
   "minimum_server": "7.0.0",
   "tested_combination": {
-    "server": "8.0.0",
-    "client": "8.0.0",
-    "android": "8.0.0",
-    "agent": "8.0.0"
+    "server": "8.0.0-rc.1",
+    "client": "8.0.0-rc.1",
+    "android": "8.0.0-rc.1",
+    "agent": "8.0.0-rc.1"
   }
 }
