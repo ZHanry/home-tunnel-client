@@ -41,6 +41,8 @@ else:
         assert (root / "agent/go.mod").exists(), "The FRP source must be isolated from the GUI/CLI module"
         assert (root / "internal/app/app.go").exists()
         assert (root / "tests/browser/desktop.spec.mjs").exists()
+        version = re.search(r'const Version = "([^"]+)"', (root / "internal/model/model.go").read_text(encoding="utf-8")).group(1)
+        assert f'HOST_VERSION = "{version}"' in (root / "native/remote/generated/host_version.hpp").read_text(), "Native host version drift"
     elif component == "android":
         build = (root / "app/build.gradle.kts").read_text()
         assert 'applicationId = "io.github.zhanry.hometunnel"' in build

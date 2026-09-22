@@ -11,7 +11,7 @@ $numericVersion = $Matches[1]
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
 $compiler = (Resolve-Path -LiteralPath $IsccPath).Path
 $clientDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'HomeTunnel.ico', 'platform-signing.json')) {
+foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe', 'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', 'HomeTunnel.ico', 'platform-signing.json')) {
     if (-not (Test-Path -LiteralPath (Join-Path $SourceDir $name) -PathType Leaf)) { throw "Missing installer payload: $name" }
 }
 Copy-Item -LiteralPath (Join-Path $clientDir 'LICENSE') -Destination (Join-Path $SourceDir 'LICENSE.txt') -Force

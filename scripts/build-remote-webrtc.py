@@ -5,10 +5,12 @@ Default action verifies the checked-in source lock. Fetch/build require explicit
 """
 from pathlib import Path
 import argparse
+import ast
 import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -59,6 +61,9 @@ def main():
         parser.error("--media-probe requires --build or --build-existing")
     lock_bytes = (NATIVE / "remote-deps.lock.json").read_bytes()
     lock = json.loads(lock_bytes)
+    version = re.search(r'const Version = "([^"]+)"', (ROOT / "internal/model/model.go").read_text(encoding="utf-8")).group(1)
+    if f'HOST_VERSION = "{version}"' not in (NATIVE / "generated/host_version.hpp").read_text():
+        raise SystemExit("Native host version differs from the client")
     for name, expected in [("DEPS", lock["webrtc"]["deps_sha256"]), ("WEBRTC-LICENSE", lock["webrtc"]["license_sha256"])]:
         if hashlib.sha256((NATIVE / "upstream" / name).read_bytes()).hexdigest() != expected:
             raise SystemExit("Checked-in upstream snapshot differs from the reviewed lock")
@@ -144,6 +149,7 @@ def main():
             raise SystemExit("Locked WebRTC requires Windows SDK " + lock["toolchain"]["windows_sdk_version"] + "; use prepare-remote-windows-sdk.py for an isolated SDK")
     (build / "args.gn").write_text("\n".join(f"{name} = {json.dumps(value)}" for name, value in gn_args.items()) + "\n", encoding="utf-8")
     gn = source / "buildtools" / {"Windows": "win", "Linux": "linux64", "Darwin": "mac"}[platform.system()] / ("gn.exe" if os.name == "nt" else "gn")
+    env["PATH"] = str(gn.parent) + os.pathsep + env["PATH"]
     gn_command = [gn, "gen", build]
     targets = ["webrtc"]
     if args.media_probe:
@@ -157,6 +163,8 @@ def main():
                     shutil.copyfile(path, destination)
         gn_command += ["--root-target=//home_tunnel_remote/webrtc"]
         targets += ["home_tunnel_webrtc_probe", "home_tunnel_authorization_tests"]
+        if target == "win":
+            targets += ["home_tunnel_remote_host", "home_tunnel_input_guard_tests"]
     run(gn_command, source, env)
     print(f"Building with {args.jobs} jobs; compiler output: {build / 'remote-build.log'}", flush=True)
     with (build / "remote-build.log").open("w", encoding="utf-8") as log:
@@ -174,6 +182,38 @@ def main():
     if args.media_probe:
         auth_tests = build / ("home_tunnel_authorization_tests.exe" if target == "win" else "home_tunnel_authorization_tests")
         run([auth_tests, NATIVE / "generated/remote-authorization-vectors.json"], build, env)
+        if target == "win":
+            run([build / "home_tunnel_input_guard_tests.exe"], build, env)
+            host = build / "home_tunnel_remote_host.exe"
+            revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+            modified = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
+            host_manifest = {"schema_version": 1, "status": "built-acceptance-required", "executable": str(host),
+                             "version": version, "repository_revision": revision, "source_modified": modified,
+                             "target_os": target, "target_cpu": args.target_cpu,
+                             "sha256": hashlib.sha256(host.read_bytes()).hexdigest(),
+                             "webrtc_revision": lock["webrtc"]["revision"],
+                             "deps_lock_sha256": hashlib.sha256(lock_bytes).hexdigest(),
+                             "authorization_tests": "passed", "toolchain": lock["toolchain"]}
+            run([sys.executable, ROOT / "scripts/generate-remote-notices.py", "--source", source,
+                 "--build", build, "--gn", gn], source, env)
+            notices = build / "LICENSE.md"
+            if not notices.is_file():
+                raise SystemExit("Native dependency license bundle was not generated")
+            host_manifest["notices_sha256"] = hashlib.sha256(notices.read_bytes()).hexdigest()
+            # This is data written by gclient, not a Python module to execute.
+            entries_ast = ast.parse((source.parent / ".gclient_entries").read_text(encoding="utf-8"))
+            entries = ast.literal_eval(entries_ast.body[0].value)
+            if not isinstance(entries, dict) or not all(isinstance(k, str) and isinstance(v, str) and v.startswith(("https://", "gs://")) for k, v in entries.items()):
+                raise SystemExit("Unexpected dependency source manifest")
+            entries["src"] = lock["webrtc"]["repository"] + "@" + lock["webrtc"]["revision"]
+            sources = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "revision": revision,
+                       "worker_sha256": host_manifest["sha256"], "deps_lock": lock, "dependency_sources": entries,
+                       "rebuild": "Check out the exact client revision and run scripts/build-native-windows.ps1. The source lock pins WebRTC, its DEPS, depot_tools, SDK packages and the reviewed upstream patch.",
+                       "scope": "Corresponding source locations and build recipes; optional H.264/HEVC are not advertised as verified codecs."}
+            sources_bytes = (json.dumps(sources, indent=2, sort_keys=True) + "\n").encode()
+            (build / "remote-source-manifest.json").write_bytes(sources_bytes)
+            host_manifest["source_manifest_sha256"] = hashlib.sha256(sources_bytes).hexdigest()
+            (build / "remote-host-build.json").write_text(json.dumps(host_manifest, indent=2) + "\n", encoding="utf-8")
         probe = build / ("home_tunnel_webrtc_probe.exe" if target == "win" else "home_tunnel_webrtc_probe")
         manifest["probe_sha256"] = hashlib.sha256(probe.read_bytes()).hexdigest()
         if args.run_local_probe:

@@ -1,5 +1,7 @@
 #include "session_gate.hpp"
 #include <limits>
+#include <algorithm>
+#include <bit>
 
 namespace ht::rd {
 SessionGate::~SessionGate() { release_inputs(); }
@@ -45,7 +47,8 @@ GateResult SessionGate::tick(uint64_t now) {
     if (closed_) { if(input_releases_pending()) release_inputs(); return GateResult::closed; }
     if (now < last_now_ || now >= deadline_) { close(); return GateResult::expired; }
     last_now_ = now;
-    if (input_enabled_ && now - heartbeat_at_ >= protocol::INPUT_WATCHDOG_MS) release_inputs();
+    // Reserve one 250 ms host tick for scheduling before the wire deadline.
+    if (input_enabled_ && now - heartbeat_at_ >= protocol::INPUT_WATCHDOG_MS - 250) release_inputs();
     else if (!input_enabled_ && (!pressed_keys_.empty() || !pressed_buttons_.empty())) release_inputs();
     return GateResult::ok;
 }
@@ -87,6 +90,7 @@ GateResult SessionGate::synchronize_input(uint32_t epoch, uint32_t input_epoch, 
     layout_epoch_ = layout;
     display_slot_ = display_slot;
     heartbeat_version_ = 0;
+    motion_id_ = 0;
     heartbeat_at_ = now;
     input_enabled_ = true;
     return GateResult::ok;
@@ -152,6 +156,51 @@ GateResult SessionGate::accept_button(std::span<const uint8_t> bytes, uint64_t n
     }
     input_sequence_ = frame.sequence;
     if (down) pressed_buttons_.insert(button); else pressed_buttons_.erase(button);
+    motion_id_=std::max(motion_id_,read_u32(frame.payload,12));
+    return GateResult::ok;
+}
+GateResult SessionGate::accept_pointer(std::span<const uint8_t> bytes,uint64_t now) {
+    const auto result=tick(now);if(result!=GateResult::ok)return result;
+    if(!input_allowed())return GateResult::state;
+    if(!(permissions_&protocol::PERMISSION_INPUT_POINTER))return GateResult::permission;
+    Frame frame;if(parse_frame(bytes,Channel::motion,epoch_,frame)!=FrameError::ok || frame.type!=protocol::POINTER_ABS)return GateResult::malformed;
+    const auto motion=read_u32(frame.payload,12);
+    if(frame.input_epoch!=input_epoch_ || frame.sequence<=motion_sequence_ || !motion || motion<=motion_id_)return GateResult::replay;
+    if(read_u32(frame.payload,0)!=layout_epoch_ || read_u16(frame.payload,4)!=display_slot_)return GateResult::state;
+    if(!sink_.pointer(display_slot_,read_u16(frame.payload,6),read_u16(frame.payload,8))){release_inputs();return GateResult::backend;}
+    motion_sequence_=frame.sequence;motion_id_=motion;return GateResult::ok;
+}
+GateResult SessionGate::accept_wheel(std::span<const uint8_t> bytes,uint64_t now) {
+    const auto result=tick(now);if(result!=GateResult::ok)return result;
+    if(!input_allowed())return GateResult::state;
+    if(!(permissions_&protocol::PERMISSION_INPUT_POINTER))return GateResult::permission;
+    Frame frame;if(parse_frame(bytes,Channel::input,epoch_,frame)!=FrameError::ok || frame.type!=protocol::WHEEL)return GateResult::malformed;
+    if(frame.input_epoch!=input_epoch_ || frame.sequence<=input_sequence_)return GateResult::replay;
+    if(read_u32(frame.payload,0)!=layout_epoch_ || read_u16(frame.payload,4)!=display_slot_)return GateResult::state;
+    const auto dx=std::bit_cast<int32_t>(read_u32(frame.payload,12)),dy=std::bit_cast<int32_t>(read_u32(frame.payload,16));
+    if(dx < -12000 || dx>12000 || dy < -12000 || dy>12000)return GateResult::malformed;
+    if(!sink_.pointer(display_slot_,read_u16(frame.payload,6),read_u16(frame.payload,8)) || !sink_.wheel(dx,dy)){release_inputs();return GateResult::backend;}
+    input_sequence_=frame.sequence;motion_id_=std::max(motion_id_,read_u32(frame.payload,20));return GateResult::ok;
+}
+GateResult SessionGate::accept_text(std::span<const uint8_t> bytes,uint64_t now) {
+    const auto result=tick(now);if(result!=GateResult::ok)return result;
+    if(!input_allowed())return GateResult::state;
+    if(!(permissions_&protocol::PERMISSION_INPUT_TEXT))return GateResult::permission;
+    Frame frame;if(parse_frame(bytes,Channel::input,epoch_,frame)!=FrameError::ok || frame.type!=protocol::TEXT_COMMIT || frame.payload.size()==20)return GateResult::malformed;
+    if(frame.input_epoch!=input_epoch_ || frame.sequence<=input_sequence_)return GateResult::replay;
+    std::array<uint8_t,16> id{};std::copy_n(frame.payload.begin(),16,id.begin());
+    if(std::all_of(id.begin(),id.end(),[](uint8_t n){return n==0;}))return GateResult::malformed;
+    const auto content=frame.payload.subspan(20);const std::string text(reinterpret_cast<const char*>(content.data()),content.size());
+    const auto prior=text_ids_.find(id);
+    if(prior!=text_ids_.end()){
+        if(prior->second.first!=text)return GateResult::malformed;
+        input_sequence_=frame.sequence;return prior->second.second?GateResult::replay:GateResult::backend;
+    }
+    if(text_ids_.size()>=1024)return GateResult::state;
+    // Reserve before injection: a partial backend failure must never replay text.
+    auto inserted=text_ids_.emplace(id,std::pair{text,false}).first;input_sequence_=frame.sequence;
+    if(!sink_.text(text)){release_inputs();return GateResult::backend;}
+    inserted->second.second=true;
     return GateResult::ok;
 }
 void SessionGate::pause() {
@@ -168,6 +217,8 @@ GateResult SessionGate::reconnect(uint32_t epoch, uint64_t now) {
     authenticated_ = false;
     pair_revision_ = 0;
     input_sequence_ = 0;
+    motion_sequence_ = 0;
+    motion_id_ = 0;
     // Deadline and lease sequence intentionally survive a reconnect.
     return GateResult::ok;
 }

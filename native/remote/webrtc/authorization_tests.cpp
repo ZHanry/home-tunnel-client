@@ -1,4 +1,5 @@
 #include "authorization.hpp"
+#include "peer_identity.hpp"
 #include "json/writer.h"
 #include "openssl/bn.h"
 #include "openssl/ec_key.h"
@@ -51,17 +52,20 @@ struct TestKey {
     record["not_before"]="2026-09-21T00:00:00.000Z";
     record["not_after"]="2026-09-24T00:00:00.000Z";
   }
-  std::string sign(const Json::Value& claims) const {
-    Json::Value header; header["alg"]="ES256"; header["typ"]="ht-rd-keyset+jwt"; header["kid"]=record["kid"];
-    const auto input=encode(json(header))+"."+encode(json(claims));
+  std::array<uint8_t,64> raw_sign(std::span<const uint8_t> input) const {
     std::array<uint8_t,SHA256_DIGEST_LENGTH> digest{};
-    SHA256(reinterpret_cast<const uint8_t*>(input.data()), input.size(), digest.data());
+    SHA256(input.data(), input.size(), digest.data());
     bssl::UniquePtr<ECDSA_SIG> signature(ECDSA_do_sign(digest.data(),digest.size(),secret.get()));
     REQUIRE(signature); const BIGNUM *r=nullptr,*s=nullptr; ECDSA_SIG_get0(signature.get(),&r,&s);
     std::array<uint8_t,64> raw{};
     REQUIRE(BN_bn2bin_padded(raw.data(),32,r));
     REQUIRE(BN_bn2bin_padded(std::span(raw).last<32>().data(),32,s));
-    return input+"."+encode(raw);
+    return raw;
+  }
+  std::string sign(const Json::Value& claims,const char* type="ht-rd-keyset+jwt") const {
+    Json::Value header;header["alg"]="ES256";header["typ"]=type;header["kid"]=record["kid"];
+    const auto input=encode(json(header))+"."+encode(json(claims));
+    return input+"."+encode(raw_sign(std::span(reinterpret_cast<const uint8_t*>(input.data()),input.size())));
   }
 };
 Json::Value keys(const TestKey& key, unsigned version) {
@@ -119,6 +123,67 @@ void keyset_rotation(const Json::Value& vectors) {
   changed=first;changed["keys"][0]["not_before"]="2026-09-21T00:00:00.123456789Z";
   REQUIRE(verify_keyset(json(changed),json(changed),now,verified)==Error::ok);
   changed["keys"][0]["not_before"]="2026-02-30T00:00:00Z";reject(changed);
+}
+void native_identity(const Json::Value& vectors) {
+  const auto now=vectors["reference_time_unix"].asInt64()*1000;
+  TestKey server,host,controller;
+  auto ticket=vectors["valid"]["ticket"]["claims"],lease=vectors["valid"]["lease"]["claims"],grant=vectors["valid"]["grant"]["claims"];
+  for(auto* value:{&ticket,&lease,&grant}) {
+    (*value)["host_jkt"]=host.record["kid"];(*value)["controller_jkt"]=controller.record["kid"];
+  }
+  auto keyset=vectors["keyset"];keyset["active_kid"]=server.record["kid"];keyset["keys"][0]=server.record;
+  Json::Value request;
+  for(const auto name:{"session_id","session_request_id","connection_epoch","grant_id","grant_version","restore_epoch","user_token_version","owner_user_id","host_endpoint_id","controller_endpoint_id"})request[name]=ticket[name];
+  request["origin"]=ticket["iss"];request["host_public_jwk"]=host.record["public_jwk"];
+  request["controller_public_jwk"]=controller.record["public_jwk"];request["local_permissions"]=ticket["permissions"];
+  request["initial_trust_pin"]=keyset;request["server_keyset"]=keyset;request["local_grant_revoked"]=false;
+  request["ticket_jws"]=server.sign(ticket,"ht-rd-ticket+jwt");request["lease_jws"]=server.sign(lease,"ht-rd-lease+jwt");
+  request["grant_jws"]=host.sign(grant,"ht-rd-grant+jwt");
+  auto identity=PeerIdentity::prepare(ticket["session_id"].asString(),ticket["connection_epoch"].asUInt());
+  REQUIRE(identity);request["prepared"]=identity->prepared();
+  auto other=PeerIdentity::prepare(ticket["session_id"].asString(),ticket["connection_epoch"].asUInt());
+  REQUIRE(other && other->prepared()!=identity->prepared());
+  VerifiedLease verified;auto invalid=request;invalid["prepared"]=other->prepared();
+  REQUIRE(identity->authorize(invalid,now,15,verified)==Error::identity);
+  invalid=request;invalid["local_grant_revoked"]=true;
+  REQUIRE(identity->authorize(invalid,now,15,verified)==Error::identity);
+  REQUIRE(identity->authorize(request,now,1,verified)==Error::permission);
+  REQUIRE(identity->authorize(request,now,15,verified)==Error::ok);
+  REQUIRE(identity->authorize(request,now,15,verified)==Error::identity);
+  auto envelope=[&](const char* kind,unsigned sequence,const Json::Value& payload,bool local) {
+    Json::Value claims;claims["v"]=1;claims["type"]=kind;claims["session_id"]=ticket["session_id"];
+    claims["connection_epoch"]=ticket["connection_epoch"];claims["ticket_jti"]=ticket["jti"];
+    claims["from_endpoint_id"]=ticket[local?"host_endpoint_id":"controller_endpoint_id"];
+    claims["to_endpoint_id"]=ticket[local?"controller_endpoint_id":"host_endpoint_id"];
+    claims["created_at"]="2026-09-22T00:02:00.000Z";claims["seq"]=std::to_string(sequence);claims["payload"]=payload;
+    Json::Value outer;for(const auto name:{"v","type","session_id","connection_epoch"})outer[name]=claims[name];
+    outer["payload_jws"]=(local?host:controller).sign(claims,"ht-rd-peer+jwt");return outer;
+  };
+  Json::Value offer;offer["type"]="offer";offer["sdp"]="test-offer";Json::Value extracted;
+  auto remote=envelope("peer.offer",1,offer,false);
+  REQUIRE(identity->peer_signal(remote,now,extracted)==Error::ok && extracted==offer);
+  REQUIRE(identity->peer_signal(remote,now,extracted)==Error::identity);
+  Json::Value answer;answer["type"]="answer";answer["sdp"]="test-answer";identity->expect_answer(answer);
+  auto wrong=answer;wrong["sdp"]="substituted";
+  REQUIRE(identity->signed_answer(envelope("peer.answer",1,wrong,true),now)==Error::identity);
+  REQUIRE(identity->signed_answer(envelope("peer.answer",1,answer,true),now)==Error::ok);
+  auto hello=identity->hello_body();std::array<uint8_t,32> controller_nonce{};controller_nonce.fill(19);
+  hello["nonce"]=encode(controller_nonce);std::vector<uint8_t> transcript;
+  wrong=hello;wrong["ticket_hash"]=encode(controller_nonce);
+  REQUIRE(identity->hello(wrong,transcript)==Error::identity && transcript.empty());
+  REQUIRE(identity->hello(hello,transcript)==Error::ok && transcript.size()==222);
+  Json::Value proof;proof["transcript_version"]=1;proof["jkt"]=controller.record["kid"];
+  proof["signature"]=encode(host.raw_sign(transcript));
+  REQUIRE(identity->controller_proof(proof)==Error::signature);
+  proof["signature"]=encode(controller.raw_sign(transcript));REQUIRE(identity->controller_proof(proof)==Error::ok);
+  REQUIRE(!identity->authenticated());
+  REQUIRE(identity->host_proof(controller.raw_sign(transcript))==Error::signature);
+  REQUIRE(identity->host_proof(host.raw_sign(transcript))==Error::ok && identity->authenticated());
+  REQUIRE(identity->host_proof(host.raw_sign(transcript))==Error::identity);
+  REQUIRE(identity->controller_proof(proof)==Error::identity);
+  lease["lease_seq"]=2;Json::Value renewal;renewal["server_keyset"]=keyset;renewal["lease_jws"]=server.sign(lease,"ht-rd-lease+jwt");
+  REQUIRE(identity->renew(renewal,now,verified)==Error::ok && verified.sequence==2);
+  REQUIRE(identity->renew(renewal,now,verified)==Error::expired);
 }
 std::string compact(const Json::Value& value) {
   const auto& parts = value["jws_parts"];
@@ -191,6 +256,6 @@ int main(int argc,char** argv) {
 #pragma clang unsafe_buffer_usage end
   const std::string text((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
   Json::Value vectors;REQUIRE(strict_json(text,vectors));
-  strict_parser();authorization(vectors);keyset_rotation(vectors);
+  strict_parser();authorization(vectors);keyset_rotation(vectors);native_identity(vectors);
   std::puts("Native authorization: strict JSON, public JWK, raw ES256, signed binding negatives, permission/lease limits and signed keyset rotation passed");
 }

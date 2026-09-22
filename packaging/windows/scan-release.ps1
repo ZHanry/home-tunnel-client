@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $directoryPath = (Resolve-Path -LiteralPath $Directory).Path
-$subjects = @("HomeTunnel-Setup-$Version-x64.exe", "HomeTunnel-Windows-$Version-x64.zip", 'home-tunnel-gui.exe', 'home-tunnel-agent.exe')
+$subjects = @("HomeTunnel-Setup-$Version-x64.exe", "HomeTunnel-Windows-$Version-x64.zip", 'home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe')
 $scanner = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
 if (-not (Test-Path -LiteralPath $scanner -PathType Leaf)) { throw 'Microsoft Defender scanner is missing' }
 # Hosted runners may leave the installed service stopped. Start protection only

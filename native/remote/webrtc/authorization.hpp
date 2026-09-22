@@ -3,6 +3,8 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <span>
+#include <vector>
 #include "json/value.h"
 
 namespace ht::rd::auth {
@@ -29,6 +31,14 @@ struct SigningKey {
 };
 bool strict_json(std::string_view text, Json::Value& value, size_t byte_limit = 65536);
 Error public_key(const Json::Value& jwk, PublicKey& output);
+std::string base64url(std::span<const uint8_t> bytes);
+bool unbase64url(std::string_view text, std::vector<uint8_t>& bytes);
+std::array<uint8_t, 32> digest(std::string_view bytes);
+bool timestamp(const Json::Value& text, int64_t& unix_ms);
+Error verify_signature(std::span<const uint8_t> message, const PublicKey& key,
+                        std::span<const uint8_t> raw_signature);
+Error verify_lease(std::string_view compact, const Json::Value& verified_keyset,
+                    const ExpectedSession& expected, int64_t now_unix_ms, VerifiedLease& output);
 // pinned_json must come from the protected, explicitly approved local trust store.
 // IPC-provided network keysets are never eligible to supply their own trust pin.
 Error verify_keyset(std::string_view pinned_json, std::string_view candidate_json,

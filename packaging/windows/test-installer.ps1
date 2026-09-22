@@ -15,10 +15,12 @@ if (Test-Path -LiteralPath $destination) { throw 'Smoke installation path alread
 $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$destination`"")
 $process = Start-Process -FilePath $Installer -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
-foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'docs\PLATFORM_SECURITY.md')) {
+$installedPayloads = @()
+foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe', 'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'docs\PLATFORM_SECURITY.md')) {
     $installed = (Get-FileHash -LiteralPath (Join-Path $destination $name) -Algorithm SHA256).Hash
     $expected = (Get-FileHash -LiteralPath (Join-Path $PayloadDirectory $name) -Algorithm SHA256).Hash
     if ($installed -ne $expected) { throw "Installed payload mismatch: $name" }
+    $installedPayloads += [ordered]@{ name = $name.Replace('\','/'); sha256 = $installed.ToLowerInvariant() }
 }
 if (Test-Path -LiteralPath (Join-Path $destination 'uninstall.cmd')) { throw 'Legacy batch uninstaller must not be installed' }
 $gui = Join-Path $destination 'home-tunnel-gui.exe'
@@ -81,8 +83,9 @@ $uninstaller = Join-Path $destination 'unins000.exe'
 if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Native uninstaller is missing' }
 $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -WindowStyle Hidden -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Uninstaller exited with $($process.ExitCode)" }
-foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe')) {
+foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe')) {
     if (Test-Path -LiteralPath (Join-Path $destination $name)) { throw "Uninstall left $name behind" }
 }
 $report = @{ schema_version = 1; status = 'passed'; version = $Version; repository_revision = $env:GITHUB_SHA; installer_sha256 = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant(); install = 'passed'; payload_hashes = 'passed'; uninstall = 'passed'; embedded_icon = 'passed'; gui_subsystem = 'passed'; native_window_icon = 'passed' }
-[IO.File]::WriteAllText([IO.Path]::GetFullPath($ReportPath), ($report | ConvertTo-Json) + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+$report.installed_payloads = $installedPayloads
+[IO.File]::WriteAllText([IO.Path]::GetFullPath($ReportPath), ($report | ConvertTo-Json -Depth 5) + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))

@@ -95,4 +95,8 @@ release-notes.md
 
 /windows-defender-scan.json
 /windows-installer-smoke.json
+/agent-baseline.txt
+/agent-provenance.json
+/agent-provenance.json.sigstore.json
+/windows-exe-smoke.json
 /cmd/home-tunnel-gui/*.syso

@@ -33,7 +33,8 @@ jobs:
         go build -ldflags "-H windowsgui" ./cmd/home-tunnel-gui
   windows-agent:
     name: Windows agent official baseline
-    runs-on: windows-latest
+    runs-on: ${{ vars.WINDOWS_NATIVE_RUNNER || 'windows-2022' }}
+    timeout-minutes: 180
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
@@ -127,7 +128,8 @@ jobs:
       shell: pwsh
       run: |
         $version = (Select-String -Path internal/model/model.go -Pattern '^const Version = "([^"]+)"$').Matches.Groups[1].Value
-        .\packaging\windows\build-release.ps1 -Version $version -WindRes $env:HOME_TUNNEL_WINDRES
+        .\scripts\build-native-windows.ps1
+        .\packaging\windows\build-release.ps1 -Version $version -WindRes $env:HOME_TUNNEL_WINDRES -RemoteHostBuild "$PWD/outputs/native-windows-build/remote-host-build.json"
         .\packaging\windows\scan-release.ps1 -Directory outputs/windows -Version $version -ReportPath windows-defender-scan.json -UpdateSignatures
         .\packaging\windows\test-installer.ps1 -Installer "$PWD/outputs/windows/HomeTunnel-Setup-$version-x64.exe" -PayloadDirectory "$PWD/outputs/windows" -Version $version -ReportPath windows-installer-smoke.json
     - name: Preserve Windows verification reports

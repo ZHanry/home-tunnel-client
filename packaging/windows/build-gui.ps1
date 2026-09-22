@@ -6,7 +6,8 @@ param(
     [string]$OutputDir = "",
     [string]$WindRes = $env:HOME_TUNNEL_WINDRES,
     [string]$AgentVersion = "",
-    [string]$ExpectedAgentSHA256 = ""
+    [string]$ExpectedAgentSHA256 = "",
+    [string]$ExpectedRemoteHostSHA256 = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,7 @@ if (-not $WindRes -or -not (Test-Path -LiteralPath $WindRes -PathType Leaf)) { t
 if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta|rc)\.[1-9]\d*)?$') { throw 'Version must be X.Y.Z or X.Y.Z-rc.N/alpha.N/beta.N' }
 $numericVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
 $versionFlags = if ($Version.Contains('-')) { '0x2L' } else { '0x0L' }
+if ($ExpectedRemoteHostSHA256 -and $ExpectedRemoteHostSHA256 -notmatch '^[0-9a-f]{64}$') { throw 'Invalid native host digest' }
 $resourceDir = Join-Path $clientDir '.downloads\windows-gui-resources'
 New-Item -ItemType Directory -Force -Path $resourceDir | Out-Null
 $icon = (Join-Path $clientDir 'internal\desktop\icon.ico').Replace('\','/')
@@ -71,7 +73,7 @@ $env:GOARCH = "amd64"
 $env:GOFLAGS = "-buildvcs=false"
 Push-Location $clientDir
 try {
-    go build -trimpath -ldflags "-s -w -H windowsgui -buildid= -X main.version=$Version -X main.agentVersion=$AgentVersion -X main.expectedAgentSHA256=$ExpectedAgentSHA256" `
+    go build -trimpath -ldflags "-s -w -H windowsgui -buildid= -X main.version=$Version -X main.agentVersion=$AgentVersion -X main.expectedAgentSHA256=$ExpectedAgentSHA256 -X main.expectedRemoteHostSHA256=$ExpectedRemoteHostSHA256" `
         -o (Join-Path $OutputDir "home-tunnel-gui.exe") ./cmd/home-tunnel-gui
     if ($LASTEXITCODE -ne 0) { throw 'Windows GUI build failed' }
 }

@@ -32,7 +32,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\home-tunnel-gui.exe
 WizardStyle=modern
 CloseApplications=yes
-CloseApplicationsFilter=home-tunnel-gui.exe,home-tunnel-agent.exe
+CloseApplicationsFilter=home-tunnel-gui.exe,home-tunnel-agent.exe,home_tunnel_remote_host.exe
 RestartApplications=no
 
 [Languages]
@@ -45,6 +45,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#SourceDir}\home-tunnel-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\home-tunnel-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\home_tunnel_remote_host.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\remote-host-provenance.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\remote-host-build.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\remote-source-manifest.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\WEBRTC-THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\HomeTunnel.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\FRP-LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion

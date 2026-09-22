@@ -3,6 +3,8 @@
 #include <array>
 #include <cstdint>
 #include <set>
+#include <map>
+#include <string>
 #include <string_view>
 
 namespace ht::rd {
@@ -28,6 +30,8 @@ public:
     virtual bool key(uint16_t usage, bool down, bool repeat) = 0;
     virtual bool button(uint8_t button, bool down) = 0;
     virtual bool pointer(uint16_t display_slot, uint16_t x, uint16_t y) = 0;
+    virtual bool wheel(int32_t, int32_t) { return false; }
+    virtual bool text(std::string_view) { return false; }
 };
 class SessionGate {
 public:
@@ -44,14 +48,19 @@ public:
     GateResult heartbeat(uint32_t epoch, uint32_t input_epoch, uint64_t state_version, uint64_t now);
     GateResult accept_key(std::span<const uint8_t> message, uint64_t now);
     GateResult accept_button(std::span<const uint8_t> message, uint64_t now);
+    GateResult accept_pointer(std::span<const uint8_t> message, uint64_t now);
+    GateResult accept_wheel(std::span<const uint8_t> message, uint64_t now);
+    GateResult accept_text(std::span<const uint8_t> message, uint64_t now);
     GateResult tick(uint64_t now);
     GateResult reconnect(uint32_t epoch, uint64_t now);
     void pause();
+    void release_control() { release_inputs(); }
     void close();
     bool media_allowed() const { return !closed_ && authenticated_ && path_verified_; }
     bool input_allowed() const { return media_allowed() && first_frame_ && input_enabled_; }
     uint32_t input_epoch() const { return input_epoch_; }
     uint64_t deadline_ms() const { return deadline_; }
+    uint64_t lease_sequence() const { return lease_sequence_; }
     bool input_releases_pending() const { return !pressed_keys_.empty() || !pressed_buttons_.empty(); }
 private:
     void release_inputs();
@@ -59,9 +68,11 @@ private:
     InputSink& sink_;
     bool closed_ = true, authenticated_ = false, path_verified_ = false, first_frame_ = false, input_enabled_ = false;
     uint32_t epoch_ = 0, input_epoch_ = 0, layout_epoch_ = 0, input_sequence_ = 0;
+    uint32_t motion_sequence_ = 0, motion_id_ = 0;
     uint64_t lease_sequence_ = 0, permissions_ = 0, deadline_ = 0, last_now_ = 0, heartbeat_at_ = 0, heartbeat_version_ = 0, pair_revision_ = 0;
     std::set<uint16_t> pressed_keys_;
     std::set<uint8_t> pressed_buttons_;
+    std::map<std::array<uint8_t,16>,std::pair<std::string,bool>> text_ids_;
     uint16_t display_slot_ = 0;
 };
 }

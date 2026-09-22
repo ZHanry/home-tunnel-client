@@ -24,9 +24,13 @@ struct Sink : InputSink {
     std::vector<std::pair<uint8_t,bool>> buttons;
     uint16_t pointer_x=0, pointer_y=0;
     bool fail = false;
+    unsigned motions=0,wheels=0;
+    std::vector<std::string> texts;
     bool key(uint16_t code, bool down, bool repeat) override { calls.emplace_back(code, down, repeat); return !fail; }
     bool button(uint8_t button, bool down) override { buttons.emplace_back(button,down);return !fail; }
-    bool pointer(uint16_t, uint16_t x, uint16_t y) override { pointer_x=x;pointer_y=y;return !fail; }
+    bool pointer(uint16_t, uint16_t x, uint16_t y) override { ++motions;pointer_x=x;pointer_y=y;return !fail; }
+    bool wheel(int32_t,int32_t) override { ++wheels;return !fail; }
+    bool text(std::string_view value) override { texts.emplace_back(value);return !fail; }
 };
 void put32(std::vector<uint8_t>& bytes, size_t offset, uint32_t value) {
     for (unsigned n=0; n<4; ++n) bytes[offset+n] = static_cast<uint8_t>(value >> (24-n*8));
@@ -69,8 +73,8 @@ void watchdog_and_epoch() {
     Sink sink;SessionGate session(sink);ready(session);
     CHECK(session.accept_key(key(),1001)==GateResult::ok);
     CHECK(sink.calls.size()==1);
-    CHECK(session.tick(2999)==GateResult::ok);CHECK(session.input_allowed());
-    CHECK(session.tick(3000)==GateResult::ok);CHECK(!session.input_allowed());
+    CHECK(session.tick(2749)==GateResult::ok);CHECK(session.input_allowed());
+    CHECK(session.tick(2750)==GateResult::ok);CHECK(!session.input_allowed());
     CHECK(sink.calls.size()==2 && !std::get<1>(sink.calls.back()));
     CHECK(session.accept_key(key(1,1,2),3001)==GateResult::state);
     CHECK(session.synchronize_input(1,1,1,3002)==GateResult::state);
@@ -109,6 +113,38 @@ void button_coordinates_and_watchdog() {
     CHECK(session.tick(3000)==GateResult::ok);
     CHECK(sink.buttons.size()==2 && !sink.buttons.back().second);
     CHECK(session.accept_button(bytes,3001)==GateResult::state);
+}
+void pointer_wheel_text_and_release() {
+    Sink sink;SessionGate session(sink);ready(session,1000,15);
+    const auto make=[](uint8_t type,uint32_t length,uint32_t sequence) {
+        auto value=key(1,1,sequence);value.resize(24);value.resize(24+length,0);value[3]=type;put32(value,20,length);return value;
+    };
+    auto motion=make(protocol::POINTER_ABS,16,1);put32(motion,24,1);motion[30]=0x80;motion[32]=0x40;put32(motion,36,1);
+    CHECK(session.accept_pointer(motion,1001)==GateResult::ok && sink.pointer_x==32768 && sink.motions==1);
+    CHECK(session.accept_pointer(motion,1002)==GateResult::replay && sink.motions==1);
+    auto wheel=make(protocol::WHEEL,24,1);put32(wheel,24,1);put32(wheel,36,120);put32(wheel,40,static_cast<uint32_t>(-120));put32(wheel,44,2);
+    CHECK(session.accept_wheel(wheel,1003)==GateResult::ok && sink.wheels==1);
+    put32(motion,16,2);CHECK(session.accept_pointer(motion,1004)==GateResult::replay);
+    put32(motion,36,3);CHECK(session.accept_pointer(motion,1005)==GateResult::ok);
+    const std::string content="\xe4\xb8\xad\xe6\x96\x87";
+    auto text=make(protocol::TEXT_COMMIT,static_cast<uint32_t>(20+content.size()),2);
+    text[24]=1;put32(text,40,static_cast<uint32_t>(content.size()));std::copy(content.begin(),content.end(),text.begin()+44);
+    CHECK(session.accept_text(text,1006)==GateResult::ok && sink.texts.size()==1 && sink.texts[0]==content);
+    put32(text,16,3);CHECK(session.accept_text(text,1007)==GateResult::replay && sink.texts.size()==1);
+    auto changed=text;put32(changed,16,4);changed.back()=0x80;
+    CHECK(session.accept_text(changed,1008)==GateResult::malformed && sink.texts.size()==1);
+    session.release_control();CHECK(session.media_allowed() && !session.input_allowed());
+    CHECK(session.synchronize_input(1,2,1,1009)==GateResult::ok);
+    put32(motion,12,2);put32(motion,16,3);put32(motion,36,1);
+    CHECK(session.accept_pointer(motion,1009)==GateResult::ok);
+    put32(text,12,2);put32(text,16,4);CHECK(session.accept_text(text,1010)==GateResult::replay && sink.texts.size()==1);
+    put32(text,16,5);text[24]=2;sink.fail=true;CHECK(session.accept_text(text,1011)==GateResult::backend);
+    sink.fail=false;CHECK(session.synchronize_input(1,3,1,1012)==GateResult::ok);
+    put32(text,12,3);put32(text,16,6);CHECK(session.accept_text(text,1013)==GateResult::backend && sink.texts.size()==2);
+    Sink viewer;SessionGate view(viewer);ready(view,1000,1);
+    CHECK(view.accept_pointer(motion,1001)==GateResult::permission);
+    CHECK(view.accept_wheel(wheel,1001)==GateResult::permission);
+    CHECK(view.accept_text(text,1001)==GateResult::permission && viewer.texts.empty());
 }
 void rejected_release_blocks_reenable() {
     Sink sink;SessionGate session(sink);ready(session);
@@ -215,7 +251,7 @@ void signature_verification() {
 }
 }
 int main() {
-    framing();watchdog_and_epoch();network_gate();button_coordinates_and_watchdog();rejected_release_blocks_reenable();lease_and_isolation();abi_contract();callback_quiescence();transcript();signature_verification();
+    framing();watchdog_and_epoch();network_gate();button_coordinates_and_watchdog();pointer_wheel_text_and_release();rejected_release_blocks_reenable();lease_and_isolation();abi_contract();callback_quiescence();transcript();signature_verification();
 #if defined(_WIN32)
     CHECK(WindowsInputSink::scan_code(4)==0x1e && WindowsInputSink::scan_code(224)==0x1d && WindowsInputSink::scan_code(228)==0xe01d);
     CHECK(WindowsInputSink::scan_code(0)==0 && WindowsInputSink::scan_code(300)==0);

@@ -239,6 +239,13 @@ Error verify_jws(std::string_view compact, const PublicKey& key, std::string_vie
     PublicKey embedded;
     if (public_key(output.header["jwk"], embedded) != Error::ok || embedded.xy != key.xy) return Error::key;
   }
+  const auto error = verify_signature(std::span(reinterpret_cast<const uint8_t*>(compact.data()), second), key, signature);
+  if (error != Error::ok) return error;
+  return strict_json(std::string_view(reinterpret_cast<const char*>(payload.data()), payload.size()), output.claims) ? Error::ok : Error::malformed;
+}
+
+Error verify_signature(std::span<const uint8_t> message, const PublicKey& key, std::span<const uint8_t> signature) {
+  if (message.empty() || message.size() > 65536 || signature.size() != 64) return Error::malformed;
   bssl::UniquePtr<EC_KEY> ec(EC_KEY_new_by_curve_name(NID_X9_62_prime256v1));
   bssl::UniquePtr<BIGNUM> x(BN_bin2bn(key.xy.data(), 32, nullptr)), y(BN_bin2bn(std::span(key.xy).last<32>().data(), 32, nullptr));
   bssl::UniquePtr<ECDSA_SIG> sig(ECDSA_SIG_new());
@@ -247,9 +254,18 @@ Error verify_jws(std::string_view compact, const PublicKey& key, std::string_vie
       !ECDSA_SIG_set0(sig.get(), r.get(), s.get())) return Error::key;
   (void)r.release(); (void)s.release();
   std::array<uint8_t, SHA256_DIGEST_LENGTH> digest{};
-  SHA256(reinterpret_cast<const uint8_t*>(compact.data()), second, digest.data());
+  SHA256(message.data(), message.size(), digest.data());
   if (ECDSA_do_verify(digest.data(), digest.size(), sig.get(), ec.get()) != 1) return Error::signature;
-  return strict_json(std::string_view(reinterpret_cast<const char*>(payload.data()), payload.size()), output.claims) ? Error::ok : Error::malformed;
+  return Error::ok;
+}
+
+std::string base64url(std::span<const uint8_t> bytes) { return encode(bytes); }
+bool unbase64url(std::string_view text, std::vector<uint8_t>& bytes) { return decode(text, bytes); }
+bool timestamp(const Json::Value& value, int64_t& result) { return iso_time(value, result); }
+std::array<uint8_t, 32> digest(std::string_view bytes) {
+  std::array<uint8_t, 32> output{};
+  SHA256(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), output.data());
+  return output;
 }
 
 Error select_signing_key(const Json::Value& keys, std::string_view kid, SigningKey& output) {
@@ -317,6 +333,23 @@ Error verify_keyset(std::string_view pinned_json, std::string_view candidate_jso
       now < active.not_before_unix_ms || now >= active.not_after_unix_ms) return Error::expired;
   verified = candidate;
   return Error::ok;
+}
+
+Error verify_lease(std::string_view compact, const Json::Value& keys,
+                    const ExpectedSession& expected, int64_t now, VerifiedLease& output) {
+  output = {};
+  const auto first = compact.find('.');
+  if (first == std::string_view::npos || first > 2048) return Error::malformed;
+  std::vector<uint8_t> decoded; Json::Value header;
+  if (!decode(compact.substr(0, first), decoded) ||
+      !strict_json(std::string_view(reinterpret_cast<const char*>(decoded.data()), decoded.size()), header) ||
+      !header["kid"].isString()) return Error::malformed;
+  SigningKey signer;
+  if (select_signing_key(keys, header["kid"].asString(), signer) != Error::ok) return Error::key;
+  Jws lease;
+  const auto error = verify_jws(compact, signer.key, "ht-rd-lease+jwt", lease);
+  if (error != Error::ok) return error;
+  return session_claims(lease, expected, signer, now, true, output);
 }
 
 Error verify_authorization(std::string_view ticket, std::string_view lease, std::string_view grant,

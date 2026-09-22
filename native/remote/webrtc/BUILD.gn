@@ -25,15 +25,56 @@ rtc_executable("home_tunnel_webrtc_probe") {
   }
 }
 
+if (is_win) {
+  rtc_executable("home_tunnel_input_guard_tests") {
+    sources = [ "../tests/windows_input_guard_tests.cpp", "../src/platform/windows_input.cpp" ]
+    deps = []
+    libs = [ "user32.lib" ]
+  }
+  rtc_executable("home_tunnel_remote_host") {
+    sources = [
+      "host_worker.cpp",
+      "authorization.cpp",
+      "peer_identity.cpp",
+      "../src/protocol.cpp",
+      "../src/session_gate.cpp",
+      "../src/platform/windows_input.cpp",
+    ]
+    deps = [
+      "//api:create_peerconnection_factory",
+      "//api/audio_codecs:builtin_audio_decoder_factory",
+      "//api/audio_codecs:builtin_audio_encoder_factory",
+      "//api/video:video_broadcaster",
+      "//api/video_codecs:builtin_video_decoder_factory",
+      "//api/video_codecs:builtin_video_encoder_factory",
+      "//modules/desktop_capture:desktop_capture",
+      "//pc:video_track_source",
+      "//rtc_base:logging",
+      "//rtc_base:ssl",
+      "//rtc_base:ssl_adapter",
+      "//rtc_base:threading",
+      "//rtc_base:timeutils",
+      "//rtc_base:win32_socket_init",
+      "//third_party/boringssl",
+      "//third_party/jsoncpp",
+      "//third_party/libyuv",
+    ]
+    libs = [ "ole32.lib", "user32.lib" ]
+  }
+}
+
 rtc_executable("home_tunnel_authorization_tests") {
   sources = [
     "authorization.cpp",
     "authorization.hpp",
     "authorization_tests.cpp",
+    "peer_identity.cpp",
+    "peer_identity.hpp",
     "../src/protocol.cpp",
   ]
   deps = [
     "//third_party/boringssl",
     "//third_party/jsoncpp",
+    "//rtc_base:ssl",
   ]
 }
