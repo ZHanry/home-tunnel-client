@@ -12,14 +12,16 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = Object.create(null);
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i];
-  if (!['--worker', '--sha256', '--server-root', '--report-dir', '--input'].includes(key) || !process.argv[i + 1] || options[key]) {
-    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>] [--input chromium]');
+  if (!['--worker', '--sha256', '--server-root', '--report-dir', '--input', '--codec'].includes(key) || !process.argv[i + 1] || options[key]) {
+    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>] [--input chromium] [--codec H264|VP8]');
     process.exit(2);
   }
   options[key] = process.argv[i + 1];
 }
 const reportDir = resolve(options['--report-dir'] ?? join(root, 'outputs', 'remote-native-acceptance'));
 const withInput = options['--input'] === 'chromium';
+const requestedCodec = options['--codec'] ?? null;
+if (requestedCodec !== null && !['H264', 'VP8'].includes(requestedCodec)) { console.error('Unsupported codec constraint'); process.exit(2); }
 mkdirSync(reportDir, { recursive: true });
 const report = {
   schema: 1, started_at: new Date().toISOString(), status: 'not_verified',
@@ -28,6 +30,7 @@ const report = {
   checks: {}, limitations: ['Cross-network traversal, Android, audio, clipboard, files and input are not established by this run.'],
   input: { status: 'not_verified', reason: withInput ? 'Input acceptance has not completed.' : 'Input acceptance was not requested; no input injection is attempted.' },
   privacy: { screenshots: false, recordings: false, sdp: false, network_addresses: false, credentials: false },
+  requested_codec: requestedCodec,
 };
 let directory, fixture, host, browser, page, target, targetBrowser, targetServer, rpcID = 0, stage = 'preflight';
 const children = [];
@@ -192,7 +195,7 @@ try {
   page = await context.newPage();
   await page.goto(`${initial.origin}/__native-e2e/controller.html`);
   await page.waitForFunction(() => !!window.nativeE2E);
-  const controller = await page.evaluate(value => window.nativeE2E.initialize(value), { account_token: initial.account_token, user_id: initial.user_id, input: withInput });
+  const controller = await page.evaluate(value => window.nativeE2E.initialize(value), { account_token: initial.account_token, user_id: initial.user_id, input: withInput, codec: requestedCodec });
   // Tokens remain exclusively in process memory and in the isolated browser context.
   delete initial.account_token;
   await rpc('bind_controller', controller);
@@ -223,6 +226,12 @@ try {
   requireCheck(verifiedMedia(report.media) && report.media.frames_decoded > first, 'E2E_MEDIA_NOT_CONTINUING');
   report.checks.real_continuing_video = true;
   report.checks.selected_udp_and_dtls = true;
+  report.native_media = (await rpc('diagnostics')).native;
+  if (requestedCodec) {
+    const expectedMime = `video/${requestedCodec}`;
+    requireCheck(report.media.video_codec === expectedMime && report.native_media.video_codec === expectedMime && report.native_media.video_frames_encoded > 0 && typeof report.native_media.video_encoder_implementation === 'string' && report.native_media.video_encoder_implementation.length > 0, 'E2E_REQUESTED_CODEC_NOT_OBSERVED');
+    report.checks.requested_codec_encoded_and_decoded = true;
+  }
   if (withInput) {
     stage = 'input';
     await page.evaluate(() => window.nativeE2E.prepareInput());

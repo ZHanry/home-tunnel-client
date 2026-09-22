@@ -23,8 +23,27 @@ async function deliver(message) {
   await session.onSignal(message);
 }
 window.nativeE2E = {
-  async initialize({ account_token: token, user_id: userID, input: withInput = false }) {
+  async initialize({ account_token: token, user_id: userID, input: withInput = false, codec = null }) {
     permissions = withInput ? ['view', 'input.keyboard', 'input.pointer', 'input.text'] : ['view'];
+    if (codec !== null) {
+      if (!['H264', 'VP8'].includes(codec)) throw new Error('E2E_CODEC_INVALID');
+      // Constrain the real browser offer in this isolated test page. The actual
+      // native encoder, browser decoder, UDP transport and product session run
+      // unchanged; these results cannot be inferred from advertised capability.
+      const NativePeerConnection = window.RTCPeerConnection;
+      window.RTCPeerConnection = class extends NativePeerConnection {
+        addTransceiver(trackOrKind, init) {
+          const transceiver = super.addTransceiver(trackOrKind, init);
+          if (trackOrKind === 'video') {
+            const available = RTCRtpReceiver.getCapabilities('video')?.codecs ?? [];
+            const selected = available.filter(item => item.mimeType.toLowerCase() === `video/${codec.toLowerCase()}` && (codec !== 'H264' || /(?:^|;)\s*profile-level-id=42e01f(?:;|$)/i.test(item.sdpFmtpLine ?? '') && /(?:^|;)\s*packetization-mode=1(?:;|$)/i.test(item.sdpFmtpLine ?? '')));
+            if (!selected.length || typeof transceiver.setCodecPreferences !== 'function') throw new Error('E2E_CODEC_NOT_AVAILABLE');
+            transceiver.setCodecPreferences([...selected, ...available.filter(item => item.mimeType.toLowerCase() === 'video/rtx')]);
+          }
+          return transceiver;
+        }
+      };
+    }
     const account = async (path, options = {}) => {
       const response = await fetch(path, { ...options, redirect: 'error', headers: { 'content-type': 'application/json', ...options.headers, authorization: `Bearer ${token}` } });
       const result = await boundedResponse(response);
@@ -86,6 +105,7 @@ window.nativeE2E = {
     const values = [...stats.values()];
     const transport = values.find(item => item.type === 'transport' && item.selectedCandidatePairId);
     const inbound = values.find(item => item.type === 'inbound-rtp' && item.kind === 'video');
+    const codec = inbound?.codecId ? stats.get(inbound.codecId) : null;
     const candidates = pair ? stats.get(pair.id) : null;
     const local = candidates ? stats.get(candidates.localCandidateId) : null;
     const remote = candidates ? stats.get(candidates.remoteCandidateId) : null;
@@ -94,6 +114,8 @@ window.nativeE2E = {
       input_enabled: session?.inputEnabled === true, connection_state: session?.pc?.connectionState,
       input_epoch: session?.inputEpoch ?? 0,
       dtls_state: transport?.dtlsState, frames_decoded: inbound?.framesDecoded ?? 0, bytes_received: inbound?.bytesReceived ?? 0,
+      video_codec: codec?.mimeType ?? null, video_codec_parameters: codec?.sdpFmtpLine ?? null,
+      video_decoder_implementation: inbound?.decoderImplementation ?? null, video_power_efficient_decoder: inbound?.powerEfficientDecoder ?? null,
       input_frames_sent: session?.sequences.get('input') ?? 0, input_buffered_bytes: session?.channels.get('input')?.bufferedAmount ?? 0,
       local_candidate: local ? { protocol: local.protocol, type: local.candidateType } : null,
       remote_candidate: remote ? { protocol: remote.protocol, type: remote.candidateType } : null };

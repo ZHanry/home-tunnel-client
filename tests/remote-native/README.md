@@ -63,6 +63,13 @@ No screenshots, recordings, SDP, candidate addresses, JWTs, keys or passwords ar
 the report. Real desktop pixels do traverse this local test session; run on a test desktop.
 Without `--input chromium`, input stays `not_verified` and the runner performs no injection.
 Audio, clipboard, files and Android remain outside this report's scope.
+
+Use `--codec H264` or `--codec VP8` for separate baseline codec acceptance. The
+isolated browser page constrains its real video transceiver to that codec (H.264
+uses constrained baseline `42e01f`, packetization mode 1). The report requires
+actual browser decode statistics and matching native encoder statistics. This
+does not mock the media path or establish hardware encoding. Omit the option to
+exercise normal product negotiation.
 This report must not be presented as full 8.0 feature acceptance.
 
 The Go helper is guarded by `windows && remote_native_e2e`; ordinary `go test ./...` and the
