@@ -146,7 +146,7 @@ func dialAddress(endpoint *url.URL, secure bool) string {
 	return net.JoinHostPort(endpoint.Hostname(), port)
 }
 
-func completeHandshake(ctx context.Context, socket net.Conn, endpoint *url.URL, bearerToken string) (*Conn, error) {
+func completeHandshake(ctx context.Context, socket net.Conn, endpoint *url.URL, bearerToken string, subprotocol ...string) (*Conn, error) {
 	deadline := time.Now().Add(handshakeTimeout)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
@@ -167,7 +167,7 @@ func completeHandshake(ctx context.Context, socket net.Conn, endpoint *url.URL, 
 		}
 	}()
 	reader := bufio.NewReaderSize(socket, 4096)
-	err := exchangeHandshake(socket, reader, endpoint, bearerToken)
+	err := exchangeHandshake(socket, reader, endpoint, bearerToken, subprotocol...)
 	close(watcherStop)
 	watcher.Wait()
 	if ctx.Err() != nil {
@@ -182,7 +182,7 @@ func completeHandshake(ctx context.Context, socket net.Conn, endpoint *url.URL, 
 	return &Conn{conn: socket, reader: reader, idleTimeout: defaultIdleTimeout}, nil
 }
 
-func exchangeHandshake(socket net.Conn, reader *bufio.Reader, endpoint *url.URL, bearerToken string) error {
+func exchangeHandshake(socket net.Conn, reader *bufio.Reader, endpoint *url.URL, bearerToken string, subprotocol ...string) error {
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		return fmt.Errorf("generate websocket key: %w", err)
@@ -195,7 +195,12 @@ func exchangeHandshake(socket net.Conn, reader *bufio.Reader, endpoint *url.URL,
 	request.WriteString("Connection: Upgrade\r\n")
 	request.WriteString("Sec-WebSocket-Key: " + key + "\r\n")
 	request.WriteString("Sec-WebSocket-Version: 13\r\n")
-	request.WriteString("Authorization: Bearer " + bearerToken + "\r\n")
+	if bearerToken != "" {
+		request.WriteString("Authorization: Bearer " + bearerToken + "\r\n")
+	}
+	if len(subprotocol) == 1 {
+		request.WriteString("Sec-WebSocket-Protocol: " + subprotocol[0] + "\r\n")
+	}
 	request.WriteString("User-Agent: HomeTunnel-Linux/" + model.Version + "\r\n\r\n")
 	if _, err := io.WriteString(socket, request.String()); err != nil {
 		return fmt.Errorf("send websocket handshake: %w", err)
@@ -215,6 +220,9 @@ func exchangeHandshake(socket net.Conn, reader *bufio.Reader, endpoint *url.URL,
 	}
 	if response.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
 		return errors.New("server returned a mismatched Sec-WebSocket-Accept value")
+	}
+	if len(subprotocol) == 1 && response.Header.Get("Sec-WebSocket-Protocol") != subprotocol[0] {
+		return errors.New("websocket subprotocol mismatch")
 	}
 	return nil
 }
