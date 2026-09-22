@@ -16,7 +16,50 @@ test.beforeEach(async ({ page }) => {
     }),
   );
   await page.route("**/local/state", (route) => route.fulfill({ json: { enrolled: false } }));
+  await page.route("**/local/remote/state", route => route.fulfill({json:{enrolled:false,enabled:false,capabilities:{available:false},pending:[],grants:[]}}));
   await page.goto("/desktop-preview");
+});
+
+test("remote backend stays unavailable and enrollment requires explicit server trust", async ({page}) => {
+  await services(page,undefined);
+  await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));
+  await page.locator("#settings-open").click();
+  await expect(page.locator("#rd-host-status")).toContainText("暂未提供");
+  await expect(page.locator("#rd-host-enable")).toBeDisabled();
+  await expect(page.locator("#rd-host-enroll")).toBeHidden();
+  await page.route("**/local/remote/state",route=>route.fulfill({json:{enrolled:false,enabled:false,capabilities:{available:true,permissions:["view"]},pending:[],grants:[]}}));
+  await page.route("**/local/remote/trust",route=>route.fulfill({json:{origin:"https://server.example",server_instance_id:"server-one",active_kid:"public-key",trust_pin:"a".repeat(64)}}));
+  await page.evaluate(()=>refreshRemoteHost());
+  await expect(page.locator("#rd-host-enroll")).toBeVisible();
+  await page.locator("#rd-host-user").fill("alice"); await page.locator("#rd-host-password").fill("temporary-password");
+  await expect(page.locator("#rd-host-enroll-submit")).toBeDisabled();
+  await page.locator("#rd-host-trust-load").click();
+  await expect(page.locator("#rd-host-trust")).toContainText("https://server.example");
+  await expect(page.locator("#rd-host-enroll-submit")).toBeDisabled();
+  await page.locator("#rd-host-trust-confirm").check();
+  let enrollment;
+  await page.route("**/local/remote/action",route=>{enrollment=route.request().postDataJSON();return route.fulfill({json:{ok:true}});});
+  await page.locator("#rd-host-enroll-submit").click();
+  await expect.poll(()=>enrollment?.action).toBe("enroll");
+  expect(enrollment.trust_pin).toBe("a".repeat(64));
+  await expect(page.locator("#rd-host-password")).toHaveValue("");
+});
+
+test("local approval lists every requested permission and pairing code cannot grant twice", async ({page}) => {
+  const event={kind:"pairing",id:"pair-one",controller_endpoint_id:"controller-a",controller_thumbprint:"public-fingerprint",permissions:["view","audio.microphone","files.send"],mode:"one_session"};
+  await page.route("**/local/remote/state",route=>route.fulfill({json:{enrolled:true,enabled:true,running:true,capabilities:{available:true},pending:[event],grants:[]}}));
+  await services(page,undefined);
+  await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));
+  await page.locator("#settings-open").click();
+  await expect(page.locator("#rd-host-pending")).toContainText("麦克风回传");
+  await expect(page.locator("#rd-host-pending")).toContainText("发送文件到本机");
+  let action;
+  await page.route("**/local/remote/action",route=>{action=route.request().postDataJSON();event.kind="pairing_display";event.display_code="123456";return route.fulfill({json:{ok:true}});});
+  await page.locator("#rd-host-pending").getByRole("button",{name:"允许以上权限 / Allow listed permissions"}).click();
+  await expect.poll(()=>action?.action).toBe("approve");
+  expect(action.permissions).toEqual(event.permissions);
+  await expect(page.locator("#rd-host-pending")).toContainText("123456");
+  await expect(page.locator("#rd-host-pending button")).toHaveCount(0);
 });
 
 test("desktop requests use the native window's private session", async ({ page }) => {

@@ -249,6 +249,7 @@
     }
     async function quitApp() {
       if (!confirm(t("confirmQuit"))) return;
+	  resetRemoteHostUI();
       await api("/local/quit", { method: "POST" });
       document.body.innerHTML = "<main><p class='muted'>" + escapeHtml(t("quitApp")) + "</p></main>";
     }
@@ -264,8 +265,9 @@
       consoleUrl = state.console_url || "";
       capabilities = state.capabilities || {}; serverStale = Boolean(state.stale);
       if (!state.enrolled) { $("home").classList.add("hidden"); $("login").classList.remove("hidden"); return; }
+	  void refreshRemoteHost();
       $("machine-name").textContent = state.device_name || t("unnamedComputer");
-      $("machine-version").textContent = "Home Tunnel " + (state.version || "8.0.0");
+      $("machine-version").textContent = "Home Tunnel " + (state.version || "8.0.0-rc.1");
       $("settings-server").textContent = consoleUrl;
       $("count-total").textContent = (state.connections || []).length;
       $("count-online").textContent = (state.connections || []).filter(c => c.enabled && c.state === "Online").length;
@@ -354,6 +356,7 @@
     $("service-filter").onchange = renderServices;
     $("settings-open").onclick = () => runAction($("settings-open"), async () => {
       $("home").classList.add("hidden"); $("settings").classList.remove("hidden");
+	  void refreshRemoteHost();
       $("metadata-save").disabled = true; deviceMetadata = null;
       deviceMetadata = await api("/local/device/metadata");
       $("device-tags").value = (deviceMetadata.tags || []).join(", ");
@@ -397,6 +400,7 @@
       if (!$("login-form").reportValidity()) return;
       if (!$("password-change").classList.contains("hidden") && $("new-password").value !== $("confirm-password").value) { $("login-error").textContent = locale === "en" ? "Passwords do not match" : "两次新密码不一致"; return; }
       await runAction($("login-button"), async () => {
+	  resetRemoteHostUI();
       $("login-error").textContent = "";
       try {
         localStorage.setItem("ht_server", $("server").value);
@@ -424,6 +428,7 @@
     $("console").onclick = () => { if (consoleUrl) window.open(consoleUrl, "_blank", "noopener,noreferrer"); };
     $("logout").onclick = async () => {
       if (!confirm(t("confirmLogout"))) return;
+	  resetRemoteHostUI();
       await runAction($("logout"), async () => {
         await api("/local/logout", { method: "POST" });
         location.reload();
@@ -495,6 +500,106 @@
       }
       }, "edit-error");
     };
+    let remoteHostLoading = false, remoteHostTrust = null, remoteHostListSignature = "", remoteHostGeneration = 0;
+    let remoteHostAbort = new AbortController();
+    function resetRemoteHostUI() {
+      remoteHostGeneration++; remoteHostAbort.abort(); remoteHostAbort = new AbortController();
+      remoteHostTrust = null; remoteHostListSignature = "";
+      $("rd-host-password").value = ""; $("rd-host-mfa").value = ""; $("rd-host-trust").textContent = "";
+      $("rd-host-trust-confirm").checked = false; $("rd-host-enroll-submit").disabled = true;
+      $("rd-host-pending").replaceChildren(); $("rd-host-grants").replaceChildren();
+      for (const id of ["enable", "disable", "stop"]) $("rd-host-" + id).disabled = true;
+    }
+    const remotePermissionNames = {
+      view: "屏幕 / Screen", "input.keyboard": "键盘 / Keyboard", "input.pointer": "鼠标 / Pointer", "input.text": "文字输入 / Text input",
+      "audio.system": "系统声音 / System audio", "audio.microphone": "麦克风回传 / Microphone", "clipboard.read": "读取本机剪贴板 / Read local clipboard",
+      "clipboard.write": "写入本机剪贴板 / Write local clipboard", "files.send": "发送文件到本机 / Send files here", "files.receive": "从本机接收文件 / Receive files"
+    };
+    async function remoteHostAction(action, extra = {}) {
+      try { return await api("/local/remote/action", { method: "POST", body: JSON.stringify({ action, ...extra }), signal:remoteHostAbort.signal }); }
+      finally { void refreshRemoteHost(); }
+    }
+    function remoteActionButton(label, action, extra, danger = false) {
+      const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.className = danger ? "danger" : "secondary";
+      button.onclick = () => runAction(button, () => remoteHostAction(action, extra), "rd-host-error");
+      return button;
+    }
+    function renderRemoteApprovals(state) {
+      const signature = JSON.stringify([state.pending, state.grants]);
+      if (remoteHostListSignature === signature) return;
+      remoteHostListSignature = signature;
+      $("rd-host-pending").replaceChildren(); $("rd-host-grants").replaceChildren();
+      for (const event of state.pending || []) {
+        const box = document.createElement("div"), title = document.createElement("h3"), detail = document.createElement("p"), scopes = document.createElement("p"), actions = document.createElement("div");
+        box.className = "settings-card"; actions.className = "row";
+        title.textContent = event.kind === "session" ? "远程会话请求 / Session request" : "配对请求 / Pairing request";
+        detail.textContent = `${event.controller_endpoint_id} · ${event.controller_thumbprint || ""}`; detail.style.overflowWrap = "anywhere";
+        scopes.textContent = (event.permissions || []).map(name => remotePermissionNames[name] || name).join(" · ");
+        box.append(title, detail, scopes);
+        if (event.display_code) {
+          const code = document.createElement("p"); code.textContent = `核对码 / Compare code: ${event.display_code}。请在控制端核对一致后确认。`; box.append(code);
+        } else {
+          const mode = document.createElement("p"); mode.textContent = event.mode === "persistent" ? "持续授权，10 分钟后过期 / Persistent grant, expires in 10 minutes" : "仅本次会话 / This session only"; box.append(mode);
+          const data = {id:event.id,kind:event.kind,permissions:event.permissions,mode:event.mode,connection_epoch:event.connection_epoch,state_version:event.state_version};
+          actions.append(remoteActionButton("允许以上权限 / Allow listed permissions", "approve", data), remoteActionButton("拒绝 / Reject", "reject", data, true));
+          box.append(actions);
+        }
+        $("rd-host-pending").append(box);
+      }
+      for (const grant of state.grants || []) {
+        if (grant.revoked || Date.parse(grant.expires_at) <= Date.now()) continue;
+        const row = document.createElement("div"), detail = document.createElement("p"); row.className = "settings-card";
+        detail.textContent = `${grant.controller_endpoint_id} · ${(grant.permissions || []).map(name => remotePermissionNames[name] || name).join(" · ")} · ${new Date(grant.expires_at).toLocaleString(locale)}`;
+        detail.style.overflowWrap = "anywhere";
+        row.append(detail, remoteActionButton("撤销授权并断开 / Revoke and disconnect", "revoke", {id:grant.id}, true)); $("rd-host-grants").append(row);
+      }
+    }
+    async function refreshRemoteHost() {
+      if (remoteHostLoading || !$("rd-host-status") || !$("login").classList.contains("hidden")) return;
+      remoteHostLoading = true;
+      const generation = remoteHostGeneration;
+      try {
+        const state = await api("/local/remote/state", {signal:remoteHostAbort.signal});
+        if (generation !== remoteHostGeneration || !$("login").classList.contains("hidden")) return;
+        const ready = state.capabilities?.available === true;
+        $("rd-host-status").textContent = !ready ? "此安装包暂未提供可用的远控后端 / Remote backend unavailable" : state.active_session_id ? "远程会话进行中 / Remote session active" : state.enabled ? "已允许连接，等待本机批准 / Enabled; local approval required" : "远程连接已关闭 / Disabled";
+        $("rd-host-detail").textContent = [state.error_code, state.endpoint_id, ...(state.capabilities?.permissions || []).map(name => remotePermissionNames[name] || name)].filter(Boolean).join(" · ");
+        $("rd-host-enable").disabled = !ready || !state.enrolled || state.enabled && state.running;
+        $("rd-host-disable").disabled = !state.enabled;
+        $("rd-host-stop").disabled = !state.active_session_id;
+        $("rd-host-enroll").classList.toggle("hidden", !ready || state.enrolled);
+        if (state.enrolled || !ready) { $("rd-host-password").value = ""; $("rd-host-mfa").value = ""; }
+        renderRemoteApprovals(state);
+        const count = (state.pending || []).filter(event => !event.display_code).length;
+        $("settings-open").textContent = t("settings") + (count ? ` · ${count} 待批准 / pending` : "");
+      } catch {
+        if (generation !== remoteHostGeneration) return;
+        $("rd-host-status").textContent = "无法读取远控状态 / Remote status unavailable";
+        for (const id of ["enable", "disable", "stop"]) $("rd-host-" + id).disabled = id === "enable";
+      }
+      finally { remoteHostLoading = false; }
+    }
+    for (const action of ["enable", "disable", "stop"]) $("rd-host-" + action).onclick = () => runAction($("rd-host-" + action), () => remoteHostAction(action), "rd-host-error");
+    $("rd-host-trust-load").onclick = () => runAction($("rd-host-trust-load"), async () => {
+      remoteHostTrust = null; $("rd-host-trust-confirm").checked = false; $("rd-host-enroll-submit").disabled = true;
+      const generation = remoteHostGeneration;
+      const trust = await api("/local/remote/trust", {signal:remoteHostAbort.signal});
+      if (generation !== remoteHostGeneration || !$("login").classList.contains("hidden")) return;
+      remoteHostTrust = trust;
+      $("rd-host-trust").textContent = `${trust.origin}\n实例 / Instance: ${trust.server_instance_id}\n密钥指纹 / Key: ${trust.active_kid}`;
+    }, "rd-host-error");
+    $("rd-host-trust-confirm").onchange = () => { $("rd-host-enroll-submit").disabled = !remoteHostTrust || !$("rd-host-trust-confirm").checked; };
+    $("rd-host-enroll").onsubmit = event => {
+      event.preventDefault();
+      if (!remoteHostTrust || !$("rd-host-trust-confirm").checked) return;
+      return runAction($("rd-host-enroll-submit"), async () => {
+        const body = {username:$("rd-host-user").value,password:$("rd-host-password").value,mfa_code:$("rd-host-mfa").value,trust_pin:remoteHostTrust.trust_pin};
+        $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
+        try { await remoteHostAction("enroll", body); }
+        finally { body.password = ""; body.mfa_code = ""; }
+      }, "rd-host-error");
+    };
+    setInterval(() => { if (!document.hidden) void refreshRemoteHost(); }, 3000);
     api("/local/state").then((state) => { if (state.enrolled) return showHome(); }).catch(() => { $("login-error").textContent = t("failed"); });
 
     setInterval(() => { if (!document.hidden) showHome(true).catch(() => { $("status").textContent = t("stale"); }); }, 30000);

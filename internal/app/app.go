@@ -31,6 +31,9 @@ type EnrollOptions struct {
 	EnrollmentCode string
 	DeviceName     string
 	HTTPClient     *http.Client
+	// CommitState lets the desktop atomically reject a superseded login before
+	// credentials are saved. Headless enrollment uses the normal store directly.
+	CommitState func(model.State) error
 }
 
 type RunOptions struct {
@@ -108,7 +111,14 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 	state.LeaseExpiresAt = nil
 	state.AgentState = "Offline"
 	state.AgentMessage = "enrolled; waiting for the service to start"
-	if err := store.Save(state); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	commit := store.Save
+	if options.CommitState != nil {
+		commit = options.CommitState
+	}
+	if err := commit(state); err != nil {
 		return fmt.Errorf("save enrolled device credential: %w", err)
 	}
 	return nil

@@ -18,6 +18,7 @@ import (
 	"github.com/ZHanry/home-tunnel-client/internal/api"
 	"github.com/ZHanry/home-tunnel-client/internal/app"
 	"github.com/ZHanry/home-tunnel-client/internal/model"
+	"github.com/ZHanry/home-tunnel-client/internal/remotehost"
 	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
 )
 
@@ -31,17 +32,24 @@ type Options struct {
 	AgentPath         string
 	ExpectedAgentHash string
 	AgentVersion      string
+	RemoteEngine      remotehost.HostEngine
 }
 
 type Server struct {
-	options Options
-	parent  context.Context
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
-	running bool
-	quit    func()
-	show    func()
+	options           Options
+	parent            context.Context
+	mu                sync.Mutex
+	cancel            context.CancelFunc
+	done              chan struct{}
+	running           bool
+	quit              func()
+	show              func()
+	remoteMu          sync.Mutex
+	remoteHost        *localRemoteHost
+	remoteBlocked     bool
+	accountMu         sync.Mutex
+	accountGeneration uint64
+	accountCancel     context.CancelFunc
 }
 
 func New(options Options) *Server {
@@ -87,6 +95,9 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/update", server.update)
 	mux.HandleFunc("/local/update/download", server.downloadUpdate)
 	mux.HandleFunc("/local/remote/capabilities", server.remoteCapabilities)
+	mux.HandleFunc("/local/remote/state", server.remoteState)
+	mux.HandleFunc("/local/remote/trust", server.remoteTrust)
+	mux.HandleFunc("/local/remote/action", server.remoteAction)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
 	mux.HandleFunc("/local/doctor", server.doctor)
 	mux.HandleFunc("/local/device/metadata", server.deviceMetadata)
@@ -127,6 +138,8 @@ func (server *Server) StartAgent(parent context.Context) {
 }
 
 func (server *Server) StopAgent() {
+	server.beginAccountChange(nil)
+	server.stopRemote(false)
 	server.mu.Lock()
 	cancel := server.cancel
 	done := server.done
@@ -216,6 +229,14 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 45*time.Second)
 	defer cancel()
+	generation := server.beginAccountChange(cancel)
+	server.stopRemote(true)
+	server.accountMu.Lock()
+	defer server.accountMu.Unlock()
+	if !server.currentAccountChange(ctx, generation) {
+		writeError(writer, http.StatusConflict, "Account operation superseded")
+		return
+	}
 	if err := app.Enroll(ctx, app.EnrollOptions{
 		StatePath:      server.options.StatePath,
 		Server:         body.Server,
@@ -225,12 +246,47 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 		MFACode:        body.MFACode,
 		EnrollmentCode: body.EnrollmentCode,
 		DeviceName:     app.DefaultDeviceName(),
+		CommitState:    func(state model.State) error { return server.commitEnrollment(ctx, generation, state) },
 	}); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	server.StartAgent(server.parent)
 	writeJSON(writer, map[string]any{"ok": true})
+}
+
+// Account mutations are serialized; their generation is invalidated immediately
+// so a slow login cannot save credentials or restart services after sign-out.
+func (server *Server) beginAccountChange(cancel context.CancelFunc) uint64 {
+	server.remoteMu.Lock()
+	defer server.remoteMu.Unlock()
+	if server.accountCancel != nil {
+		server.accountCancel()
+	}
+	server.accountGeneration++
+	server.accountCancel = cancel
+	server.remoteBlocked = true
+	return server.accountGeneration
+}
+
+func (server *Server) currentAccountChange(ctx context.Context, generation uint64) bool {
+	server.remoteMu.Lock()
+	defer server.remoteMu.Unlock()
+	return ctx.Err() == nil && generation == server.accountGeneration
+}
+
+func (server *Server) commitEnrollment(ctx context.Context, generation uint64, state model.State) error {
+	server.remoteMu.Lock()
+	defer server.remoteMu.Unlock()
+	if ctx.Err() != nil || generation != server.accountGeneration {
+		return errors.New("account operation superseded")
+	}
+	if err := (statepkg.Store{Path: server.options.StatePath}).Save(state); err != nil {
+		return err
+	}
+	server.remoteHost = nil
+	server.remoteBlocked = false
+	server.StartAgent(server.parent)
+	return nil
 }
 
 func (server *Server) connections(writer http.ResponseWriter, request *http.Request) {
@@ -375,6 +431,16 @@ func (server *Server) logout(writer http.ResponseWriter, request *http.Request) 
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	generation := server.beginAccountChange(cancel)
+	server.stopRemote(true)
+	server.accountMu.Lock()
+	defer server.accountMu.Unlock()
+	if !server.currentAccountChange(ctx, generation) {
+		writeError(writer, http.StatusConflict, "Account operation superseded")
+		return
+	}
 	if client, _, err := server.client(); err == nil {
 		ctx, cancel := context.WithTimeout(request.Context(), 8*time.Second)
 		_ = client.Logout(ctx)
@@ -405,6 +471,7 @@ func (server *Server) quitProcess(writer http.ResponseWriter, request *http.Requ
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	server.beginAccountChange(nil)
 	server.StopAgent()
 	writeJSON(writer, map[string]any{"ok": true})
 	server.mu.Lock()
