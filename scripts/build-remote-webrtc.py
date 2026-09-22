@@ -223,7 +223,7 @@ def main():
             sources = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "revision": revision,
                        "worker_sha256": host_manifest["sha256"], "deps_lock": lock, "dependency_sources": entries,
                        "rebuild": "Check out the exact client revision and run scripts/build-native-windows.ps1. The source lock pins WebRTC, its DEPS, depot_tools, SDK packages and the reviewed upstream patch.",
-                       "scope": "Corresponding source locations and build recipes; optional H.264/HEVC are not advertised as verified codecs."}
+                       "scope": "Corresponding source locations and build recipes. Windows supports software H264 constrained baseline and VP8; optional compiled HEVC is not advertised as verified. Native codec probes do not replace product/browser acceptance."}
             sources_bytes = (json.dumps(sources, indent=2, sort_keys=True) + "\n").encode()
             (build / "remote-source-manifest.json").write_bytes(sources_bytes)
             host_manifest["source_manifest_sha256"] = hashlib.sha256(sources_bytes).hexdigest()

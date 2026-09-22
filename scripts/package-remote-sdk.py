@@ -78,8 +78,9 @@ of the pinned source build; this is not a replacement for its build system.
 
 remote-source-manifest.json lists the corresponding dependency source locations,
 versions and build recipe. WEBRTC-THIRD-PARTY-NOTICES.md contains the actual linked
-dependency notices. Optional H.264/HEVC code in the pinned engine is not an
-advertised or verified codec of the Windows host profile; it negotiates VP8 only.
+dependency notices. The Windows host profile negotiates H.264 constrained
+baseline or VP8. Its verified native paths use software OpenH264/FFmpeg and
+libvpx; optional HEVC code is not advertised as a verified host codec.
 
 This SDK does not establish Android, macOS or Linux media interoperability.
 """

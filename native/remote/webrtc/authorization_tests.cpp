@@ -285,6 +285,17 @@ void sdp_profile() {
   REQUIRE(!check(prefix+"m=video 9 TCP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 VP8/90000\r\n"+data));
   REQUIRE(!check(prefix+"m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 H264/90000\r\n"+data));
   REQUIRE(!check(prefix+"m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:97 VP8/90000\r\n"+data));
+  const std::string h264="m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 H264/90000\r\n";
+  REQUIRE(check(prefix+h264+"a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"+data));
+  REQUIRE(check(prefix+h264+"a=fmtp:96 packetization-mode=1; profile-level-id=42E01F\r\n"+data));
+  REQUIRE(!check(prefix+h264+"a=fmtp:96 packetization-mode=0;profile-level-id=42e01f\r\n"+data));
+  REQUIRE(!check(prefix+h264+"a=fmtp:96 packetization-mode=1;profile-level-id=640c1f\r\n"+data));
+  REQUIRE(!check(prefix+h264+"a=fmtp:96 packetization-mode=1;profile-level-id=42e01f;profile-level-id=640c1f\r\n"+data));
+  REQUIRE(!check(prefix+h264+"a=fmtp:96 packetization-mode=1;profile-level-id=42e01f;level-asymmetry-allowed=2\r\n"+data));
+  REQUIRE(!check(prefix+h264+"a=fmtp:97 packetization-mode=1;profile-level-id=42e01f\r\n"+data));
+  REQUIRE(!check(prefix+h264+"a=fmtp:96 packetization-mode=1;profile-level-id=42e01f\r\na=fmtp:96 packetization-mode=0\r\n"+data));
+  REQUIRE(!check(prefix+video+"a=rtpmap:96 H264/90000\r\n"+data));
+  REQUIRE(!check(prefix+"m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:+96 VP8/90000\r\n"+data));
   REQUIRE(!check(prefix+video));REQUIRE(!check(video+data));
 }
 std::string compact(const Json::Value& value) {

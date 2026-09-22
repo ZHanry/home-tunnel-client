@@ -58,6 +58,9 @@ func TestNativeHostProcess(t *testing.T) {
 	if !slices.Equal(capability.Permissions, []string{"view", "input.keyboard", "input.pointer", "input.text", "clipboard.read", "clipboard.write"}) {
 		t.Fatal("worker advertised unimplemented capabilities")
 	}
+	if !slices.Equal(capability.Codecs, []string{"H264", "VP8"}) {
+		t.Fatalf("worker advertised an unexpected codec profile: %v", capability.Codecs)
+	}
 	ref := remotehost.SessionRef{SessionID: "a0000000-0000-4000-8000-000000000001", ConnectionEpoch: 1}
 	prepared, err := engine.PrepareSession(ctx, ref)
 	if err != nil || len(prepared.HostNonce) != 32 || len(prepared.DTLSFingerprintSHA256) != 95 || !json.Valid(prepared.EphemeralPublicJWK) {

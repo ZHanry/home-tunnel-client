@@ -109,11 +109,28 @@ std::vector<Screen> displays(){
   }
   return result;
 }
-Json::Value capabilities(){
-  Json::Value value;const auto sources=displays();value["available"]=!sources.empty();
-  value["status"]=sources.empty()?"unavailable":"ready";value["unattended_enabled"]=false;
-  value["permissions"]=Json::Value(Json::arrayValue);if(!sources.empty())for(const auto name:{"view","input.keyboard","input.pointer","input.text","clipboard.read","clipboard.write"})value["permissions"].append(name);
-  value["codecs"]=Json::Value(Json::arrayValue);value["codecs"].append("VP8");
+std::vector<webrtc::RtpCodecCapability> preferred_video_codecs(webrtc::PeerConnectionFactoryInterface& factory){
+  const auto available=factory.GetRtpSenderCapabilities(webrtc::MediaType::VIDEO);std::vector<webrtc::RtpCodecCapability> selected;
+  for(const auto name:{"H264","VP8","rtx"})for(const auto& codec:available.codecs){
+    if(codec.name!=name)continue;
+    if(codec.name=="H264"){
+      std::string parameters;for(const auto& [key,value]:codec.parameters){if(!parameters.empty())parameters+=';';parameters+=key+'='+value;}
+      if(!valid_h264_fmtp(parameters))continue;
+    }
+    selected.push_back(codec);
+  }
+  return selected;
+}
+Json::Value codec_names(const std::vector<webrtc::RtpCodecCapability>& codecs){
+  Json::Value names(Json::arrayValue);std::set<std::string> seen;
+  for(const auto& codec:codecs)if(codec.name!="rtx" && seen.insert(codec.name).second)names.append(codec.name);
+  return names;
+}
+Json::Value capabilities(webrtc::PeerConnectionFactoryInterface& factory){
+  Json::Value value;const auto sources=displays();value["codecs"]=codec_names(preferred_video_codecs(factory));
+  const bool available=!sources.empty() && !value["codecs"].empty();value["available"]=available;
+  value["status"]=available?"ready":"unavailable";value["unattended_enabled"]=false;
+  value["permissions"]=Json::Value(Json::arrayValue);if(available)for(const auto name:{"view","input.keyboard","input.pointer","input.text","clipboard.read","clipboard.write"})value["permissions"].append(name);
   value["displays"]=Json::Value(Json::arrayValue);
   for(const auto& source:sources){Json::Value item;item["id"]=std::to_string(source.id);item["name"]=source.name;
     item["width"]=source.rect.width();item["height"]=source.rect.height();value["displays"].append(item);}
@@ -232,10 +249,8 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     auto connection=factory_.CreatePeerConnectionOrError(config,webrtc::PeerConnectionDependencies(this));if(!connection.ok())return false;
     connection_=connection.MoveValue();source_=webrtc::make_ref_counted<ScreenSource>();auto track=factory_.CreateVideoTrack(source_,"desktop");
     if(!connection_->AddTrack(track,{"home-tunnel-desktop"}).ok())return false;
-    std::vector<webrtc::RtpCodecCapability> codecs;
-    for(const auto& codec:factory_.GetRtpSenderCapabilities(webrtc::MediaType::VIDEO).codecs)
-      if(codec.name=="VP8" || codec.name=="rtx")codecs.push_back(codec);
-    if(codecs.empty())return false;
+    auto codecs=preferred_video_codecs(factory_);codec_capabilities_=codec_names(codecs);
+    if(codec_capabilities_.empty())return false;
     for(const auto& transceiver:connection_->GetTransceivers())
       if(!transceiver->SetCodecPreferences(codecs).ok() || !transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendOnly).ok())return false;
     clipboard_storage_=windows_clipboard();
@@ -301,7 +316,9 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   Json::Value Diagnostics()const{
     Json::Value value;const std::array names{"input_received","input_accepted","input_replayed","input_ignored_epoch","input_ignored_disabled","input_failed"};
     for(size_t n=0;n<names.size();++n)value[names[n]]=Json::UInt64(input_diagnostics_[n]);
-    value["input_epoch"]=gate_.input_epoch();value["input_enabled"]=gate_.input_allowed();return value;
+    value["input_epoch"]=gate_.input_epoch();value["input_enabled"]=gate_.input_allowed();
+    for(const auto key:{"video_codec","video_codec_parameters","video_encoder_implementation","video_frames_encoded","video_power_efficient_encoder","video_frame_width","video_frame_height"})value[key]=video_diagnostics_[key];
+    return value;
   }
   void State(unsigned slot){if(closed_)return;const auto found=channels_.find(slot);if(found!=channels_.end() && found->second.first->state()==webrtc::DataChannelInterface::kClosed)Close("RD_MEDIA_FAILED");}
   void Receive(unsigned slot,const webrtc::DataBuffer& message){
@@ -402,7 +419,21 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     }
     if(!found){if(path_verified_)Close("RD_PATH_CHANGED");return;}
     if(!selected_pair_.empty() && selected_pair_!=selected){Close("RD_PATH_CHANGED");return;}
-    selected_pair_=selected;local_type_=local_type;remote_type_=remote_type;path_verified_=true;MaybeReady();
+    selected_pair_=selected;local_type_=local_type;remote_type_=remote_type;path_verified_=true;
+    for(const auto* stream:report.GetStatsOfType<webrtc::RTCOutboundRtpStreamStats>()){
+      if(stream->kind!="video" || !stream->codec_id)continue;const auto* codec=report.GetAs<webrtc::RTCCodecStats>(*stream->codec_id);
+      if(!codec || !codec->mime_type)continue;
+      if(*codec->mime_type!="video/VP8" && (*codec->mime_type!="video/H264" || !codec->sdp_fmtp_line || !valid_h264_fmtp(*codec->sdp_fmtp_line))){Close("RD_MEDIA_FAILED");return;}
+      video_diagnostics_["video_codec"]=*codec->mime_type;
+      video_diagnostics_["video_codec_parameters"]=codec->sdp_fmtp_line?Json::Value(*codec->sdp_fmtp_line):Json::Value();
+      video_diagnostics_["video_encoder_implementation"]=stream->encoder_implementation?Json::Value(*stream->encoder_implementation):Json::Value();
+      video_diagnostics_["video_frames_encoded"]=stream->frames_encoded?Json::Value(*stream->frames_encoded):Json::Value();
+      video_diagnostics_["video_power_efficient_encoder"]=stream->power_efficient_encoder?Json::Value(*stream->power_efficient_encoder):Json::Value();
+      video_diagnostics_["video_frame_width"]=stream->frame_width?Json::Value(*stream->frame_width):Json::Value();
+      video_diagnostics_["video_frame_height"]=stream->frame_height?Json::Value(*stream->frame_height):Json::Value();
+      break;
+    }
+    MaybeReady();
   }
   void OnSignalingChange(webrtc::PeerConnectionInterface::SignalingState)override{}
   void OnIceGatheringChange(webrtc::PeerConnectionInterface::IceGatheringState state)override{
@@ -464,7 +495,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     auto type=[](const std::string& value){return value=="host"?Candidate::host:value=="srflx"?Candidate::server_reflexive:Candidate::peer_reflexive;};
     if(gate_.peer_authenticated(identity_->epoch(),steady_ms())!=GateResult::ok || gate_.selected_pair(identity_->epoch(),{"udp",type(local_type_),type(remote_type_),true,true,1},steady_ms())!=GateResult::ok){Close("RD_PATH_REJECTED");return;}
     Json::Value path;path["epoch"]=identity_->epoch();path["protocol"]="udp";path["local_candidate_type"]=local_type_;path["remote_candidate_type"]=remote_type_;Send(protocol::PATH_VERIFIED,path);
-    Json::Value caps;caps["permissions"]=identity_->permissions();caps["codecs"]=Json::Value(Json::arrayValue);caps["codecs"].append("VP8");
+    Json::Value caps;caps["permissions"]=identity_->permissions();caps["codecs"]=codec_capabilities_;
     capability_hash_=auth::base64url(auth::digest(PeerIdentity::json(caps)));Send(protocol::CAPABILITIES,caps);
     Json::Value layout;layout["layout_epoch"]=1;layout["active_display"]=std::to_string(screen_.id);layout["displays"]=Json::Value(Json::arrayValue);
     // The active screen is always slot zero for this immutable connection epoch.
@@ -499,7 +530,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   webrtc::scoped_refptr<webrtc::PeerConnectionInterface> connection_;webrtc::scoped_refptr<ScreenSource> source_;std::unique_ptr<Capture> capture_;
   std::map<unsigned,std::pair<webrtc::scoped_refptr<webrtc::DataChannelInterface>,std::unique_ptr<ChannelObserver>>> channels_;
   std::array<uint32_t,5> received_{};std::vector<Json::Value> pending_candidates_;Json::Value pending_hello_;
-  std::array<uint64_t,6> input_diagnostics_{};
+  std::array<uint64_t,6> input_diagnostics_{};Json::Value codec_capabilities_,video_diagnostics_;
   std::string pending_offer_,proof_request_,selected_pair_,local_type_,remote_type_,capability_hash_;
   std::string input_request_;std::set<std::array<uint8_t,16>> request_ids_;
   std::array<uint32_t,5> sent_sequence_{};uint32_t local_candidates_=0,remote_candidates_=0,request_input_epoch_=0;uint64_t started_at_=0,input_requested_at_=0,input_permissions_=0;
@@ -519,7 +550,7 @@ int serve(webrtc::PeerConnectionFactoryInterface& factory,webrtc::Thread& signal
     Json::Value response;response["abi"]=1;response["id"]=request["id"];response["ok"]=false;response["result"]=Json::Value(Json::objectValue);
     bool ok=false;
     if(operation=="hello"){response["result"]["version"]=std::string(HOST_VERSION);response["result"]["abi"]=1;response["result"]["max_frame_bytes"]=maximum_ipc;ok=true;}
-    else if(operation=="capabilities"){response["result"]=capabilities();ok=true;}
+    else if(operation=="capabilities"){response["result"]=capabilities(factory);ok=true;}
     else if(operation=="diagnostics"){response["result"]=signaling.BlockingCall([&]{return session?session->Diagnostics():Json::Value(Json::objectValue);});ok=true;}
     else if(operation=="prepare"){
       if(payload["session_id"].isString() && payload["connection_epoch"].isUInt() && payload["connection_epoch"].asUInt()){
