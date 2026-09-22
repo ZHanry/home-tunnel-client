@@ -16,7 +16,7 @@ if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvaria
     throw 'Inno Setup compiler installer checksum mismatch'
 }
 $destination = Join-Path $ToolsDirectory "inno-$($pin.version)"
-$arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOICONS', '/SP-', "/DIR=`"$destination`"")
+$arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOICONS', '/SP-', '/CURRENTUSER', "/DIR=`"$destination`"")
 $process = Start-Process -FilePath $installer -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Inno Setup installation failed: $($process.ExitCode)" }
 $compiler = Join-Path $destination 'ISCC.exe'
