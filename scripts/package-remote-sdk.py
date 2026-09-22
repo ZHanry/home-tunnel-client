@@ -73,7 +73,7 @@ when consuming this library; C++ WebRTC does not promise a cross-version ABI.
 
 Headers mirror the upstream checkout under include/webrtc. Generated build
 headers are under include/generated. Native public ABI headers are under
-native/include. GN target dependency include directories and flags remain those
+native/include and are covered by HOME-TUNNEL-LICENSE. GN target dependency include directories and flags remain those
 of the pinned source build; this is not a replacement for its build system.
 
 remote-source-manifest.json lists the corresponding dependency source locations,
@@ -118,6 +118,7 @@ This SDK does not establish Android, macOS or Linux media interoperability.
             if path.is_file():
                 bundle.write(path, "native/include/" + path.relative_to(ROOT / "native/remote/include").as_posix())
         bundle.write(lock_path, "remote-deps.lock.json")
+        bundle.write(ROOT / "LICENSE", "HOME-TUNNEL-LICENSE")
         for patch in lock["patches"]:
             path = ROOT / "native/remote" / patch["path"]
             if sha256(path) != patch["sha256"]:

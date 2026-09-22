@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
@@ -35,6 +36,7 @@
 #include "rtc_base/thread.h"
 #include "rtc_base/time_utils.h"
 #include "third_party/libyuv/include/libyuv.h"
+#include "third_party/jsoncpp/source/include/json/json.h"
 #if defined(WEBRTC_WIN)
 #include "rtc_base/win32_socket_init.h"
 #include <objbase.h>
@@ -237,7 +239,81 @@ bool direct_encrypted(Peer& peer) {
   return future.wait_for(5s) == std::future_status::ready && future.get();
 }
 
-int probe(webrtc::PeerConnectionFactoryInterface& factory, webrtc::Thread& signaling) {
+// Only content-free codec and frame counters leave this probe. Never save SDP,
+// addresses, certificates, desktop pixels or the full PeerConnection report.
+class MediaStats : public webrtc::RTCStatsCollectorCallback {
+ public:
+  explicit MediaStats(bool sender) : sender_(sender) {}
+  std::promise<Json::Value> done;
+  void OnStatsDelivered(const webrtc::scoped_refptr<const webrtc::RTCStatsReport>& report) override {
+    Json::Value value(Json::objectValue);
+    if (sender_) {
+      for (const auto* stream : report->GetStatsOfType<webrtc::RTCOutboundRtpStreamStats>()) {
+        if (stream->kind != "video" || !stream->frames_encoded || !stream->codec_id) continue;
+        value["frames_encoded"] = *stream->frames_encoded;
+        value["encoder_implementation"] = stream->encoder_implementation ? Json::Value(*stream->encoder_implementation) : Json::Value();
+        value["power_efficient_encoder"] = stream->power_efficient_encoder ? Json::Value(*stream->power_efficient_encoder) : Json::Value();
+        value["total_encode_time_seconds"] = stream->total_encode_time ? Json::Value(*stream->total_encode_time) : Json::Value();
+        Codec(*report, *stream->codec_id, value);
+        break;
+      }
+    } else {
+      for (const auto* stream : report->GetStatsOfType<webrtc::RTCInboundRtpStreamStats>()) {
+        if (stream->kind != "video" || !stream->codec_id) continue;
+        value["frames_decoded"] = stream->frames_decoded ? Json::Value(*stream->frames_decoded) : Json::Value();
+        value["packets_received"] = stream->packets_received ? Json::Value(Json::UInt64(*stream->packets_received)) : Json::Value();
+        value["bytes_received"] = stream->bytes_received ? Json::Value(Json::UInt64(*stream->bytes_received)) : Json::Value();
+        value["decoder_implementation"] = stream->decoder_implementation ? Json::Value(*stream->decoder_implementation) : Json::Value();
+        value["power_efficient_decoder"] = stream->power_efficient_decoder ? Json::Value(*stream->power_efficient_decoder) : Json::Value();
+        value["total_decode_time_seconds"] = stream->total_decode_time ? Json::Value(*stream->total_decode_time) : Json::Value();
+        Codec(*report, *stream->codec_id, value);
+        break;
+      }
+    }
+    done.set_value(std::move(value));
+  }
+ private:
+  static void Codec(const webrtc::RTCStatsReport& report, const std::string& id, Json::Value& value) {
+    const auto* codec = report.GetAs<webrtc::RTCCodecStats>(id);
+    if (!codec) return;
+    value["mime_type"] = codec->mime_type ? Json::Value(*codec->mime_type) : Json::Value();
+    value["clock_rate"] = codec->clock_rate ? Json::Value(*codec->clock_rate) : Json::Value();
+    value["payload_type"] = codec->payload_type ? Json::Value(*codec->payload_type) : Json::Value();
+    value["sdp_fmtp_line"] = codec->sdp_fmtp_line ? Json::Value(*codec->sdp_fmtp_line) : Json::Value();
+  }
+  bool sender_;
+};
+Json::Value media_stats(Peer& peer, bool sender) {
+  auto callback = webrtc::make_ref_counted<MediaStats>(sender);
+  auto future = callback->done.get_future();
+  peer.connection->GetStats(callback.get());
+  return future.wait_for(5s) == std::future_status::ready ? future.get() : Json::Value();
+}
+
+bool force_codec(webrtc::PeerConnectionFactoryInterface& factory, Peer& host, const std::string& codec_name) {
+  std::vector<webrtc::RtpCodecCapability> selected;
+  bool available = false;
+  for (const auto& codec : factory.GetRtpSenderCapabilities(webrtc::MediaType::VIDEO).codecs) {
+    if (codec.name == "rtx") { selected.push_back(codec); continue; }
+    if (codec.name != codec_name) continue;
+    if (codec_name == "H264") {
+      const auto profile = codec.parameters.find("profile-level-id");
+      const auto packetization = codec.parameters.find("packetization-mode");
+      if (profile == codec.parameters.end() || profile->second != "42e01f" ||
+          packetization == codec.parameters.end() || packetization->second != "1") continue;
+    }
+    selected.push_back(codec);
+    available = true;
+  }
+  if (!available) return false;
+  for (const auto& transceiver : host.connection->GetTransceivers()) {
+    if (!transceiver->SetCodecPreferences(selected).ok() ||
+        !transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendOnly).ok()) return false;
+  }
+  return true;
+}
+
+int probe(webrtc::PeerConnectionFactoryInterface& factory, webrtc::Thread& signaling, const std::string& codec_name) {
   Peer host(signaling, false), controller(signaling, true);
   webrtc::PeerConnectionInterface::RTCConfiguration configuration;
   configuration.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
@@ -251,6 +327,7 @@ int probe(webrtc::PeerConnectionFactoryInterface& factory, webrtc::Thread& signa
   auto source = signaling.BlockingCall([] { return webrtc::make_ref_counted<ScreenSource>(); });
   auto track = factory.CreateVideoTrack(source, "desktop-probe");
   if (!host.connection->AddTrack(track, {"local-desktop-probe"}).ok()) return 11;
+  if (!force_codec(factory, host, codec_name)) return 19;
   auto channel = host.connection->CreateDataChannelOrError("local-probe", nullptr);
   if (!channel.ok()) return 12;
   signaling.BlockingCall([&] { host.Attach(channel.MoveValue()); });
@@ -286,14 +363,30 @@ int probe(webrtc::PeerConnectionFactoryInterface& factory, webrtc::Thread& signa
   }
   capturer.reset();
   const bool final_direct = direct_encrypted(host) && direct_encrypted(controller);
-  const bool verified = controller.sink.frames >= 10 && final_direct;
-  std::printf("{\"status\":\"%s\",\"scope\":\"local-native-media-probe\",\"desktop_frames_captured\":%u,"
-              "\"video_frames_decoded\":%u,\"decoded_width\":%d,\"decoded_height\":%d,\"data_channel_round_trips\":%u,"
-              "\"selected_pair\":\"%s\",\"dtls_connected\":%s,\"screen_content_saved\":false,"
-              "\"product_backend_available\":false}\n",
-              verified ? "passed" : "failed", capture.frames, controller.sink.frames.load(),
-              controller.sink.width.load(), controller.sink.height.load(), host.round_trips.load(),
-              final_direct ? "udp-host-host" : "unverified", final_direct ? "true" : "false");
+  const auto sender = media_stats(host, true), receiver = media_stats(controller, false);
+  const std::string mime = "video/" + codec_name;
+  const bool codec_verified = sender["mime_type"] == mime && receiver["mime_type"] == mime &&
+      sender["frames_encoded"].asUInt() >= 10 && receiver["frames_decoded"].asUInt() >= 10 &&
+      sender["encoder_implementation"].isString() && receiver["decoder_implementation"].isString();
+  const bool verified = controller.sink.frames >= 10 && final_direct && codec_verified;
+  Json::Value evidence(Json::objectValue);
+  evidence["status"] = verified ? "passed" : "failed";
+  evidence["scope"] = "local-native-media-probe";
+  evidence["requested_codec"] = codec_name;
+  evidence["desktop_frames_captured"] = capture.frames;
+  evidence["video_frames_decoded"] = controller.sink.frames.load();
+  evidence["decoded_width"] = controller.sink.width.load();
+  evidence["decoded_height"] = controller.sink.height.load();
+  evidence["data_channel_round_trips"] = host.round_trips.load();
+  evidence["selected_pair"] = final_direct ? "udp-host-host" : "unverified";
+  evidence["dtls_connected"] = final_direct;
+  evidence["screen_content_saved"] = false;
+  evidence["product_acceptance"] = false;
+  evidence["sender"] = sender;
+  evidence["receiver"] = receiver;
+  Json::StreamWriterBuilder writer;
+  writer["indentation"] = "";
+  std::printf("%s\n", Json::writeString(writer, evidence).c_str());
   return verified ? 0 : 18;
 }
 }
@@ -301,9 +394,15 @@ int probe(webrtc::PeerConnectionFactoryInterface& factory, webrtc::Thread& signa
 int main(int argc, char** argv) {
   // argc protects the single access to the C runtime argument array.
 #pragma clang unsafe_buffer_usage begin
-  if (argc != 2 || std::string(argv[1]) != "--local-desktop-loopback") {
-    std::fprintf(stderr, "Use --local-desktop-loopback for an in-memory local desktop media test.\n");
+  std::string codec_name = "VP8";
+  if ((argc != 2 && argc != 3) || std::string(argv[1]) != "--local-desktop-loopback") {
+    std::fprintf(stderr, "Use --local-desktop-loopback [--codec=VP8|--codec=H264] for an in-memory local desktop media test.\n");
     return 2;
+  }
+  if (argc == 3) {
+    const std::string argument(argv[2]);
+    if (argument != "--codec=VP8" && argument != "--codec=H264") return 2;
+    codec_name = argument.substr(8);
   }
 #pragma clang unsafe_buffer_usage end
 #if defined(WEBRTC_WIN)
@@ -323,7 +422,7 @@ int main(int argc, char** argv) {
       auto factory = webrtc::CreatePeerConnectionFactory(network.get(), worker.get(), signaling.get(), nullptr,
           webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(),
           webrtc::CreateBuiltinVideoEncoderFactory(), webrtc::CreateBuiltinVideoDecoderFactory(), nullptr, nullptr);
-      if (factory) result = probe(*factory, *signaling);
+      if (factory) result = probe(*factory, *signaling, codec_name);
       factory = nullptr;
     }
   }

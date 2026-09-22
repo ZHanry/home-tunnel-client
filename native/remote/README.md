@@ -111,9 +111,18 @@ capture -> conversion/scaling -> encoder -> two in-process PeerConnections ->
 decoder/frame-sink pipeline, plus a data-channel round trip. There is no external
 signaling, STUN/TURN server or input injection. The probe requires a nominated,
 succeeded UDP host/host pair and connected DTLS before capturing. Its output
-contains only frame counts, dimensions and transport verdicts; no screen pixels,
+contains only frame counts, dimensions, actual PeerConnection codec and
+encoder/decoder implementation statistics, and transport verdicts; no screen pixels,
 SDP, addresses or private keys are saved. This development probe does not enable
 the product backend or constitute browser/device/network interoperability proof.
+
+Use `--probe-codec VP8` or `--probe-codec H264` together with
+`--media-probe --run-local-probe` to force each codec independently. H.264 is
+restricted to constrained baseline `42e01f` with packetization mode 1. A codec
+passes only after both native peers report the requested codec and at least ten
+encoded/decoded frames. The reported implementation and power-efficiency fields
+come from actual stats; a compiled codec is not evidence of hardware acceleration.
+Per-codec JSON records are preserved even when the decoder fails.
 
 The same GN build compiles and runs the native authorization verifier using the
 engine's pinned BoringSSL and JsonCpp. It checks raw ES256 signatures, strict JSON

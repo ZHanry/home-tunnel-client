@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "source-pinned-windows-x64-local-media-verified",
+  "status": "source-pinned-windows-x64-local-h264-vp8-media-verified",
   "webrtc": {
     "repository": "https://webrtc.googlesource.com/src",
     "revision": "94e682e18fbcc0751463be2257b09d2a646a5a68",
@@ -40,6 +40,7 @@
     "rtc_build_examples": false,
     "rtc_use_h264": true,
     "proprietary_codecs": true,
+    "ffmpeg_branding": "Chrome",
     "rtc_include_internal_audio_device": true,
     "rtc_use_h265": true,
     "rtc_enable_protobuf": false,
@@ -61,12 +62,29 @@
   ],
   "verified_builds": {
     "windows-x64": {
-      "status": "upstream-engine-built-local-probe-passed-product-not-integrated",
+      "status": "upstream-engine-built-local-h264-vp8-probes-passed",
+      "artifact_sha256": "1ef358892df70e1a2e7de1d74255e5b1240d847271f22fa84f7ca5890208ed0d",
+      "artifact_bytes": 376457020,
+      "ffmpeg_branding": "Chrome",
+      "visual_studio_version": "2022",
+      "msvc_version": "14.44.35207",
+      "probe_sha256": "baba53bf318b992cf5be149c5ee51c98ef10438923a548ff298ddf8c2811395d",
+      "codecs": {
+        "H264": {"profile_level_id": "42e01f", "packetization_mode": 1, "encoder": "OpenH264", "decoder": "FFmpeg", "frames_encoded": 30, "frames_decoded": 30, "power_efficient_encoder": false, "power_efficient_decoder": false},
+        "VP8": {"encoder": "libvpx", "decoder": "libvpx", "frames_encoded": 30, "frames_decoded": 30, "power_efficient_encoder": false, "power_efficient_decoder": false}
+      },
+      "verification_scope": "Two separate in-process Windows desktop capture/encode/decode probes at 1280x720 over UDP host-host with connected DTLS and a data-channel echo. H264 constrained baseline and VP8 were forced separately and verified through actual PeerConnection stats. Both paths are software. No screen content saved. This is not product/browser/device/network acceptance."
+    }
+  },
+  "historical_builds": {
+    "windows-x64-ffmpeg-chromium": {
+      "status": "historical-vp8-local-probe-passed-h264-decode-failed",
+      "ffmpeg_branding": "Chromium",
       "artifact_sha256": "e5f09fb58609412cd7e38f14da4aa421ee3d636524ea338e25e1893eff1b9de0",
       "artifact_bytes": 368482204,
       "visual_studio_version": "2022",
       "msvc_version": "14.44.35207",
-      "verification_scope": "In-process Windows desktop capture, encode/decode, UDP host-host with DTLS, data-channel echo. No screen content saved. Other platforms and product integration remain unverified."
+      "verification_scope": "Previous GN configuration defaulted ffmpeg_branding to Chromium. Real VP8 software libvpx capture/encode/decode passed 30 frames at 1280x720. Explicit H264 constrained baseline encoded 123 frames with software OpenH264 but decoded zero because CONFIG_H264_DECODER=0. This library hash does not apply to the corrected Chrome FFmpeg configuration. No screen content saved."
     }
   },
   "notes": [
