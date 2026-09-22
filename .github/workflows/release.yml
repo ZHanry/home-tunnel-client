@@ -3,6 +3,16 @@ name: Release client
   push:
     tags:
     - v*
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful tag build run containing the exact candidate-assets to publish
+        required: true
+        type: string
+      acceptance_json:
+        description: Complete real Windows native acceptance report for those final packaged bytes
+        required: true
+        type: string
 permissions:
   contents: write
   checks: read
@@ -35,8 +45,10 @@ jobs:
         python3 scripts/release.py metadata
   agent-evidence:
     name: Windows x64 GUI package and Agent evidence
+    if: github.event_name == 'push'
     needs: metadata
-    runs-on: windows-latest
+    runs-on: ${{ vars.WINDOWS_NATIVE_RUNNER || 'windows-2022' }}
+    timeout-minutes: 180
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
@@ -63,6 +75,9 @@ jobs:
           Select-Object -First 1 -ExpandProperty FullName
         if (-not $windres) { throw 'windres.exe not found in the pinned MinGW archive' }
         "HOME_TUNNEL_WINDRES=$windres" >> $env:GITHUB_ENV
+    - name: Build native desktop worker from the tagged source
+      shell: pwsh
+      run: .\scripts\build-native-windows.ps1
     - id: agent
       name: Reproduce the reviewed Agent baseline
       shell: pwsh
@@ -122,7 +137,7 @@ jobs:
         WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
         REQUIRE_PLATFORM_SIGNING: ${{ vars.REQUIRE_PLATFORM_SIGNING }}
       run: |
-        $lines = & .\packaging\windows\build-release.ps1 -Version $env:VERSION -WindRes $env:HOME_TUNNEL_WINDRES
+        $lines = & .\packaging\windows\build-release.ps1 -Version $env:VERSION -WindRes $env:HOME_TUNNEL_WINDRES -RemoteHostBuild "$PWD/outputs/native-windows-build/remote-host-build.json"
         $lines | Write-Output
         $zip = ($lines | Where-Object { $_ -like 'ZIP=*' } |
           Select-Object -First 1) -replace '^ZIP=', ''
@@ -134,7 +149,7 @@ jobs:
         }
         $inspect = Join-Path $env:RUNNER_TEMP 'home-tunnel-package-smoke'
         Expand-Archive -LiteralPath $zip -DestinationPath $inspect -Force
-        foreach ($name in @('home-tunnel-gui.exe','home-tunnel-agent.exe','HomeTunnel.ico')) {
+        foreach ($name in @('home-tunnel-gui.exe','home-tunnel-agent.exe','home_tunnel_remote_host.exe','remote-host-provenance.json','remote-host-build.json','remote-source-manifest.json','WEBRTC-THIRD-PARTY-NOTICES.md','HomeTunnel.ico')) {
           if (-not (Test-Path -LiteralPath (Join-Path $inspect $name))) { throw "Missing packaged file: $name" }
         }
         $agentVersionText = (& (Join-Path $inspect 'home-tunnel-agent.exe') version | Out-String).Trim()
@@ -230,6 +245,7 @@ jobs:
           Copy-Item -Destination release-windows
         Copy-Item windows-exe-smoke.json, windows-defender-scan.json, windows-installer-smoke.json, agent-provenance.json, agent-provenance.json.sigstore.json release-windows
         Copy-Item outputs/windows/windows-platform-signing.json release-windows
+        Copy-Item outputs/windows/remote-host-provenance.json, outputs/windows/remote-host-build.json, outputs/windows/remote-source-manifest.json, outputs/windows/WEBRTC-THIRD-PARTY-NOTICES.md release-windows
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: windows-release
@@ -237,6 +253,7 @@ jobs:
         if-no-files-found: error
   client-packages:
     name: Client package (${{ matrix.platform }}-${{ matrix.arch }})
+    if: github.event_name == 'push'
     needs: metadata
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -358,7 +375,8 @@ jobs:
           ${{ steps.artifact.outputs.sbom }}.sigstore.json
         if-no-files-found: error
   collect:
-    name: Collect complete component artifact set
+    name: Prepare immutable packages for real native acceptance
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs:
     - metadata
@@ -379,29 +397,34 @@ jobs:
     - env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        python3 scripts/release.py seal
+        python3 scripts/release.py prepare
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: candidate-assets
         path: release/*
         if-no-files-found: error
   rc-release:
-    name: Publish verified release
+    name: Publish the original packages after real native acceptance
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs:
     - metadata
-    - collect
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: candidate-assets
         path: release
+        run-id: ${{ inputs.build_run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
     - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
     - name: Seal and publish verified release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        NATIVE_BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        NATIVE_ACCEPTANCE_JSON: ${{ inputs.acceptance_json }}
       run: |
+        python3 scripts/release.py import-native-acceptance
         python3 scripts/release.py seal
         cosign sign-blob --yes --bundle release/SHA256SUMS.txt.sigstore.json release/SHA256SUMS.txt
         python3 scripts/release.py stable

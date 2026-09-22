@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
-PROJECT = json.loads((ROOT / "compatibility.json").read_text())
+PROJECT = json.loads((ROOT / "compatibility.json").read_text(encoding="utf-8"))
 COMPONENT = PROJECT["component"]
 REPO = os.environ["GITHUB_REPOSITORY"]
 SHA = os.environ["GITHUB_SHA"]
@@ -23,10 +23,10 @@ def api(endpoint):
 
 def local_version():
     if COMPONENT == "server":
-        return json.loads((ROOT / "control-center/package.json").read_text())["version"]
+        return json.loads((ROOT / "control-center/package.json").read_text(encoding="utf-8"))["version"]
     if COMPONENT == "client":
-        return re.search(r'const Version = "([^"]+)"', (ROOT / "internal/model/model.go").read_text()).group(1)
-    return re.search(r'^HOME_TUNNEL_VERSION_NAME=(.+)$', (ROOT / "gradle.properties").read_text(), re.M).group(1)
+        return re.search(r'const Version = "([^"]+)"', (ROOT / "internal/model/model.go").read_text(encoding="utf-8")).group(1)
+    return re.search(r'^HOME_TUNNEL_VERSION_NAME=(.+)$', (ROOT / "gradle.properties").read_text(encoding="utf-8"), re.M).group(1)
 
 def validate_release_tag(tag, source_version, stage):
     if stage not in ("internal-testing", "public-release"):
@@ -61,19 +61,21 @@ def metadata():
                            "stable":str(not candidate).lower(),"rc-version":rc_tag.removeprefix('v'),"rc-tag":rc_tag}.items():
             output.write(f"{key}={value}\n")
 
-def required_assets(directory):
+def required_assets(directory, *, for_publication=True):
     version = local_version()
     if COMPONENT == "client":
         expected = [f"HomeTunnel-Setup-{version}-x64.exe", f"HomeTunnel-Windows-{version}-x64.zip"]
         expected += [f"home-tunnel-{platform}-{version}-{arch}.tar.gz" for platform in ("linux","macos") for arch in ("amd64","arm64")]
         expected += ["agent-provenance.json", "windows-defender-scan.json", "windows-installer-smoke.json",
-                     "remote-host-provenance.json", "remote-host-build.json", "windows-remote-native-acceptance.json"]
+                     "remote-host-provenance.json", "remote-host-build.json", "remote-source-manifest.json"]
+        if for_publication:
+            expected.append("windows-remote-native-acceptance.json")
     elif COMPONENT == "android":
         expected = [f"HomeTunnel-Android-{version}-arm64-v8a.apk", f"HomeTunnel-Android-{version}.aab", "android-release-evidence.json"]
     else:
         expected = ["image-control-center.json", "image-traffic-gateway.json", "home-tunnel.v1.json"]
         for name in ("control-center", "traffic-gateway"):
-            record = json.loads((directory / f"image-{name}.json").read_text())
+            record = json.loads((directory / f"image-{name}.json").read_text(encoding="utf-8"))
             if record["revision"] != SHA or not re.fullmatch(r"sha256:[a-f0-9]{64}", record["digest"]):
                 raise SystemExit("Invalid server image identity")
     for name in expected:
@@ -81,14 +83,34 @@ def required_assets(directory):
             raise SystemExit(f"Missing release asset: {name}")
     if COMPONENT == "client":
         verify_windows_evidence(directory, version, SHA)
-        verify_remote_evidence(directory, version, SHA)
+        if for_publication:
+            verify_remote_evidence(directory, version, SHA)
+        else:
+            verify_remote_build(directory, version, SHA)
+
+def validate_windows_archive(bundle):
+    """Windows extraction must not replace a verified payload via a path alias."""
+    seen = set()
+    for item in bundle.infolist():
+        name = item.filename
+        if not name or '\\' in name or ':' in name or name.startswith('/') or any(ord(c) < 32 for c in name):
+            raise SystemExit('Unsafe Windows archive path')
+        parts = name.rstrip('/').split('/')
+        if any(not part or part in ('.', '..') or part.endswith((' ', '.')) or
+               re.fullmatch(r'(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?', part, re.I) for part in parts):
+            raise SystemExit('Unsafe Windows archive path')
+        normalized = '/'.join(parts).casefold()
+        if normalized in seen or (item.external_attr >> 16) & 0o170000 == 0o120000:
+            raise SystemExit('Aliased or linked Windows archive payload')
+        seen.add(normalized)
+
 
 def verify_windows_evidence(directory, version, revision):
     """Bind real antivirus and installer checks to the exact bytes being published."""
     from datetime import datetime, timedelta, timezone
     import zipfile
-    scan = json.loads((directory / "windows-defender-scan.json").read_text())
-    install = json.loads((directory / "windows-installer-smoke.json").read_text())
+    scan = json.loads((directory / "windows-defender-scan.json").read_text(encoding="utf-8"))
+    install = json.loads((directory / "windows-installer-smoke.json").read_text(encoding="utf-8"))
     for report in (scan, install):
         if report.get("status") != "passed" or report.get("version") != version or report.get("repository_revision") != revision:
             raise SystemExit("Windows release evidence is missing, failed or belongs to another build")
@@ -110,24 +132,33 @@ def verify_windows_evidence(directory, version, revision):
         if hashlib.sha256((directory / name).read_bytes()).hexdigest() != records[name].get("sha256"):
             raise SystemExit("Windows release bytes differ from the scanned files")
     with zipfile.ZipFile(directory / archive) as bundle:
+        validate_windows_archive(bundle)
         for name in ("home-tunnel-gui.exe", "home-tunnel-agent.exe", "home_tunnel_remote_host.exe"):
             if bundle.namelist().count(name) != 1:
                 raise SystemExit("Windows archive must contain each executable exactly once")
             if hashlib.sha256(bundle.read(name)).hexdigest() != records[name].get("sha256"):
                 raise SystemExit("Windows archive payload differs from the scanned files")
+        installed = install.get('installed_payloads', [])
+        installed_by_name = {item['name']: item.get('sha256') for item in installed}
+        required_payloads = {'home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe',
+                             'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md'}
+        if len(installed_by_name) != len(installed) or not required_payloads <= installed_by_name.keys():
+            raise SystemExit('Windows installer evidence omits actual installed payload identities')
+        for name in required_payloads:
+            if bundle.namelist().count(name) != 1 or hashlib.sha256(bundle.read(name)).hexdigest() != installed_by_name[name]:
+                raise SystemExit('Windows installer payload differs from the verified portable package')
     if install.get("installer_sha256") != records[setup]["sha256"] or any(install.get(check) != "passed" for check in ("install", "payload_hashes", "uninstall", "embedded_icon", "gui_subsystem", "native_window_icon")):
         raise SystemExit("Windows installer lifecycle checks do not match this installer")
 
 
-def verify_remote_evidence(directory, version, revision):
-    """Refuse a core-only package, stale native report or changed signed worker."""
+def verify_remote_build(directory, version, revision):
+    """Validate build identities only; this is insufficient to publish a release."""
     import zipfile
-    provenance = json.loads((directory / "remote-host-provenance.json").read_text())
-    build = json.loads((directory / "remote-host-build.json").read_text())
-    acceptance = json.loads((directory / "windows-remote-native-acceptance.json").read_text())
+    provenance = json.loads((directory / "remote-host-provenance.json").read_text(encoding="utf-8"))
+    build = json.loads((directory / "remote-host-build.json").read_text(encoding="utf-8"))
     lock_path = ROOT / 'native/remote/remote-deps.lock.json'
-    dependency = json.loads(lock_path.read_text())
-    server = json.loads((ROOT / 'tests/remote-native/server-lock.json').read_text())
+    dependency = json.loads(lock_path.read_text(encoding="utf-8"))
+    server = json.loads((ROOT / 'tests/remote-native/server-lock.json').read_text(encoding="utf-8"))
     worker = provenance.get('worker', {})
     engine = provenance.get('engine', {})
     if (provenance.get('schema_version') != 1 or provenance.get('version') != version or
@@ -148,19 +179,31 @@ def verify_remote_evidence(directory, version, revision):
     expected_build = {'sha256': worker['unsigned_sha256'], 'version': version, 'repository_revision': revision,
                       'source_modified': False, 'target_os': 'win', 'target_cpu': 'x64',
                       'webrtc_revision': engine['revision'], 'deps_lock_sha256': engine['lock_sha256'],
-                      'authorization_tests': 'passed', 'notices_sha256': provenance.get('notices_sha256')}
+                      'authorization_tests': 'passed', 'notices_sha256': provenance.get('notices_sha256'),
+                      'source_manifest_sha256': provenance.get('source_manifest_sha256')}
     if any(build.get(key) != value for key, value in expected_build.items()):
         raise SystemExit('Native pre-signing build does not match the final provenance')
     with zipfile.ZipFile(directory / f'HomeTunnel-Windows-{version}-x64.zip') as bundle:
+        validate_windows_archive(bundle)
         if bundle.namelist().count(worker['name']) != 1 or hashlib.sha256(bundle.read(worker['name'])).hexdigest() != worker['sha256']:
             raise SystemExit('Packaged native worker differs from its provenance')
-        for name in ('remote-host-provenance.json', 'remote-host-build.json'):
+        for name in ('remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json'):
             if bundle.namelist().count(name) != 1 or bundle.read(name) != (directory / name).read_bytes():
                 raise SystemExit('Packaged native provenance differs from the published evidence')
         notice = 'WEBRTC-THIRD-PARTY-NOTICES.md'
         if (bundle.namelist().count(notice) != 1 or
                 hashlib.sha256(bundle.read(notice)).hexdigest() != provenance.get('notices_sha256')):
             raise SystemExit('Packaged native dependency notices are missing or changed')
+        source_manifest_hash = hashlib.sha256(bundle.read('remote-source-manifest.json')).hexdigest()
+        if source_manifest_hash != provenance.get('source_manifest_sha256'):
+            raise SystemExit('Packaged native source manifest differs from its provenance')
+    return worker, server
+
+
+def verify_remote_evidence(directory, version, revision):
+    """Refuse a core-only package, stale native report or changed signed worker."""
+    worker, server = verify_remote_build(directory, version, revision)
+    acceptance = json.loads((directory / "windows-remote-native-acceptance.json").read_text(encoding="utf-8"))
     if acceptance.get('status') != 'passed' or acceptance.get('input', {}).get('status') != 'passed':
         raise SystemExit('Real native video and input acceptance must both pass')
     if any(acceptance['input'].get(check) is not True for check in ('keyboard_down_up', 'unicode_text', 'pointer_down_up',
@@ -182,13 +225,14 @@ def verify_remote_evidence(directory, version, revision):
             type(media.get('frames_decoded')) is not int or media['frames_decoded'] < 5 or media.get('failures') != []):
         raise SystemExit('Native acceptance does not prove continuing authenticated UDP video')
 
-def seal():
+def seal(*, for_publication=True):
     directory = ROOT / "release"
-    required_assets(directory)
-    manifest={"component":COMPONENT,"version":local_version(),"repository":REPO,"revision":SHA,"api_major":1,"rc_tag":TAG}
+    required_assets(directory, for_publication=for_publication)
+    manifest={"component":COMPONENT,"version":local_version(),"repository":REPO,"revision":SHA,"api_major":1,"rc_tag":TAG,
+              "verification_stage": "verified" if for_publication else "prepared"}
     (directory/'release-manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     if COMPONENT == 'server':
-        records = [json.loads((directory/f'image-{name}.json').read_text()) for name in ('control-center','traffic-gateway')]
+        records = [json.loads((directory/f'image-{name}.json').read_text(encoding="utf-8")) for name in ('control-center','traffic-gateway')]
         lines = ['services:']
         for record in records:
             lines += [f"  {record['name']}:", f"    image: {record['image']}@{record['digest']}"]
@@ -199,26 +243,61 @@ def seal():
             lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n")
     (directory/'SHA256SUMS.txt').write_text(''.join(lines), encoding='utf-8')
 
-def verify(directory, rc_tag):
-    identity = f"https://github.com/{REPO}/.github/workflows/release.yml@refs/tags/{rc_tag}"
-    run("cosign","verify-blob","--bundle",str(directory/'SHA256SUMS.txt.sigstore.json'),
-        "--certificate-identity",identity,"--certificate-oidc-issuer","https://token.actions.githubusercontent.com",str(directory/'SHA256SUMS.txt'))
+def verify_sealed_files(directory):
     listed = set()
-    for line in (directory/'SHA256SUMS.txt').read_text().splitlines():
+    for line in (directory/'SHA256SUMS.txt').read_text(encoding="utf-8").splitlines():
         checksum, name = line.split('  ',1)
         if Path(name).name != name or not re.fullmatch(r'[a-f0-9]{64}',checksum):
             raise SystemExit('Invalid checksum manifest path or hash')
+        if name in listed:
+            raise SystemExit('Duplicate checksum manifest entry')
         if hashlib.sha256((directory/name).read_bytes()).hexdigest() != checksum:
             raise SystemExit(f'Checksum mismatch: {name}')
         listed.add(name)
     actual={p.name for p in directory.iterdir() if p.is_file()}-{'SHA256SUMS.txt','SHA256SUMS.txt.sigstore.json'}
     if actual != listed:
         raise SystemExit('Unsealed or missing release assets')
-    manifest=json.loads((directory/'release-manifest.json').read_text())
-    for key,value in {'repository':REPO,'revision':SHA,'version':local_version(),'component':COMPONENT,'rc_tag':rc_tag}.items():
+
+
+def verify(directory, rc_tag):
+    identity = f"https://github.com/{REPO}/.github/workflows/release.yml@refs/tags/{rc_tag}"
+    run("cosign","verify-blob","--bundle",str(directory/'SHA256SUMS.txt.sigstore.json'),
+        "--certificate-identity",identity,"--certificate-oidc-issuer","https://token.actions.githubusercontent.com",str(directory/'SHA256SUMS.txt'))
+    verify_sealed_files(directory)
+    manifest=json.loads((directory/'release-manifest.json').read_text(encoding="utf-8"))
+    for key,value in {'repository':REPO,'revision':SHA,'version':local_version(),'component':COMPONENT,'rc_tag':rc_tag,'verification_stage':'verified'}.items():
         if manifest.get(key)!=value: raise SystemExit(f'Release manifest mismatch: {key}')
     required_assets(directory)
     return identity
+
+
+def import_native_acceptance():
+    """Bind a maintainer's real-device report to an existing immutable build run."""
+    run_id = os.environ.get('NATIVE_BUILD_RUN_ID', '')
+    raw = os.environ.get('NATIVE_ACCEPTANCE_JSON', '')
+    if not re.fullmatch(r'[1-9][0-9]{0,19}', run_id) or len(raw.encode('utf-8')) > 60000:
+        raise SystemExit('Expected a build run ID and bounded native acceptance JSON')
+    source = api(f'repos/{REPO}/actions/runs/{run_id}')
+    if (source.get('head_sha') != SHA or source.get('event') != 'push' or source.get('conclusion') != 'success' or
+            source.get('path') != '.github/workflows/release.yml' or source.get('repository', {}).get('full_name') != REPO):
+        raise SystemExit('Native acceptance must use the successful release build of this exact tag commit')
+    directory = ROOT / 'release'
+    verify_sealed_files(directory)
+    manifest = json.loads((directory / 'release-manifest.json').read_text(encoding="utf-8"))
+    expected = {'component': COMPONENT, 'version': local_version(), 'repository': REPO, 'revision': SHA,
+                'rc_tag': TAG, 'verification_stage': 'prepared'}
+    if any(manifest.get(key) != value for key, value in expected.items()):
+        raise SystemExit('Downloaded build artifacts do not belong to this prepared release')
+    report = json.loads(raw)
+    path = directory / 'windows-remote-native-acceptance.json'
+    if path.exists():
+        raise SystemExit('Prepared builds must not contain preapproved native acceptance')
+    path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    try:
+        required_assets(directory)
+    except BaseException:
+        path.unlink()
+        raise
 
 def public_asset_names(component, version):
     if component == "android":
@@ -235,7 +314,7 @@ def publish(stable=False):
     identity=verify(directory,TAG)
     if COMPONENT=='server' and stable:
         for name in ('control-center','traffic-gateway'):
-            record=json.loads((directory/f'image-{name}.json').read_text())
+            record=json.loads((directory/f'image-{name}.json').read_text(encoding="utf-8"))
             reference=f"{record['image']}@{record['digest']}"
             run('cosign','verify',reference,'--certificate-identity',identity,'--certificate-oidc-issuer','https://token.actions.githubusercontent.com',capture=True)
     import shutil
@@ -273,6 +352,8 @@ def publish(stable=False):
 if __name__=='__main__':
     action=sys.argv[1]
     if action=='metadata': metadata()
+    elif action=='prepare': seal(for_publication=False)
+    elif action=='import-native-acceptance': import_native_acceptance()
     elif action=='seal': seal()
     elif action=='rc': publish()
     elif action=='stable': publish(stable=True)

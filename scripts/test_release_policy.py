@@ -25,14 +25,18 @@ class ReleasePolicyTests(unittest.TestCase):
         version = "6.0.1"
         setup = "HomeTunnel-Setup-6.0.1-x64.exe"
         archive = "HomeTunnel-Windows-6.0.1-x64.zip"
-        payload = {"home-tunnel-gui.exe": b"gui", "home-tunnel-agent.exe": b"agent", "home_tunnel_remote_host.exe": b"native worker fixture"}
+        payload = {"home-tunnel-gui.exe": b"gui", "home-tunnel-agent.exe": b"agent", "home_tunnel_remote_host.exe": b"native worker fixture",
+                   "remote-host-provenance.json": b'{}', "remote-host-build.json": b'{}', 'remote-source-manifest.json': b'{}',
+                   'WEBRTC-THIRD-PARTY-NOTICES.md': b'fixture notices'}
         (directory/setup).write_bytes(b"installer")
         with zipfile.ZipFile(directory/archive, "w") as bundle:
             for name, data in payload.items(): bundle.writestr(name, data)
+        installed_payloads = [{'name': name, 'sha256': hashlib.sha256(data).hexdigest()} for name, data in payload.items()]
+        payload = {name: data for name, data in payload.items() if name.endswith('.exe')}
         payload.update({setup:(directory/setup).read_bytes(), archive:(directory/archive).read_bytes()})
         now = datetime.now(timezone.utc)
         scan = {"status":"passed", "version":version, "repository_revision":"revision", "engine":"Microsoft Defender", "engine_version":"engine", "signature_version":"signature", "scanned_at":now.isoformat(), "signature_updated_at":now.isoformat(), "files":[{"name":name,"sha256":hashlib.sha256(data).hexdigest(),"exit_code":0} for name,data in payload.items()]}
-        install = {"status":"passed","version":version,"repository_revision":"revision","installer_sha256":hashlib.sha256(b"installer").hexdigest(),"install":"passed","payload_hashes":"passed","uninstall":"passed","embedded_icon":"passed","gui_subsystem":"passed","native_window_icon":"passed"}
+        install = {"status":"passed","version":version,"repository_revision":"revision","installer_sha256":hashlib.sha256(b"installer").hexdigest(),"install":"passed","payload_hashes":"passed","uninstall":"passed","embedded_icon":"passed","gui_subsystem":"passed","native_window_icon":"passed", 'installed_payloads': installed_payloads}
         (directory/'windows-defender-scan.json').write_text(json.dumps(scan))
         (directory/'windows-installer-smoke.json').write_text(json.dumps(install))
         return scan
@@ -48,11 +52,12 @@ class ReleasePolicyTests(unittest.TestCase):
                       'engine': {'revision': dependency['webrtc']['revision'], 'lock_sha256': hashlib.sha256(lock_path.read_bytes()).hexdigest()},
                       'server': {key: server[key] for key in ('repository', 'revision')},
                       'build': {'source_modified': False, 'authorization_tests': 'passed'},
-                      'notices_sha256': hashlib.sha256(b'fixture notices').hexdigest()}
+                      'notices_sha256': hashlib.sha256(b'fixture notices').hexdigest(),
+                      'source_manifest_sha256': hashlib.sha256(b'{}').hexdigest()}
         build = {'sha256': digest, 'version': '6.0.1', 'repository_revision': 'revision', 'source_modified': False,
                  'target_os': 'win', 'target_cpu': 'x64', 'webrtc_revision': provenance['engine']['revision'],
                  'deps_lock_sha256': provenance['engine']['lock_sha256'], 'authorization_tests': 'passed',
-                 'notices_sha256': provenance['notices_sha256']}
+                 'notices_sha256': provenance['notices_sha256'], 'source_manifest_sha256': provenance['source_manifest_sha256']}
         report = {'status': 'passed', 'input': {'status': 'passed', **{key: True for key in ('keyboard_down_up', 'unicode_text', 'pointer_down_up',
                   'native_process_confinement', 'os_foreground_verified', 'released')}}, 'worker_sha256': digest,
                   'sources': {'client': {'commit': 'revision', 'modified': False}, 'server': {'commit': server['revision'], 'modified': False}},
@@ -62,10 +67,12 @@ class ReleasePolicyTests(unittest.TestCase):
                             'closed': False, 'dtls_state': 'connected', 'frames_decoded': 20, 'failures': []}}
         (directory / 'remote-host-provenance.json').write_text(json.dumps(provenance))
         (directory / 'remote-host-build.json').write_text(json.dumps(build))
+        (directory / 'remote-source-manifest.json').write_bytes(b'{}')
         (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(report))
-        with zipfile.ZipFile(directory / 'HomeTunnel-Windows-6.0.1-x64.zip', 'a') as bundle:
+        with zipfile.ZipFile(directory / 'HomeTunnel-Windows-6.0.1-x64.zip', 'w') as bundle:
+            bundle.writestr('home_tunnel_remote_host.exe', b'native worker fixture')
             bundle.writestr('WEBRTC-THIRD-PARTY-NOTICES.md', b'fixture notices')
-            for name in ('remote-host-provenance.json', 'remote-host-build.json'):
+            for name in ('remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json'):
                 bundle.writestr(name, (directory / name).read_bytes())
         return provenance, report
 
@@ -105,6 +112,17 @@ class ReleasePolicyTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         module.verify_remote_evidence(directory, '6.0.1', 'revision')
 
+    def test_windows_extraction_aliases_cannot_replace_the_verified_worker(self):
+        for alias in ('HOME_TUNNEL_REMOTE_HOST.EXE', 'home_tunnel_remote_host.exe.',
+                      '../home_tunnel_remote_host.exe', 'home_tunnel_remote_host.exe:stream', 'C:/payload.exe'):
+            with self.subTest(alias=alias), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary)
+                self.remote_fixture(directory)
+                with zipfile.ZipFile(directory / 'HomeTunnel-Windows-6.0.1-x64.zip', 'a') as bundle:
+                    bundle.writestr(alias, b'unverified replacement')
+                with self.assertRaisesRegex(SystemExit, 'Windows archive'):
+                    module.verify_remote_build(directory, '6.0.1', 'revision')
+
     def test_publication_requires_scanned_bytes_and_successful_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -113,6 +131,38 @@ class ReleasePolicyTests(unittest.TestCase):
             (directory/'HomeTunnel-Setup-6.0.1-x64.exe').write_bytes(b"replaced after scan")
             with self.assertRaisesRegex(SystemExit, "differ from the scanned"):
                 module.verify_windows_evidence(directory, "6.0.1", "revision")
+
+    def test_installer_payload_must_be_the_same_worker_as_portable_acceptance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.windows_fixture(directory)
+            path = directory / 'windows-installer-smoke.json'
+            report = json.loads(path.read_text())
+            worker = next(item for item in report['installed_payloads'] if item['name'] == 'home_tunnel_remote_host.exe')
+            worker['sha256'] = hashlib.sha256(b'other installer worker').hexdigest()
+            path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(SystemExit, 'installer payload differs'):
+                module.verify_windows_evidence(directory, '6.0.1', 'revision')
+
+    def test_prepared_build_can_never_be_published_as_verified(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            manifest = {'repository': module.REPO, 'revision': module.SHA, 'version': module.local_version(),
+                        'component': module.COMPONENT, 'rc_tag': module.TAG, 'verification_stage': 'prepared'}
+            path = directory / 'release-manifest.json'
+            path.write_text(json.dumps(manifest))
+            (directory / 'SHA256SUMS.txt').write_text(hashlib.sha256(path.read_bytes()).hexdigest() + '  release-manifest.json\n')
+            with patch.object(module, 'run'), self.assertRaisesRegex(SystemExit, 'verification_stage'):
+                module.verify(directory, module.TAG)
+
+    def test_native_report_cannot_select_another_build_or_workflow(self):
+        source = {'head_sha': module.SHA, 'event': 'push', 'conclusion': 'success',
+                  'path': '.github/workflows/release.yml', 'repository': {'full_name': module.REPO}}
+        for key, value in (('head_sha', 'other'), ('event', 'pull_request'), ('conclusion', 'failure'), ('path', 'other.yml')):
+            with self.subTest(key=key), patch.dict(os.environ, {'NATIVE_BUILD_RUN_ID': '123', 'NATIVE_ACCEPTANCE_JSON': '{}'}), \
+                    patch.object(module, 'api', return_value={**source, key: value}), \
+                    self.assertRaisesRegex(SystemExit, 'exact tag commit'):
+                module.import_native_acceptance()
 
     def test_failed_partial_stale_and_wrong_revision_scans_block_publication(self):
         with tempfile.TemporaryDirectory() as temporary:
