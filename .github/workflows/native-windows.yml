@@ -8,6 +8,7 @@ on:
       - 'scripts/build-native-windows.ps1'
       - 'scripts/build-remote-webrtc.py'
       - 'scripts/generate-remote-notices.py'
+      - 'scripts/package-remote-sdk.py'
       - 'native/remote/**'
 permissions:
   contents: read

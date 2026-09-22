@@ -1,5 +1,6 @@
 #include "authorization.hpp"
 #include "peer_identity.hpp"
+#include "../android/controller_identity.hpp"
 #include "sdp_policy.hpp"
 #include "json/writer.h"
 #include "openssl/bn.h"
@@ -151,29 +152,94 @@ void native_identity(const Json::Value& vectors) {
   REQUIRE(identity->authorize(request,now,1,verified)==Error::permission);
   REQUIRE(identity->authorize(request,now,15,verified)==Error::ok);
   REQUIRE(identity->authorize(request,now,15,verified)==Error::identity);
-  auto envelope=[&](const char* kind,unsigned sequence,const Json::Value& payload,bool local) {
+  auto controller_identity=ControllerIdentity::prepare(ticket["session_id"].asString(),ticket["connection_epoch"].asUInt());
+  REQUIRE(controller_identity && controller_identity->certificate());
+  REQUIRE(controller_identity->prepared()["dtls_fingerprint_sha256"]!=identity->prepared()["dtls_fingerprint_sha256"]);
+  REQUIRE(controller_identity->prepared()["controller_nonce"]!=identity->prepared()["host_nonce"]);
+  REQUIRE(!controller_identity->prepared().isMember("host_nonce"));
+  auto controller_context=request;controller_context.removeMember("prepared");
+  invalid=controller_context;invalid["prepared"]=identity->prepared();
+  REQUIRE(controller_identity->authorize(invalid,now,15,verified)==Error::identity && verified.permissions==0);
+  invalid=controller_context;invalid["controller_public_jwk"]=host.record["public_jwk"];
+  REQUIRE(controller_identity->authorize(invalid,now,15,verified)!=Error::ok && verified.permissions==0);
+  invalid=controller_context;invalid["local_grant_revoked"]=true;
+  REQUIRE(controller_identity->authorize(invalid,now,15,verified)==Error::identity);
+  invalid=controller_context;invalid["session_request_id"]="another-request";
+  REQUIRE(controller_identity->authorize(invalid,now,15,verified)!=Error::ok);
+  invalid=controller_context;invalid["server_keyset"]["restore_epoch"]=3;
+  REQUIRE(controller_identity->authorize(invalid,now,15,verified)!=Error::ok);
+  invalid=controller_context;invalid["server_keyset"]["keys"][0]=host.record;
+  REQUIRE(controller_identity->authorize(invalid,now,15,verified)!=Error::ok);
+  invalid=controller_context;invalid["grant_jws"]=controller.sign(grant,"ht-rd-grant+jwt");
+  REQUIRE(controller_identity->authorize(invalid,now,15,verified)!=Error::ok);
+  REQUIRE(controller_identity->authorize(controller_context,now+60000,15,verified)==Error::expired);
+  REQUIRE(controller_identity->authorize(controller_context,now,1,verified)==Error::permission);
+  REQUIRE(controller_identity->authorize(controller_context,now,15,verified)==Error::ok);
+  REQUIRE(controller_identity->expected().controller_jkt==controller.record["kid"].asString());
+  REQUIRE(controller_identity->authorize(controller_context,now,15,verified)==Error::identity);
+  auto envelope=[&](const char* kind,unsigned sequence,const Json::Value& payload,bool local,const Json::Value& overrides=Json::Value{}) {
     Json::Value claims;claims["v"]=1;claims["type"]=kind;claims["session_id"]=ticket["session_id"];
     claims["connection_epoch"]=ticket["connection_epoch"];claims["ticket_jti"]=ticket["jti"];
     claims["from_endpoint_id"]=ticket[local?"host_endpoint_id":"controller_endpoint_id"];
     claims["to_endpoint_id"]=ticket[local?"controller_endpoint_id":"host_endpoint_id"];
     claims["created_at"]="2026-09-22T00:02:00.000Z";claims["seq"]=std::to_string(sequence);claims["payload"]=payload;
+    for(const auto& name:overrides.getMemberNames())claims[name]=overrides[name];
     Json::Value outer;for(const auto name:{"v","type","session_id","connection_epoch"})outer[name]=claims[name];
     outer["payload_jws"]=(local?host:controller).sign(claims,"ht-rd-peer+jwt");return outer;
   };
-  Json::Value offer;offer["type"]="offer";offer["sdp"]="test-offer";Json::Value extracted;
+  Json::Value offer;offer["type"]="offer";offer["sdp"]="v=0\r\na=controller-offer\r\n";Json::Value extracted;
   auto remote=envelope("peer.offer",1,offer,false);
+  REQUIRE(controller_identity->signed_offer(remote,now)==Error::identity);
+  controller_identity->expect_offer(offer);
+  auto changed_offer=offer;changed_offer["sdp"]="v=0\r\na=substituted\r\n";
+  controller_identity->expect_offer(changed_offer); // Cannot replace the native offer.
+  REQUIRE(controller_identity->signed_offer(envelope("peer.offer",1,changed_offer,false),now)==Error::identity);
+  REQUIRE(controller_identity->signed_offer(envelope("peer.offer",1,offer,true),now)!=Error::ok);
+  REQUIRE(controller_identity->signed_offer(remote,now+60001)==Error::identity);
+  REQUIRE(controller_identity->signed_offer(remote,now)==Error::ok);
+  REQUIRE(controller_identity->signed_offer(remote,now)==Error::identity);
+  REQUIRE(controller_identity->peer_signal(Json::Value(Json::arrayValue),now,extracted)==Error::identity);
+  REQUIRE(controller_identity->renew(Json::Value(Json::arrayValue),now,verified)==Error::malformed);
   REQUIRE(identity->peer_signal(remote,now,extracted)==Error::ok && extracted==offer);
   REQUIRE(identity->peer_signal(remote,now,extracted)==Error::identity);
   REQUIRE(identity->peer_signal(envelope("peer.offer",2,offer,false),now,extracted)==Error::identity);
-  Json::Value answer;answer["type"]="answer";answer["sdp"]="test-answer";identity->expect_answer(answer);
+  Json::Value answer;answer["type"]="answer";answer["sdp"]="v=0\r\na=host-answer\r\n";identity->expect_answer(answer);
   auto wrong=answer;wrong["sdp"]="substituted";
   REQUIRE(identity->signed_answer(envelope("peer.answer",1,wrong,true),now)==Error::identity);
-  REQUIRE(identity->signed_answer(envelope("peer.answer",1,answer,true),now)==Error::ok);
-  auto hello=identity->hello_body();std::array<uint8_t,32> controller_nonce{};controller_nonce.fill(19);
-  hello["nonce"]=encode(controller_nonce);std::vector<uint8_t> transcript;
+  auto signed_answer=envelope("peer.answer",1,answer,true);
+  // Both transcript hashes use the same signed answer bytes, not a fresh ECDSA
+  // signature over identical claims (ECDSA signatures need not be deterministic).
+  REQUIRE(identity->signed_answer(signed_answer,now)==Error::ok);
+  REQUIRE(controller_identity->peer_signal(envelope("peer.answer",1,answer,false),now,extracted)!=Error::ok);
+  auto foreign=signed_answer;foreign["connection_epoch"]=ticket["connection_epoch"].asUInt()+1;
+  REQUIRE(controller_identity->peer_signal(foreign,now,extracted)==Error::identity && extracted.isNull());
+  REQUIRE(controller_identity->peer_signal(signed_answer,now+60001,extracted)==Error::identity);
+  for(const auto name:{"session_id","connection_epoch","from_endpoint_id","to_endpoint_id","ticket_jti","created_at","seq"}) {
+    Json::Value override;
+    if(std::string_view(name)=="connection_epoch")override[name]=ticket[name].asUInt()+1;
+    else if(std::string_view(name)=="created_at")override[name]="2026-09-22T00:00:00.000Z";
+    else if(std::string_view(name)=="seq")override[name]="01";
+    else override[name]="substituted-identity";
+    REQUIRE(controller_identity->peer_signal(envelope("peer.answer",1,answer,true,override),now,extracted)!=Error::ok && extracted.isNull());
+  }
+  REQUIRE(controller_identity->peer_signal(signed_answer,now,extracted)==Error::ok && extracted==answer);
+  REQUIRE(controller_identity->peer_signal(signed_answer,now,extracted)==Error::identity);
+  REQUIRE(controller_identity->peer_signal(envelope("peer.answer",2,answer,true),now,extracted)==Error::identity);
+  REQUIRE(controller_identity->peer_signal(envelope("peer.offer",2,offer,true),now,extracted)==Error::identity);
+  Json::Value candidates;candidates["candidates"]=Json::Value(Json::arrayValue);
+  for(const auto seq:{2U,4U,3U,37U})REQUIRE(controller_identity->peer_signal(envelope("peer.candidates",seq,candidates,true),now,extracted)==Error::ok);
+  REQUIRE(controller_identity->peer_signal(envelope("peer.candidates",4,candidates,true),now,extracted)==Error::identity);
+  REQUIRE(controller_identity->peer_signal(envelope("peer.candidates",5,candidates,true),now,extracted)==Error::identity);
+  auto hello=controller_identity->hello_body();std::array<uint8_t,32> controller_nonce{};controller_nonce.fill(19);
+  std::vector<uint8_t> transcript,controller_transcript;
   wrong=hello;wrong["ticket_hash"]=encode(controller_nonce);
   REQUIRE(identity->hello(wrong,transcript)==Error::identity && transcript.empty());
   REQUIRE(identity->hello(hello,transcript)==Error::ok && transcript.size()==222);
+  wrong=identity->hello_body();wrong["capability_hash"]=encode(controller_nonce);
+  REQUIRE(controller_identity->hello(wrong,controller_transcript)==Error::identity && controller_transcript.empty());
+  REQUIRE(controller_identity->hello(identity->hello_body(),controller_transcript)==Error::ok);
+  REQUIRE(controller_transcript==transcript);
+  REQUIRE(controller_identity->hello(identity->hello_body(),controller_transcript)==Error::identity);
   Json::Value proof;proof["transcript_version"]=1;proof["jkt"]=controller.record["kid"];
   proof["signature"]=encode(host.raw_sign(transcript));
   REQUIRE(identity->controller_proof(proof)==Error::signature);
@@ -181,12 +247,28 @@ void native_identity(const Json::Value& vectors) {
   REQUIRE(!identity->authenticated());
   REQUIRE(identity->host_proof(controller.raw_sign(transcript))==Error::signature);
   REQUIRE(identity->host_proof(host.raw_sign(transcript))==Error::ok && identity->authenticated());
+  Json::Value host_proof;host_proof["transcript_version"]=1;host_proof["jkt"]=host.record["kid"];
+  host_proof["signature"]=encode(controller.raw_sign(transcript));
+  REQUIRE(controller_identity->host_proof(host_proof)==Error::signature);
+  host_proof["signature"]=encode(host.raw_sign(transcript));
+  wrong=host_proof;wrong["jkt"]=controller.record["kid"];
+  REQUIRE(controller_identity->host_proof(wrong)==Error::identity);
+  REQUIRE(controller_identity->host_proof(host_proof)==Error::ok && !controller_identity->authenticated());
+  REQUIRE(controller_identity->controller_proof(host.raw_sign(transcript))==Error::signature);
+  REQUIRE(controller_identity->controller_proof(controller.raw_sign(transcript))==Error::ok && controller_identity->authenticated());
+  REQUIRE(controller_identity->host_proof(host_proof)==Error::identity);
+  REQUIRE(controller_identity->controller_proof(controller.raw_sign(transcript))==Error::identity);
   REQUIRE(identity->host_proof(host.raw_sign(transcript))==Error::identity);
   REQUIRE(identity->controller_proof(proof)==Error::identity);
   REQUIRE(identity->peer_signal(envelope("peer.offer",3,offer,false),now,extracted)==Error::identity);
   lease["lease_seq"]=2;Json::Value renewal;renewal["server_keyset"]=keyset;renewal["lease_jws"]=server.sign(lease,"ht-rd-lease+jwt");
   REQUIRE(identity->renew(renewal,now,verified)==Error::ok && verified.sequence==2);
   REQUIRE(identity->renew(renewal,now,verified)==Error::expired);
+  REQUIRE(controller_identity->renew(renewal,now,verified)==Error::ok && verified.sequence==2);
+  REQUIRE(controller_identity->renew(renewal,now,verified)==Error::expired && verified.permissions==0);
+  lease["lease_seq"]=3;lease["permissions"].append("clipboard.read");
+  renewal["lease_jws"]=server.sign(lease,"ht-rd-lease+jwt");
+  REQUIRE(controller_identity->renew(renewal,now,verified)==Error::permission);
 }
 void sdp_profile() {
   std::string fingerprint;for(int n=0;n<31;++n)fingerprint+="AA:";fingerprint+="AA";

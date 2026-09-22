@@ -1,11 +1,13 @@
-# Remote desktop native core (development)
+# Remote desktop native engine and shared core
 
 This directory contains the shared C++20 ABI, binary framing/UTF-8 validation,
 proof transcript encoder, and independently tested session safety gates for the
-8.0 remote desktop work. It **does not currently implement a working remote
-desktop host/controller**. `ht_rd_get_capabilities` and the worker truthfully
-return `available=false`, `RD_BACKEND_UNAVAILABLE`. No UI/API path can bypass
-that result by asserting that an unverified peer is trusted.
+8.0 remote desktop work. `webrtc/host_worker.cpp` implements the Windows host
+through a separately built, hash-pinned `home_tunnel_remote_host.exe` and the Go
+`internal/remoteengine` adapter. The generic C ABI and security-only core worker
+still return `available=false`, `RD_BACKEND_UNAVAILABLE`; they are not substitutes
+for that media host. Other platform backends require their own integration and
+real-device acceptance.
 
 Implemented and tested:
 
@@ -13,21 +15,23 @@ Implemented and tested:
   big-endian framing, bounds, reserved flags, channel/type and epoch validation.
 - The shared `ht-rd-proof-v1` transcript vector, and actual Windows CNG ES256
   raw-signature verification against the server-owned public vector and its
-  corruptions. Other native crypto backends and the complete signed ticket/grant
-  verifier are not yet wired into a media backend.
+  corruptions. The Windows WebRTC worker also verifies signed tickets, grants,
+  leases and peer proofs independently using pinned BoringSSL.
 - Internal session gates requiring authenticated identity and an observed UDP
   selected pair, rejecting relay/TCP/unknown pairs and stale path revisions.
 - Monotonic lease deadlines, no renewal by replay, no extension on reconnection,
   permission intersection, independent session input state, and two-second
   input heartbeat expiry. Safety tests use a recording input sink, not OS input.
-  Release failures are retained as debt and retried even after close; a future
-  worker must retain that sink and withhold close acknowledgement until settled.
+  The Windows host adds a real OS input sink and a separate release guard.
+  Release failures remain debt after close; workers retain that sink until the
+  recorded injected keys and buttons have been released.
 - Fail-closed ABI lifetime/length/version handling and an inherited-pipe worker
   capability query. The worker has no network listener or arbitrary commands.
 
-The Go `internal/remote` package provides a hash-checked worker query, four-window
+The Go `internal/remote` package provides a worker query, four-window
 session bookkeeping, account/server isolation, and bounded file/text receive
-primitives. These primitives are not a connected remote desktop UI. File receipt
+primitives. Native process and executable hash validation live in
+`internal/remoteengine`. File receipt
 requires an explicitly selected directory and accepted offer, checks offsets and
 final SHA-256, and never overwrites/opens/executes a received file. Atomic
 no-replace publication currently requires a filesystem supporting hard links;
@@ -56,7 +60,7 @@ owning thread instead. Callback payloads are borrowed only during the callback.
 Native surfaces are retained only after a successful attachment;
 an unavailable backend takes no surface reference. The owner must not throw
 exceptions from callbacks. Session/epoch/grant identity will be independently
-verified by the native media backend before its capability is marked available.
+verified by every native media backend before its capability is marked available.
 
 ## Pinned WebRTC engine build
 
@@ -131,8 +135,19 @@ single-session request binding. Server trust advances only from a protected
 local pin through sequential old-active-key-signed rotation proofs; foreign
 instances, rollback, unsigned same-version substitutions and incomplete chains
 are rejected. Tests use the shared public authorization vectors and ephemeral
-test signing keys. These helpers still need integration into the session worker;
-passing helper tests never enables the public media capability.
+test signing keys. The Windows media worker uses these checks for every session;
+passing helper tests alone never establishes product media acceptance.
+
+## Windows native dependency SDK
+
+`scripts/build-native-windows.ps1` packages the actual `webrtc.lib`, source and
+generated headers, public C ABI header, original dependency license files,
+reviewed patches and corresponding-source manifest using
+`scripts/package-remote-sdk.py`. The archive is
+`HomeTunnel-Remote-SDK-<version>-windows-x64.zip`; its adjacent
+`remote-sdk-provenance.json` binds the archive and library hashes. Consumer builds
+must use the recorded compiler, ABI and GN include settings. This C++ dependency
+SDK does not turn the generic C ABI into a complete cross-platform media backend.
 
 ## Android consumer artifact
 
@@ -155,10 +170,11 @@ means that video/audio, platform capture/input, or microphone injection works.
 
 ## Outstanding release gates
 
-Still required: actual libwebrtc integration; signed lease/peer verification in
-the native worker; real Windows/macOS/X11/Wayland capture, input, render and codec
-adapters; controller/host account and authorization flow; native viewing windows;
-system audio and virtual microphone implementation/signing; connected clipboard
-and file UI; AV1/HEVC capability verification; signed worker packaging and upgrade
-coordination; the plan's real-device/network/long-running test evidence. No 8.0
-stable release or all-platform support claim is justified by this core alone.
+Release acceptance must bind the final packaged worker to real browser video,
+confined trusted OS input, heartbeat and worker-crash key/button release, and the
+actual installer/update/Defender evidence. A library codec probe does not replace
+these checks. Android/macOS/X11/Wayland integration and device interoperability,
+native viewing windows, system audio and virtual microphone implementation,
+connected file UI, AV1/HEVC capability verification, signed distribution, and the
+plan's real-device/network/long-running test matrix require separate evidence.
+No stable 8.0 or all-platform support claim follows from this core alone.
