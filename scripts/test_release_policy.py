@@ -25,7 +25,7 @@ class ReleasePolicyTests(unittest.TestCase):
         version = "6.0.1"
         setup = "HomeTunnel-Setup-6.0.1-x64.exe"
         archive = "HomeTunnel-Windows-6.0.1-x64.zip"
-        payload = {"home-tunnel-gui.exe": b"gui", "home-tunnel-agent.exe": b"agent"}
+        payload = {"home-tunnel-gui.exe": b"gui", "home-tunnel-agent.exe": b"agent", "home_tunnel_remote_host.exe": b"native worker fixture"}
         (directory/setup).write_bytes(b"installer")
         with zipfile.ZipFile(directory/archive, "w") as bundle:
             for name, data in payload.items(): bundle.writestr(name, data)
@@ -36,6 +36,74 @@ class ReleasePolicyTests(unittest.TestCase):
         (directory/'windows-defender-scan.json').write_text(json.dumps(scan))
         (directory/'windows-installer-smoke.json').write_text(json.dumps(install))
         return scan
+
+    def remote_fixture(self, directory):
+        self.windows_fixture(directory)
+        lock_path = module.ROOT / 'native/remote/remote-deps.lock.json'
+        dependency = json.loads(lock_path.read_text())
+        server = json.loads((module.ROOT / 'tests/remote-native/server-lock.json').read_text())
+        digest = hashlib.sha256(b'native worker fixture').hexdigest()
+        provenance = {'schema_version': 1, 'version': '6.0.1', 'repository_revision': 'revision', 'abi_version': 1,
+                      'worker': {'name': 'home_tunnel_remote_host.exe', 'sha256': digest, 'unsigned_sha256': digest},
+                      'engine': {'revision': dependency['webrtc']['revision'], 'lock_sha256': hashlib.sha256(lock_path.read_bytes()).hexdigest()},
+                      'server': {key: server[key] for key in ('repository', 'revision')},
+                      'build': {'source_modified': False, 'authorization_tests': 'passed'},
+                      'notices_sha256': hashlib.sha256(b'fixture notices').hexdigest()}
+        build = {'sha256': digest, 'version': '6.0.1', 'repository_revision': 'revision', 'source_modified': False,
+                 'target_os': 'win', 'target_cpu': 'x64', 'webrtc_revision': provenance['engine']['revision'],
+                 'deps_lock_sha256': provenance['engine']['lock_sha256'], 'authorization_tests': 'passed',
+                 'notices_sha256': provenance['notices_sha256']}
+        report = {'status': 'passed', 'input': {'status': 'passed', **{key: True for key in ('keyboard_down_up', 'unicode_text', 'pointer_down_up',
+                  'native_process_confinement', 'os_foreground_verified', 'released')}}, 'worker_sha256': digest,
+                  'sources': {'client': {'commit': 'revision', 'modified': False}, 'server': {'commit': server['revision'], 'modified': False}},
+                  'checks': {key: True for key in ('isolated_real_server', 'native_backend_ready', 'real_browser_identity', 'signed_pairing_and_code_match',
+                             'explicit_session_approval', 'real_continuing_video', 'selected_udp_and_dtls', 'clean_session_shutdown')},
+                  'media': {'ready': True, 'peer_verified': True, 'host_path_verified': True, 'browser_udp_verified': True,
+                            'closed': False, 'dtls_state': 'connected', 'frames_decoded': 20, 'failures': []}}
+        (directory / 'remote-host-provenance.json').write_text(json.dumps(provenance))
+        (directory / 'remote-host-build.json').write_text(json.dumps(build))
+        (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(report))
+        with zipfile.ZipFile(directory / 'HomeTunnel-Windows-6.0.1-x64.zip', 'a') as bundle:
+            bundle.writestr('WEBRTC-THIRD-PARTY-NOTICES.md', b'fixture notices')
+            for name in ('remote-host-provenance.json', 'remote-host-build.json'):
+                bundle.writestr(name, (directory / name).read_bytes())
+        return provenance, report
+
+    def test_native_acceptance_binds_final_signed_worker_and_clean_sources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.remote_fixture(directory)
+            module.verify_remote_evidence(directory, '6.0.1', 'revision')
+            with zipfile.ZipFile(directory / 'HomeTunnel-Windows-6.0.1-x64.zip', 'w') as bundle:
+                bundle.writestr('home_tunnel_remote_host.exe', b'rebuilt or newly signed bytes')
+            with self.assertRaisesRegex(SystemExit, 'Packaged native worker'):
+                module.verify_remote_evidence(directory, '6.0.1', 'revision')
+
+    def test_view_only_dirty_stale_or_failed_native_runs_block_publication(self):
+        changes = [
+            lambda p, r: r['input'].update(status='not_verified'),
+            lambda p, r: r['input'].update(unicode_text=False),
+            lambda p, r: r['sources']['client'].update(modified=True),
+            lambda p, r: r['sources']['server'].update(commit='a' * 40),
+            lambda p, r: r.update(worker_sha256='b' * 64),
+            lambda p, r: r['checks'].update(clean_session_shutdown=False),
+            lambda p, r: r['media'].update(browser_udp_verified=False),
+            lambda p, r: r['media'].update(closed=True),
+            lambda p, r: r['media'].update(frames_decoded=0),
+            lambda p, r: r['media'].update(failures=['RD_MEDIA_FAILED']),
+            lambda p, r: p['engine'].update(lock_sha256='c' * 64),
+            lambda p, r: p['build'].update(source_modified=True),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for change in changes:
+                with self.subTest(change=change):
+                    provenance, report = self.remote_fixture(directory)
+                    change(provenance, report)
+                    (directory / 'remote-host-provenance.json').write_text(json.dumps(provenance))
+                    (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(report))
+                    with self.assertRaises(SystemExit):
+                        module.verify_remote_evidence(directory, '6.0.1', 'revision')
 
     def test_publication_requires_scanned_bytes_and_successful_installation(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -66,6 +134,11 @@ class ReleasePolicyTests(unittest.TestCase):
         for tag, source in (("v8.0.0-rc.2", "8.0.0-rc.1"), ("v8.0.0", "8.0.0-rc.1"), ("v8.0.0-rc.1", "8.0.0")):
             with self.subTest(tag=tag, source=source), self.assertRaisesRegex(SystemExit, "source version"):
                 module.validate_release_tag(tag, source, "internal-testing")
+
+    def test_candidate_number_is_positive_and_canonical(self):
+        for candidate in ('0', '01'):
+            with self.assertRaises(SystemExit):
+                module.validate_release_tag('v8.0.0-rc.' + candidate, '8.0.0-rc.' + candidate, 'internal-testing')
 
     def test_internal_testing_cannot_publish_a_stable_tag(self):
         with self.assertRaisesRegex(SystemExit, "prereleases only"):
