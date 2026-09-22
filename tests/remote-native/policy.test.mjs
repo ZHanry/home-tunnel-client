@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 const runner = fileURLToPath(new URL('../../scripts/test-remote-native.mjs', import.meta.url));
 const supported = process.platform === 'win32' && Number(process.versions.node.split('.')[0]) === 24;
 for (const [name, code, setup] of [
+  ['arbitrary input targets cannot be selected', 'E2E_INPUT_TARGET_INVALID', () => ['--input', 'any-process']],
   ['missing native worker cannot pass', 'E2E_NATIVE_WORKER_MISSING', () => []],
   ['worker without a pinned hash cannot run', 'E2E_PINNED_SHA256_REQUIRED', dir => {
     const file = join(dir, 'untrusted.exe'); writeFileSync(file, 'must not execute');

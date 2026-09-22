@@ -2,9 +2,9 @@
 // Real Windows worker -> production host/control-center -> production Chromium controller.
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 
@@ -12,23 +12,24 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = Object.create(null);
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i];
-  if (!['--worker', '--sha256', '--server-root', '--report-dir'].includes(key) || !process.argv[i + 1] || options[key]) {
-    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>]');
+  if (!['--worker', '--sha256', '--server-root', '--report-dir', '--input'].includes(key) || !process.argv[i + 1] || options[key]) {
+    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>] [--input chromium]');
     process.exit(2);
   }
   options[key] = process.argv[i + 1];
 }
 const reportDir = resolve(options['--report-dir'] ?? join(root, 'outputs', 'remote-native-acceptance'));
+const withInput = options['--input'] === 'chromium';
 mkdirSync(reportDir, { recursive: true });
 const report = {
   schema: 1, started_at: new Date().toISOString(), status: 'not_verified',
-  scope: 'Windows native desktop capture to Chromium on the same machine, view only',
+  scope: `Windows native desktop capture to Chromium on the same machine, ${withInput ? 'view and input confined to a dedicated test browser process' : 'view only'}`,
   transport: 'isolated HTTP/WS IPv4 loopback fixture; production HTTPS policy unchanged',
   checks: {}, limitations: ['Cross-network traversal, Android, audio, clipboard, files and input are not established by this run.'],
-  input: { status: 'not_verified', reason: 'No native target-window confinement contract; no input injection is attempted.' },
+  input: { status: 'not_verified', reason: withInput ? 'Input acceptance has not completed.' : 'Input acceptance was not requested; no input injection is attempted.' },
   privacy: { screenshots: false, recordings: false, sdp: false, network_addresses: false, credentials: false },
 };
-let directory, fixture, host, browser, page, rpcID = 0, stage = 'preflight';
+let directory, fixture, host, browser, page, target, targetBrowser, targetServer, rpcID = 0, stage = 'preflight';
 const children = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 class CheckFailure extends Error { constructor(code) { super(code); this.code = code; } }
@@ -107,17 +108,45 @@ function revision(path) {
   const changed = spawnSync('git', ['-C', path, 'status', '--porcelain'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
   return { commit, modified: changed.status === 0 ? changed.stdout.length > 0 : null };
 }
+function treeHash(directory) {
+  const entries = [];
+  const visit = (path, prefix = '') => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const relative = `${prefix}${entry.name}`;
+      requireCheck(!entry.isSymbolicLink(), 'E2E_BUILD_SYMLINK_REJECTED');
+      if (entry.isDirectory()) visit(join(path, entry.name), `${relative}/`);
+      else if (entry.isFile()) entries.push({ path: relative, sha256: createHash('sha256').update(readFileSync(join(path, entry.name))).digest('hex') });
+    }
+  };
+  visit(directory); entries.sort((a, b) => a.path.localeCompare(b.path, 'en'));
+  return { file_count: entries.length, sha256: createHash('sha256').update(JSON.stringify(entries)).digest('hex') };
+}
 try {
   requireCheck(process.platform === 'win32', 'E2E_WINDOWS_REQUIRED');
   requireCheck(Number(process.versions.node.split('.')[0]) === 24, 'E2E_NODE_24_REQUIRED');
+  requireCheck(options['--input'] === undefined || withInput, 'E2E_INPUT_TARGET_INVALID');
   requireCheck(options['--worker'] && isAbsolute(options['--worker']) && existsSync(options['--worker']), 'E2E_NATIVE_WORKER_MISSING');
   requireCheck(/^[0-9a-f]{64}$/i.test(options['--sha256'] ?? ''), 'E2E_PINNED_SHA256_REQUIRED');
   const actualHash = createHash('sha256').update(readFileSync(options['--worker'])).digest('hex');
   requireCheck(actualHash === options['--sha256'].toLowerCase(), 'E2E_NATIVE_HASH_MISMATCH');
   report.worker_sha256 = actualHash;
   const serverRoot = resolve(options['--server-root'] ?? process.env.HT_SERVER_ROOT ?? join(root, '..', 'home-tunnel-server'));
-  requireCheck(existsSync(join(serverRoot, 'control-center', 'dist', 'server.js')), 'E2E_BUILT_SERVER_REQUIRED');
+  requireCheck(existsSync(join(serverRoot, 'control-center', 'package.json')), 'E2E_SERVER_SOURCE_REQUIRED');
   report.sources = { client: revision(root), server: revision(serverRoot) };
+  const serverLock = JSON.parse(readFileSync(join(root, 'tests', 'remote-native', 'server-lock.json'), 'utf8'));
+  requireCheck(report.sources.server.commit === serverLock.revision && report.sources.server.modified === false, 'E2E_LOCKED_CLEAN_SERVER_REQUIRED');
+  stage = 'build_server';
+  const controlCenter = resolve(serverRoot, 'control-center');
+  const dist = resolve(controlCenter, 'dist');
+  requireCheck(dirname(dist) === controlCenter && (!existsSync(dist) || !lstatSync(dist).isSymbolicLink()), 'E2E_SERVER_BUILD_PATH_INVALID');
+  // This exact generated directory is removed before compilation, so ignored
+  // stale files cannot be mistaken for products of the recorded source commit.
+  rmSync(dist, { recursive: true, force: true });
+  const serverBuild = spawnSync('cmd.exe', ['/d', '/s', '/c', 'pnpm.cmd run build'], { cwd: controlCenter, windowsHide: true, timeout: 120000, encoding: 'utf8', maxBuffer: 1048576, env: { ...process.env, PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ''}` } });
+  requireCheck(serverBuild.status === 0 && existsSync(join(dist, 'server.js')), 'E2E_SERVER_FRESH_BUILD_FAILED');
+  const afterBuild = revision(serverRoot);
+  requireCheck(afterBuild.commit === serverLock.revision && afterBuild.modified === false, 'E2E_SERVER_SOURCE_CHANGED_DURING_BUILD');
+  report.server_build = { fresh: true, source_commit: afterBuild.commit, command: 'pnpm run build', dist: treeHash(dist) };
   directory = mkdtempSync(join(tmpdir(), 'home-tunnel-native-e2e-'));
   stage = 'build_host';
   const hostExecutable = join(directory, 'native-e2e-host.exe');
@@ -128,25 +157,42 @@ try {
   const initial = await fixture.read(item => item.event === 'fixture', 30000);
   requireCheck(/^http:\/\/127\.0\.0\.1:\d+$/.test(initial.origin), 'E2E_NON_LOOPBACK_FIXTURE');
   report.checks.isolated_real_server = true;
+  const { chromium } = await import('@playwright/test');
+  let inputTargetPID = 0;
+  if (withInput) {
+    stage = 'input_target';
+    // This process contains only our isolated test page. Its PID is enforced by
+    // the native worker before every OS input injection, including text.
+    targetServer = await chromium.launchServer({ headless: false, args: ['--window-position=40,40', '--window-size=900,700'] });
+    inputTargetPID = targetServer.process().pid;
+    requireCheck(Number.isInteger(inputTargetPID) && inputTargetPID > 0, 'E2E_INPUT_TARGET_PID_REQUIRED');
+    targetBrowser = await chromium.connect(targetServer.wsEndpoint());
+    const targetContext = await targetBrowser.newContext({ viewport: null });
+    target = await targetContext.newPage();
+    await target.goto(`${initial.origin}/__native-e2e/target.html`);
+    report.input.target_created = true;
+    report.input.native_process_confinement = true;
+  }
   stage = 'native_backend';
   host = new PipeProcess(hostExecutable, []);
-  host.send({ ...initial, worker: options['--worker'], sha256: actualHash, store_path: join(directory, 'host-state.json') });
+  host.send({ ...initial, worker: options['--worker'], sha256: actualHash, store_path: join(directory, 'host-state.json'), input_target_pid: inputTargetPID });
   const ready = await host.read(item => item.event === 'host', 30000);
   requireCheck(ready.capabilities?.available && ready.capabilities.status === 'ready' && ready.capabilities.displays?.length, 'RD_BACKEND_UNAVAILABLE');
   report.checks.native_backend_ready = true;
   report.capabilities = { permissions: ready.capabilities.permissions, codecs: ready.capabilities.codecs, display_count: ready.capabilities.displays.length };
   stage = 'browser';
-  const { chromium } = await import('@playwright/test');
   browser = await chromium.launch({ headless: false, args: ['--autoplay-policy=no-user-gesture-required'] });
   report.browser_version = browser.version();
   const context = await browser.newContext({ viewport: { width: 1000, height: 720 } });
-  const target = await context.newPage();
-  await target.goto(`${initial.origin}/__native-e2e/target.html`);
-  report.input.target_created = true;
+  if (!target) {
+    target = await context.newPage();
+    await target.goto(`${initial.origin}/__native-e2e/target.html`);
+    report.input.target_created = true;
+  }
   page = await context.newPage();
   await page.goto(`${initial.origin}/__native-e2e/controller.html`);
   await page.waitForFunction(() => !!window.nativeE2E);
-  const controller = await page.evaluate(value => window.nativeE2E.initialize(value), { account_token: initial.account_token, user_id: initial.user_id });
+  const controller = await page.evaluate(value => window.nativeE2E.initialize(value), { account_token: initial.account_token, user_id: initial.user_id, input: withInput });
   // Tokens remain exclusively in process memory and in the isolated browser context.
   delete initial.account_token;
   await rpc('bind_controller', controller);
@@ -177,18 +223,139 @@ try {
   requireCheck(verifiedMedia(report.media) && report.media.frames_decoded > first, 'E2E_MEDIA_NOT_CONTINUING');
   report.checks.real_continuing_video = true;
   report.checks.selected_udp_and_dtls = true;
+  if (withInput) {
+    stage = 'input';
+    await page.evaluate(() => window.nativeE2E.prepareInput());
+    await target.bringToFront();
+    const activation = await rpc('focus_input_target');
+    report.input.target_window_found = activation.target_window_found;
+    report.input.target_window_activated = activation.target_window_activated;
+    // This setup click is confined by Playwright to our page and is cleared
+    // before measurement; it does not count as native pointer evidence.
+    await target.locator('#input-target').click();
+    await target.keyboard.press('KeyA');
+    report.input.target_event_probe = await target.evaluate(() => ['keydown', 'keyup'].every(type => window.nativeInputTarget.events.some(item => item.type === type && item.code === 'KeyA')));
+    requireCheck(report.input.target_event_probe, 'E2E_TARGET_EVENT_PROBE_FAILED');
+    await target.evaluate(() => { document.querySelector('#input-target').value = ''; document.querySelector('#input-target').focus(); window.nativeInputTarget.events = []; });
+    const focused = () => target.evaluate(() => document.hasFocus() && document.activeElement === document.querySelector('#input-target'));
+    await until(focused, 'E2E_INPUT_TARGET_NOT_FOREGROUND', 5000);
+    const osFocus = await rpc('input_focus');
+    report.input.window_diagnostics = osFocus.window_diagnostics;
+    report.input.os_foreground_verified = osFocus.foreground_matches_target;
+    requireCheck(osFocus.foreground_matches_target, 'E2E_INPUT_OS_FOREGROUND_MISMATCH');
+    await page.evaluate(() => window.nativeE2E.requestInput());
+    await until(async () => (await page.evaluate(() => window.nativeE2E.evidence())).input_enabled, 'E2E_INPUT_HANDSHAKE_FAILED', 7000);
+    requireCheck(await focused(), 'E2E_INPUT_TARGET_LOST_FOCUS');
+    const point = (await rpc('input_target_point')).point;
+    report.input.target_point = point;
+    requireCheck(point.hit_matches_target_root && point.hit_matches_target_pid, 'E2E_INPUT_TARGET_OBSCURED');
+    // A real bounded native click establishes Chrome's native renderer focus;
+    // CDP/DOM focus alone does not establish the Win32 keyboard focus window.
+    await page.evaluate(value => window.nativeE2E.sendPointer(value), point);
+    await until(() => target.evaluate(() => ['pointerdown', 'pointerup'].every(type => window.nativeInputTarget.events.some(item => item.type === type && item.target_matches))), 'E2E_REAL_POINTER_NOT_OBSERVED', 5000);
+    report.input.pointer_down_up = true;
+    report.input.keyboard_sender = await page.evaluate(() => window.nativeE2E.sendKey());
+    await until(() => target.evaluate(() => ['keydown', 'keyup'].every(type => window.nativeInputTarget.events.some(item => item.type === type && item.code === 'KeyA'))), 'E2E_REAL_KEYBOARD_NOT_OBSERVED', 5000);
+    report.input.keyboard_down_up = true;
+    requireCheck(await focused(), 'E2E_INPUT_TARGET_LOST_FOCUS');
+    await target.evaluate(() => { document.querySelector('#input-target').value = ''; });
+    await page.evaluate(() => window.nativeE2E.sendText());
+    await until(() => target.evaluate(() => document.querySelector('#input-target').value === '验收✓'), 'E2E_REAL_UNICODE_TEXT_NOT_OBSERVED', 5000);
+    report.input.unicode_text = true;
+    report.input.trusted_event_count = await target.evaluate(() => window.nativeInputTarget.events.length);
+    const previousEpoch = (await page.evaluate(() => window.nativeE2E.evidence())).input_epoch;
+    await page.evaluate(() => window.nativeE2E.releaseInput());
+    await page.evaluate(() => window.nativeE2E.requestInput());
+    await until(async () => { const evidence = await page.evaluate(() => window.nativeE2E.evidence()); return evidence.input_enabled && evidence.input_epoch > previousEpoch; }, 'E2E_INPUT_REACQUIRE_FAILED', 7000);
+    await target.evaluate(() => { window.nativeInputTarget.events = []; });
+    const beforeStale = (await rpc('diagnostics')).native;
+    await page.evaluate(epoch => window.nativeE2E.sendStaleInput(epoch), previousEpoch);
+    await until(async () => (await rpc('diagnostics')).native.input_ignored_epoch === beforeStale.input_ignored_epoch + 1, 'E2E_STALE_INPUT_NOT_REJECTED', 3000);
+    requireCheck(await target.evaluate(() => !window.nativeInputTarget.events.some(item => item.type === 'keydown')), 'E2E_STALE_INPUT_WAS_INJECTED');
+    await page.evaluate(() => window.nativeE2E.sendKey());
+    await until(() => target.evaluate(() => ['keydown', 'keyup'].every(type => window.nativeInputTarget.events.some(item => item.type === type && item.code === 'KeyA'))), 'E2E_INPUT_DID_NOT_SURVIVE_STALE_EPOCH', 3000);
+    report.input.stale_epoch_rejected = true;
+    await target.evaluate(() => { window.nativeInputTarget.events = []; });
+    await page.evaluate(() => { window.nativeE2E.pauseHeartbeat(); window.nativeE2E.holdKey(); });
+    await until(() => target.evaluate(() => window.nativeInputTarget.events.some(item => item.type === 'keydown' && item.code === 'KeyA')), 'E2E_WATCHDOG_KEYDOWN_MISSING', 3000);
+    await until(() => target.evaluate(() => window.nativeInputTarget.events.some(item => item.type === 'keyup' && item.code === 'KeyA')), 'E2E_WATCHDOG_DID_NOT_RELEASE', 2500);
+    const watchdogRelease = await target.evaluate(() => {
+      const events = window.nativeInputTarget.events;
+      return events.find(item => item.type === 'keyup' && item.code === 'KeyA').timestamp - events.find(item => item.type === 'keydown' && item.code === 'KeyA').timestamp;
+    });
+    requireCheck(watchdogRelease >= 0 && watchdogRelease <= 2000, 'E2E_WATCHDOG_RELEASE_TOO_SLOW');
+    report.input.heartbeat_watchdog = { passed: true, release_ms: watchdogRelease, measured_from: 'trusted_keydown' };
+    await page.evaluate(() => { window.nativeE2E.restoreHeartbeat(); window.nativeE2E.releaseInput(); });
+    report.media = await page.evaluate(() => window.nativeE2E.evidence());
+    requireCheck(verifiedMedia(report.media), 'E2E_INPUT_RELEASE_FAILED');
+    report.input.released = true;
+    await page.evaluate(() => window.nativeE2E.closeSession());
+    await until(async () => (await rpc('state')).session_idle, 'E2E_NORMAL_SESSION_DID_NOT_CLOSE', 5000);
+    report.checks.clean_session_shutdown = true;
+    // A second independently paired/approved session tests process death. The
+    // first session's normal shutdown and healthy media evidence remain intact.
+    stage = 'worker_crash';
+    const crashPairing = await page.evaluate(() => window.nativeE2E.pair());
+    await host.read(item => item.event === 'approval' && item.approval.kind === 'pairing' && item.approval.id === crashPairing.id);
+    await rpc('approve_pairing', { target_id: crashPairing.id });
+    const crashDisplay = await host.read(item => item.event === 'approval' && item.approval.kind === 'pairing_display' && item.approval.id === crashPairing.id);
+    const crashSession = await page.evaluate(code => window.nativeE2E.confirm(code), crashDisplay.approval.display_code);
+    await host.read(item => item.event === 'approval' && item.approval.kind === 'session' && item.approval.id === crashSession.session_id);
+    await rpc('approve_session', { target_id: crashSession.session_id });
+    await page.evaluate(id => window.nativeE2E.start(id), crashSession.session_id);
+    await until(async () => verifiedMedia(await page.evaluate(() => window.nativeE2E.evidence())), 'E2E_CRASH_SESSION_MEDIA_MISSING', 30000);
+    await page.evaluate(() => window.nativeE2E.prepareInput());
+    await rpc('focus_input_target');
+    requireCheck((await rpc('input_focus')).foreground_matches_target, 'E2E_INPUT_OS_FOREGROUND_MISMATCH');
+    await page.evaluate(() => window.nativeE2E.requestInput());
+    await until(async () => (await page.evaluate(() => window.nativeE2E.evidence())).input_enabled, 'E2E_CRASH_INPUT_HANDSHAKE_FAILED', 7000);
+    const crashPoint = (await rpc('input_target_point')).point;
+    requireCheck(crashPoint.hit_matches_target_root && crashPoint.hit_matches_target_pid, 'E2E_INPUT_TARGET_OBSCURED');
+    await target.evaluate(() => { window.nativeInputTarget.events = []; });
+    await page.evaluate(value => window.nativeE2E.sendPointer(value), crashPoint);
+    await until(() => target.evaluate(() => ['pointerdown', 'pointerup'].every(type => window.nativeInputTarget.events.some(item => item.type === type && item.target_matches))), 'E2E_CRASH_TARGET_CLICK_MISSING', 3000);
+    await target.evaluate(() => { window.nativeInputTarget.events = []; });
+    await page.evaluate(() => window.nativeE2E.holdKey());
+    await page.evaluate(value => window.nativeE2E.sendPointer({ ...value, hold: true }), crashPoint);
+    await until(() => target.evaluate(() => window.nativeInputTarget.events.some(item => item.type === 'keydown' && item.code === 'KeyA' && item.target_matches) && window.nativeInputTarget.events.some(item => item.type === 'pointerdown' && item.target_matches)), 'E2E_CRASH_HELD_INPUT_MISSING', 3000);
+    requireCheck(await target.evaluate(() => !window.nativeInputTarget.events.some(item => item.type === 'keyup' || item.type === 'pointerup')), 'E2E_CRASH_INPUT_ALREADY_RELEASED');
+    const crashStarted = await target.evaluate(() => performance.now());
+    await rpc('crash_worker');
+    await until(() => target.evaluate(start => ['keyup', 'pointerup'].every(type => window.nativeInputTarget.events.some(item => item.type === type && item.timestamp >= start)), crashStarted), 'E2E_WORKER_CRASH_DID_NOT_RELEASE', 2200);
+    const release = await target.evaluate(start => ({
+      key_release_ms: window.nativeInputTarget.events.find(item => item.type === 'keyup' && item.code === 'KeyA' && item.timestamp >= start).timestamp - start,
+      button_release_ms: window.nativeInputTarget.events.find(item => item.type === 'pointerup' && item.timestamp >= start).timestamp - start,
+    }), crashStarted);
+    requireCheck(release.key_release_ms >= 0 && release.key_release_ms <= 2000 && release.button_release_ms >= 0 && release.button_release_ms <= 2000, 'E2E_WORKER_CRASH_RELEASE_TOO_SLOW');
+    report.input.worker_crash = { passed: true, ...release };
+    report.input.status = 'passed'; delete report.input.reason;
+    report.limitations = ['Cross-network traversal, Android, audio, clipboard and files are not established by this run.'];
+  }
   stage = 'shutdown';
   await page.evaluate(() => window.nativeE2E.close());
   await rpc('shutdown');
-  report.checks.clean_session_shutdown = true;
-  report.status = 'verified';
+  if (!withInput) report.checks.clean_session_shutdown = true;
+  report.status = 'passed';
 } catch (error) {
+  if (withInput && host && !host.closed && !host.failure) {
+    try { report.input.native_diagnostics = (await rpc('diagnostics')).native; } catch {}
+    try { report.input.failure_window_diagnostics = (await rpc('input_focus')).window_diagnostics; } catch {}
+  }
+  if (page && !page.isClosed()) {
+    try { report.media = await page.evaluate(() => window.nativeE2E?.evidence()); } catch {}
+  }
+  if (withInput && target && !target.isClosed()) {
+    try { report.input.observed_events = await target.evaluate(() => window.nativeInputTarget.events.slice(0, 32).map(({ type, code, target_matches }) => ({ type, code, target_matches }))); } catch {}
+    try { report.input.target_value_length = await target.evaluate(() => document.querySelector('#input-target').value.length); } catch {}
+  }
   report.status = report.checks.native_backend_ready ? 'failed' : 'not_verified';
-  report.failure = { stage, code: error instanceof CheckFailure ? error.code : 'E2E_UNEXPECTED_FAILURE' };
+  report.failure = { stage, code: error instanceof CheckFailure ? error.code : (String(error.message).match(/\bRD_[A-Z_]{3,80}\b/)?.[0] ?? 'E2E_UNEXPECTED_FAILURE') };
   process.exitCode = 1;
 } finally {
   if (page && !page.isClosed()) await page.evaluate(() => window.nativeE2E?.close()).catch(() => {});
   await browser?.close().catch(() => {});
+  await targetBrowser?.close().catch(() => {});
+  await targetServer?.close().catch(() => {});
   for (const child of children.reverse()) await child.stop();
   // directory is always our own mkdtemp result, never user input.
   if (directory) {
