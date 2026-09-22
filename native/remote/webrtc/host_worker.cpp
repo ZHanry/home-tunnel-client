@@ -212,7 +212,8 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   bool Start(const Json::Value& request){
     if(started_ || closed_)return false;VerifiedLease lease;
     if(identity_->authorize(request,wall_ms(),supported_permissions,lease)!=auth::Error::ok)return false;
-    bool found=false;for(auto display:displays())if(text(request["display_id"],std::to_string(display.id))){screen_=std::move(display);found=true;break;}
+    available_screens_=displays();
+    bool found=false;for(const auto& display:available_screens_)if(text(request["display_id"],std::to_string(display.id))){screen_=display;found=true;break;}
     if(!found || gate_.authorize(lease,wall_ms(),steady_ms())!=GateResult::ok)return false;
     sink_=WindowsInputSink({screen_.rect.left(),screen_.rect.top(),screen_.rect.width(),screen_.rect.height(),0},input_target_process);
     webrtc::PeerConnectionInterface::RTCConfiguration config;config.sdp_semantics=webrtc::SdpSemantics::kUnifiedPlan;
@@ -450,8 +451,17 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     Json::Value path;path["epoch"]=identity_->epoch();path["protocol"]="udp";path["local_candidate_type"]=local_type_;path["remote_candidate_type"]=remote_type_;Send(protocol::PATH_VERIFIED,path);
     Json::Value caps;caps["permissions"]=identity_->permissions();caps["codecs"]=Json::Value(Json::arrayValue);caps["codecs"].append("VP8");
     capability_hash_=auth::base64url(auth::digest(PeerIdentity::json(caps)));Send(protocol::CAPABILITIES,caps);
-    Json::Value layout,item;layout["layout_epoch"]=1;layout["active_display"]=std::to_string(screen_.id);layout["displays"]=Json::Value(Json::arrayValue);
-    item["id"]=std::to_string(screen_.id);item["slot"]=0;item["width_px"]=screen_.rect.width();item["height_px"]=screen_.rect.height();layout["displays"].append(item);Send(protocol::DISPLAY_LAYOUT,layout);
+    Json::Value layout;layout["layout_epoch"]=1;layout["active_display"]=std::to_string(screen_.id);layout["displays"]=Json::Value(Json::arrayValue);
+    // The active screen is always slot zero for this immutable connection epoch.
+    // Switching screens uses a new PeerConnection, so delayed decoded frames
+    // and reliable input from a same-size old screen cannot enter the new view.
+    auto append_display=[&](const Screen& screen,unsigned slot){Json::Value item;
+      item["id"]=std::to_string(screen.id);item["slot"]=slot;item["name"]=screen.name;
+      item["width_px"]=screen.rect.width();item["height_px"]=screen.rect.height();
+      layout["displays"].append(item);};
+    append_display(screen_,0);unsigned slot=1;
+    for(const auto& display:available_screens_)if(display.id!=screen_.id)append_display(display,slot++);
+    Send(protocol::DISPLAY_LAYOUT,layout);
     ready_=true;Json::Value body;body["epoch"]=identity_->epoch();Send(protocol::SESSION_READY,body);
   }
   void Tick(){
@@ -467,7 +477,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     auto weak=weak_from_this();signaling_.PostDelayedTask([weak]{if(auto self=weak.lock())self->Tick();},webrtc::TimeDelta::Millis(250));
   }
   std::unique_ptr<PeerIdentity> identity_;webrtc::Thread& signaling_;webrtc::PeerConnectionFactoryInterface& factory_;
-  WindowsInputSink sink_;SessionGate gate_;Screen screen_{};
+  WindowsInputSink sink_;SessionGate gate_;Screen screen_{};std::vector<Screen> available_screens_;
   webrtc::scoped_refptr<webrtc::PeerConnectionInterface> connection_;webrtc::scoped_refptr<ScreenSource> source_;std::unique_ptr<Capture> capture_;
   std::map<unsigned,std::pair<webrtc::scoped_refptr<webrtc::DataChannelInterface>,std::unique_ptr<ChannelObserver>>> channels_;
   std::array<uint32_t,4> received_{};std::vector<Json::Value> pending_candidates_;Json::Value pending_hello_;
