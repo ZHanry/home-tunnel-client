@@ -38,8 +38,27 @@ bool pump_until(const std::function<bool()>& ready,DWORD timeout=500){
     }while(GetTickCount64()<until);
     return false;
 }
+bool focus_window(HWND window,HWND focus=nullptr){
+    if(!IsWindow(window))return false;
+    MSG message{};PeekMessageW(&message,nullptr,0,0,PM_NOREMOVE);
+    const auto current=GetCurrentThreadId();const auto until=GetTickCount64()+1000;
+    do {
+        const std::array<DWORD,2> threads{GetWindowThreadProcessId(GetForegroundWindow(),nullptr),GetWindowThreadProcessId(window,nullptr)};
+        std::array<DWORD,2> attached{};size_t count=0;
+        for(const auto thread:threads){
+            if(thread && thread!=current && (!count || attached[0]!=thread) && AttachThreadInput(current,thread,TRUE))attached[count++]=thread;
+        }
+        // Associate existing queues only for activation. Always detach before
+        // pumping or injecting; no synthetic key is used to obtain focus.
+        BringWindowToTop(window);SetForegroundWindow(window);
+        SetFocus(focus && (focus==window || IsChild(window,focus))?focus:window);
+        while(count)(void)AttachThreadInput(current,attached[--count],FALSE);
+        if(pump_until([&]{return GetForegroundWindow()==window;},100))return true;
+    }while(GetTickCount64()<until);
+    return false;
+}
 struct InputWindow {
-    HWND window=nullptr,previous=GetForegroundWindow();POINT previous_cursor{};
+    HWND window=nullptr,previous=GetForegroundWindow(),previous_focus=nullptr;POINT previous_cursor{};
     unsigned key_down=0,key_up=0,button_down=0,button_up=0;
     bool local_key=false,local_button=false;
     static LRESULT CALLBACK events(HWND window,UINT message,WPARAM key,LPARAM argument){
@@ -59,14 +78,18 @@ struct InputWindow {
     }
     bool open(){
         GetCursorPos(&previous_cursor);
+        GUITHREADINFO previous_info{};previous_info.cbSize=sizeof(previous_info);
+        const auto previous_thread=GetWindowThreadProcessId(previous,nullptr);
+        if(previous_thread && GetGUIThreadInfo(previous_thread,&previous_info))previous_focus=previous_info.hwndFocus;
         WNDCLASSW type{};type.lpfnWndProc=events;type.hInstance=GetModuleHandleW(nullptr);
         type.lpszClassName=L"HomeTunnelInputOwnershipTest";type.hCursor=LoadCursorW(nullptr,MAKEINTRESOURCEW(32512));
         if(!RegisterClassW(&type))return false;
         window=CreateWindowExW(0,type.lpszClassName,L"Home Tunnel isolated input ownership test",WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,CW_USEDEFAULT,480,320,nullptr,nullptr,type.hInstance,this);
         if(!window)return false;
-        ShowWindow(window,SW_SHOWNORMAL);UpdateWindow(window);SetForegroundWindow(window);
-        return pump_until([&]{return GetForegroundWindow()==window;});
+        ShowWindow(window,SW_SHOWNORMAL);UpdateWindow(window);
+        SetWindowPos(window,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        return focus_window(window);
     }
     bool inject(bool mouse,bool down){
         if(down && GetForegroundWindow()!=window)return false;
@@ -81,7 +104,7 @@ struct InputWindow {
         if(local_key)(void)inject(false,false);
         if(local_button)(void)inject(true,false);
         (void)pump_until([]{return !held(VK_F8) && !held(VK_LBUTTON);},2000);
-        if(window && GetForegroundWindow()==window){SetCursorPos(previous_cursor.x,previous_cursor.y);if(previous)SetForegroundWindow(previous);}
+        if(window && GetForegroundWindow()==window){SetCursorPos(previous_cursor.x,previous_cursor.y);if(previous)(void)focus_window(previous,previous_focus);}
         if(window)DestroyWindow(window);
     }
 };
