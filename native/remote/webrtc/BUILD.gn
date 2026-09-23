@@ -97,6 +97,7 @@ if (is_linux) {
   }
   rtc_executable("home_tunnel_x11_input_tests") {
     sources = [ "../tests/x11_input_tests.cpp", "../src/platform/x11_input.cpp", "../src/platform/x11_session.cpp" ]
+    deps = []
     defines = [ "HT_RD_X11_TESTING" ]
     configs += [ ":home_tunnel_x11" ]
   }

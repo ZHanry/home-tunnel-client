@@ -23,3 +23,19 @@ renamed atomically; failed downloads never become a successful installer.
 [Credential protection, diagnostics and signing](PLATFORM_SECURITY.md) ·
 [NAS Compose template](../packaging/nas/README.md) ·
 [CLI/service operations](OPERATIONS.md)
+
+## 8.0 candidate development
+
+The candidate adds opt-in remote hosting through a separately verified native
+worker. Windows supports the H.264/VP8 viewing path, ordinary-desktop input,
+explicit text clipboard permissions and consent-bound file transfer. Only
+capabilities reported by the actual packaged worker can be selected; a missing,
+wrong-version or wrong-hash worker leaves remote hosting unavailable. Local file
+selection is bound to the current session and connection epoch, and is cancelled
+when that authorization ends. File contents never enter the local HTTP API or
+the signaling server.
+
+The Linux Xorg worker and Android controller have separate build/acceptance
+records. Wayland/macOS hosting, native desktop viewing and audio remain under
+development. See [candidate notes](RELEASE_NOTES.md) for actual tested scope and
+remaining restrictions. These additions do not change the 7.0 stable downloads.

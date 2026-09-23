@@ -2,11 +2,12 @@
 
 This directory contains the shared C++20 ABI, binary framing/UTF-8 validation,
 proof transcript encoder, and independently tested session safety gates for the
-8.0 remote desktop work. `webrtc/host_worker.cpp` implements the Windows host
-through a separately built, hash-pinned `home_tunnel_remote_host.exe` and the Go
+8.0 remote desktop work. `webrtc/host_worker.cpp` implements the Windows and Linux Xorg host
+through a separately built, hash-pinned native worker and the Go
 `internal/remoteengine` adapter. The generic C ABI and security-only core worker
 still return `available=false`, `RD_BACKEND_UNAVAILABLE`; they are not substitutes
-for that media host. Other platform backends require their own integration and
+for that media host. Linux uses a strict active/unlocked logind gate; see
+[its build and acceptance scope](linux/README.md). Other platform backends require their own integration and
 real-device acceptance.
 
 Implemented and tested:
@@ -31,11 +32,23 @@ Implemented and tested:
 The Go `internal/remote` package provides a worker query, four-window
 session bookkeeping, account/server isolation, and bounded file/text receive
 primitives. Native process and executable hash validation live in
-`internal/remoteengine`. File receipt
-requires an explicitly selected directory and accepted offer, checks offsets and
-final SHA-256, and never overwrites/opens/executes a received file. Atomic
-no-replace publication currently requires a filesystem supporting hard links;
-unsupported filesystems return an error rather than falling back to overwriting.
+`internal/remoteengine`. The Windows host's `webrtc/file_transfer` implementation
+receives only paths selected locally through `internal/filedialog` and checked
+again against the live session. It uses bounded separate DataChannel queues,
+explicit permissions, streaming SHA-256, at most two active transfers and
+non-overwriting publication. Windows pins directory/file handles and rejects
+reparse points; POSIX uses `openat`/`O_NOFOLLOW` and an exclusive staging directory.
+The POSIX no-replace commit requires hard-link support. Unsupported filesystems
+fail the transfer. Files are never automatically opened or executed. Tests cover
+real disk writes, collisions, cancellation, I/O failure, path redirection and
+offsets above 4 GiB. Linux does not advertise file sharing until its local picker
+is implemented.
+
+The Windows product passed real browser-to-native and native-to-browser
+empty/multi-chunk transfer tests using isolated local selection and browser
+origin-private storage. This is same-machine development evidence; user-facing
+pickers, cross-network behavior and final packages require separate acceptance.
+See [the actual product test entry](../../tests/remote-native/README.md).
 
 ## Build and test the shared core
 
@@ -173,8 +186,8 @@ means that video/audio, platform capture/input, or microphone injection works.
 Release acceptance must bind the final packaged worker to real browser video,
 confined trusted OS input, heartbeat and worker-crash key/button release, and the
 actual installer/update/Defender evidence. A library codec probe does not replace
-these checks. Android/macOS/X11/Wayland integration and device interoperability,
+these checks. Android/X11 device interoperability, macOS/Wayland integration,
 native viewing windows, system audio and virtual microphone implementation,
-connected file UI, AV1/HEVC capability verification, signed distribution, and the
+complete user-facing file-picker acceptance, AV1/HEVC capability verification, signed distribution, and the
 plan's real-device/network/long-running test matrix require separate evidence.
 No stable 8.0 or all-platform support claim follows from this core alone.
