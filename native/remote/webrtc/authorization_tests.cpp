@@ -270,6 +270,62 @@ void native_identity(const Json::Value& vectors) {
   renewal["lease_jws"]=server.sign(lease,"ht-rd-lease+jwt");
   REQUIRE(controller_identity->renew(renewal,now,verified)==Error::permission);
 }
+void native_permission_binding(const Json::Value& vectors) {
+  const auto now=vectors["reference_time_unix"].asInt64()*1000;
+  TestKey server,host,controller;
+  auto ticket=vectors["valid"]["ticket"]["claims"],lease=vectors["valid"]["lease"]["claims"],grant=vectors["valid"]["grant"]["claims"];
+  for(auto* value:{&ticket,&lease,&grant}) {
+    (*value)["host_jkt"]=host.record["kid"];(*value)["controller_jkt"]=controller.record["kid"];
+  }
+  const std::array feature_scopes{"clipboard.read","clipboard.write","files.send","files.receive"};
+  for(const auto name:feature_scopes) {
+    ticket["permissions"].append(name);lease["permissions"].append(name);grant["scope"].append(name);
+  }
+  constexpr uint64_t session_permissions=15|protocol::PERMISSION_CLIPBOARD_READ|protocol::PERMISSION_CLIPBOARD_WRITE|
+    protocol::PERMISSION_FILES_SEND|protocol::PERMISSION_FILES_RECEIVE;
+  auto keyset=vectors["keyset"];keyset["active_kid"]=server.record["kid"];keyset["keys"][0]=server.record;
+  Json::Value request;
+  for(const auto name:{"session_id","session_request_id","connection_epoch","grant_id","grant_version","restore_epoch","user_token_version","owner_user_id","host_endpoint_id","controller_endpoint_id"})request[name]=ticket[name];
+  request["origin"]=ticket["iss"];request["host_public_jwk"]=host.record["public_jwk"];
+  request["controller_public_jwk"]=controller.record["public_jwk"];request["local_permissions"]=ticket["permissions"];
+  request["initial_trust_pin"]=keyset;request["server_keyset"]=keyset;request["local_grant_revoked"]=false;
+  request["ticket_jws"]=server.sign(ticket,"ht-rd-ticket+jwt");request["lease_jws"]=server.sign(lease,"ht-rd-lease+jwt");
+  request["grant_jws"]=host.sign(grant,"ht-rd-grant+jwt");
+  for(const auto removed:feature_scopes) {
+    auto narrowed=lease;narrowed["permissions"]=Json::Value(Json::arrayValue);
+    for(const auto& permission:lease["permissions"])if(permission.asString()!=removed)narrowed["permissions"].append(permission);
+    // Exercise both native consumers with real ES256 signatures. Rejecting a
+    // lease must not publish partial authorization or consume its sequence.
+    const auto check=[&](auto& identity) {
+      REQUIRE(identity);
+      auto context=request;context["prepared"]=identity->prepared();
+      auto invalid=context;invalid["lease_jws"]=server.sign(narrowed,"ht-rd-lease+jwt");
+      VerifiedLease verified{3,99,session_permissions,now,now+1000};
+      REQUIRE(identity->authorize(invalid,now,protocol::ALL_PERMISSIONS,verified)==Error::permission);
+      REQUIRE(verified.connection_epoch==0 && verified.sequence==0 && verified.permissions==0 &&
+              verified.issued_at_unix_ms==0 && verified.expires_at_unix_ms==0);
+      REQUIRE(identity->permissions().isNull() && !identity->authenticated());
+      REQUIRE(identity->authorize(context,now,protocol::ALL_PERMISSIONS,verified)==Error::ok);
+      REQUIRE(verified.permissions==session_permissions && verified.sequence==1);
+      REQUIRE(identity->permissions()==ticket["permissions"] && identity->expected().permission_ceiling==session_permissions);
+      auto next=narrowed;next["lease_seq"]=2;
+      Json::Value renewal;renewal["server_keyset"]=keyset;renewal["lease_jws"]=server.sign(next,"ht-rd-lease+jwt");
+      REQUIRE(identity->renew(renewal,now,verified)==Error::permission);
+      REQUIRE(verified.connection_epoch==0 && verified.sequence==0 && verified.permissions==0 &&
+              verified.issued_at_unix_ms==0 && verified.expires_at_unix_ms==0);
+      REQUIRE(identity->permissions()==ticket["permissions"] && identity->expected().permission_ceiling==session_permissions);
+      next=lease;next["lease_seq"]=2;
+      // Scope equality is order independent, matching the Go session check.
+      next["permissions"]=Json::Value(Json::arrayValue);
+      for(Json::ArrayIndex i=lease["permissions"].size();i>0;--i)next["permissions"].append(lease["permissions"][i-1]);
+      renewal["lease_jws"]=server.sign(next,"ht-rd-lease+jwt");
+      REQUIRE(identity->renew(renewal,now,verified)==Error::ok && verified.sequence==2 && verified.permissions==session_permissions);
+      REQUIRE(identity->renew(renewal,now,verified)==Error::expired && verified.permissions==0);
+    };
+    auto host_identity=PeerIdentity::prepare(ticket["session_id"].asString(),ticket["connection_epoch"].asUInt());check(host_identity);
+    auto controller_identity=ControllerIdentity::prepare(ticket["session_id"].asString(),ticket["connection_epoch"].asUInt());check(controller_identity);
+  }
+}
 void sdp_profile() {
   std::string fingerprint;for(int n=0;n<31;++n)fingerprint+="AA:";fingerprint+="AA";
   const std::string prefix="v=0\r\na=fingerprint:sha-256 "+fingerprint+"\r\n";
@@ -369,6 +425,6 @@ int main(int argc,char** argv) {
 #pragma clang unsafe_buffer_usage end
   const std::string text((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
   Json::Value vectors;REQUIRE(strict_json(text,vectors));
-  strict_parser();authorization(vectors);keyset_rotation(vectors);native_identity(vectors);sdp_profile();
+  strict_parser();authorization(vectors);keyset_rotation(vectors);native_identity(vectors);native_permission_binding(vectors);sdp_profile();
   std::puts("Native authorization: strict JSON, public JWK, raw ES256, signed binding negatives, permission/lease limits and signed keyset rotation passed");
 }

@@ -119,6 +119,10 @@ auth::Error PeerIdentity::authorize(const Json::Value& r,int64_t now,uint64_t su
   auth::Jws ticket,grant;
   if(auth::verify_jws(ticket_jws_,signer.key,"ht-rd-ticket+jwt",ticket)!=auth::Error::ok ||
      auth::verify_jws(r["grant_jws"].asString(),host_key_,"ht-rd-grant+jwt",grant)!=auth::Error::ok)return auth::Error::signature;
+  // Feature authorization and the peer capability hash use the ticket scope.
+  // A changed lease scope must close the session, never retain ticket-only rights.
+  uint64_t ticket_permissions=0;
+  if(!mask(ticket.claims["permissions"],ticket_permissions) || lease.permissions!=ticket_permissions){lease={};return auth::Error::permission;}
   if(!grant.claims["expires_at"].isNull() && !auth::timestamp(grant.claims["expires_at"],grant_expiry_))return auth::Error::malformed;
   ticket_jti_=ticket.claims["jti"].asString();permissions_=ticket.claims["permissions"];
   expected_.permission_ceiling=lease.permissions;lease_sequence_=lease.sequence;authorized_=true;
@@ -131,6 +135,7 @@ auth::Error PeerIdentity::renew(const Json::Value& message,int64_t now,VerifiedL
   if(!number(next["restore_epoch"],expected_.restore_epoch))return auth::Error::identity;
   error=auth::verify_lease(message["lease_jws"].asString(),next,expected_,now,lease);
   if(error!=auth::Error::ok)return error;
+  if(lease.permissions!=expected_.permission_ceiling){lease={};return auth::Error::permission;}
   if(lease.sequence<=lease_sequence_ || (grant_expiry_ && lease.expires_at_unix_ms>grant_expiry_)){lease={};return auth::Error::expired;}
   lease_sequence_=lease.sequence;keys_=next;return auth::Error::ok;
 }
