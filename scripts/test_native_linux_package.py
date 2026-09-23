@@ -2,8 +2,10 @@
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 
@@ -153,6 +155,108 @@ class NativeLinuxPackage(unittest.TestCase):
         PACKAGE.stage(self.build, destination, self.validate())
         with self.assertRaises(ValueError):
             PACKAGE.stage(self.build, destination, self.validate())
+
+    def archive_fixture(self):
+        """Synthetic ELF headers exercise archive policy, never runtime acceptance."""
+        destination = Path(self.temporary.name) / "archive-stage"
+        PACKAGE.stage(self.build, destination, self.validate())
+        header = (self.build / "home_tunnel_remote_host").read_bytes()[:64]
+        for name in ("bin/home-tunnel-gui", "bin/home-tunnel-client", "lib/home-tunnel-agent"):
+            path = destination / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            suffix = self.record["sha256"].encode() if name.endswith("gui") else b"synthetic fixture"
+            path.write_bytes(header + suffix)
+        for name in ("install.sh", "LICENSE", "FRP-LICENSE.txt", "lib/systemd/system/home-tunnel-client.service",
+                     "docs/PLATFORM_SECURITY.md"):
+            path = destination / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"synthetic policy fixture\n")
+        self.prefix = "home-tunnel-linux-" + self.version + "-amd64"
+        entries = []
+        for path in destination.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(destination).as_posix()
+            info = tarfile.TarInfo(self.prefix + "/" + relative)
+            info.mode = 0o755 if relative.startswith("bin/") or relative == "lib/home-tunnel-agent" else 0o644
+            entries.append((info, path.read_bytes()))
+        return entries
+
+    def archive(self, entries):
+        path = Path(self.temporary.name) / "candidate.tar.gz"
+        with tarfile.open(path, "w:gz") as bundle:
+            for info, content in entries:
+                info = copy.copy(info)
+                info.size = len(content)
+                bundle.addfile(info, io.BytesIO(content))
+        return path
+
+    def verify_archive(self, entries):
+        return PACKAGE.verify_archive(self.archive(entries), self.version, self.revision, self.source)
+
+    def test_archive_accepts_complete_pinned_production_package(self):
+        self.assertEqual(self.verify_archive(self.archive_fixture())["sha256"], self.record["sha256"])
+
+    def test_archive_requires_worker_evidence_and_gui_pin(self):
+        entries = self.archive_fixture()
+        for suffix in ("bin/home_tunnel_remote_host", "native-remote/remote-host-build.json",
+                       "native-remote/linux-xvfb-evidence.json", "native-remote/worker.sha256"):
+            with self.subTest(missing=suffix), self.assertRaises(ValueError):
+                self.verify_archive([(info, data) for info, data in entries if not info.name.endswith("/" + suffix)])
+        for suffix in ("bin/home_tunnel_remote_host", "native-remote/worker.sha256",
+                       "native-remote/WEBRTC-THIRD-PARTY-NOTICES.md"):
+            with self.subTest(changed=suffix), self.assertRaises(ValueError):
+                self.verify_archive([(info, data + b"tampered" if info.name.endswith("/" + suffix) else data)
+                                     for info, data in entries])
+        with self.assertRaisesRegex(ValueError, "pinned native worker digest"):
+            self.verify_archive([(info, data[:64] if info.name.endswith("/bin/home-tunnel-gui") else data)
+                                 for info, data in entries])
+
+    def test_archive_rejects_stale_metadata_even_with_original_worker(self):
+        entries = self.archive_fixture()
+        for key, value in (("repository_revision", "c" * 40), ("source_modified", True),
+                           ("linux_source_tree_sha256", "0" * 64), ("version", "8.0.0-rc.2")):
+            changed = []
+            for info, data in entries:
+                if info.name.endswith("/remote-host-build.json"):
+                    record = json.loads(data)
+                    record[key] = value
+                    data = json.dumps(record).encode()
+                changed.append((info, data))
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.verify_archive(changed)
+
+    def test_archive_rejects_test_executables_paths_aliases_and_links(self):
+        entries = self.archive_fixture()
+        for name in ("home_tunnel_remote_host_xvfb", "home_tunnel_x11_input_tests", "home_tunnel_webrtc_probe",
+                     "../escaped", "bin/../../escaped", "bin\\escaped", "bin/drive:name", "bin/control\x7f",
+                     "bin/HOME_TUNNEL_REMOTE_HOST", "bin/home_tunnel_remote_host"):
+            info = tarfile.TarInfo(self.prefix + "/" + name)
+            info.mode = 0o755
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.verify_archive(entries + [(info, b"unexpected")])
+        for kind in (tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.FIFOTYPE, tarfile.CHRTYPE):
+            info = tarfile.TarInfo(self.prefix + "/linked")
+            info.type = kind
+            info.linkname = "bin/home_tunnel_remote_host"
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.verify_archive(entries + [(info, b"")])
+        info = tarfile.TarInfo(self.prefix + "/bin")
+        with self.assertRaisesRegex(ValueError, "crosses a regular file"):
+            self.verify_archive(entries + [(info, b"not a directory")])
+
+    def test_archive_rejects_unsafe_modes_and_other_architectures(self):
+        entries = self.archive_fixture()
+        for mode in (0o644, 0o777, 0o4755, 0o2001):
+            changed = copy.deepcopy(entries)
+            for info, _ in changed:
+                if info.name.endswith("/bin/home-tunnel-gui"):
+                    info.mode = mode
+            with self.subTest(mode=oct(mode)), self.assertRaises(ValueError):
+                self.verify_archive(changed)
+        with self.assertRaisesRegex(ValueError, "architecture mismatch"):
+            self.verify_archive([(info, b"MZ" + data[2:] if info.name.endswith("/lib/home-tunnel-agent") else data)
+                                 for info, data in entries])
 
 
 if __name__ == "__main__":

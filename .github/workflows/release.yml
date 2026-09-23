@@ -263,14 +263,15 @@ jobs:
     if: github.event_name == 'push'
     needs: metadata
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         include:
         - platform: linux
           arch: amd64
-          runner: ubuntu-latest
-          script: ./packaging/build-release.sh
+          runner: ubuntu-24.04
+          script: bash packaging/build-linux-remote-candidate.sh
         - platform: linux
           arch: arm64
           runner: ubuntu-24.04-arm
@@ -294,11 +295,19 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config gcc
+    - name: Build the tagged Linux x64 production worker and isolated evidence
+      if: matrix.platform == 'linux' && matrix.arch == 'amd64'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get install -y --no-install-recommends ca-certificates git ninja-build pkg-config libglib2.0-dev libnss3-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libxdamage-dev libxfixes-dev libxcomposite-dev libxrender-dev libxtst-dev libsystemd-dev libgbm-dev libdrm-dev xvfb xauth
+        python3 scripts/build-native-linux.py --build --jobs 4
     - name: Build package once from the tagged commit
       shell: bash
       env:
         VERSION: ${{ needs.metadata.outputs.version }}
         ARCH: ${{ matrix.arch }}
+        PLATFORM: ${{ matrix.platform }}
         MACOS_DEVELOPER_ID_P12_BASE64: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
         MACOS_DEVELOPER_ID_PASSWORD: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_PASSWORD || '' }}
         MACOS_SIGNING_IDENTITY: ${{ matrix.platform == 'macos' && secrets.MACOS_SIGNING_IDENTITY || '' }}
@@ -308,6 +317,9 @@ jobs:
         REQUIRE_PLATFORM_SIGNING: ${{ vars.REQUIRE_PLATFORM_SIGNING }}
       run: |
         test "$(go env GOARCH)" = "$ARCH"
+        if [ "$PLATFORM" = linux ] && [ "$ARCH" = amd64 ]; then
+          export REMOTE_HOST_BUILD="$PWD/outputs/native-linux-build/remote-host-build.json"
+        fi
         ${{ matrix.script }}
     - id: artifact
       name: Verify package layout and select outputs
@@ -331,6 +343,9 @@ jobs:
         grep -q '/docs/PLATFORM_SECURITY.md$' <<< "$listing"
         if [ "$PLATFORM" = linux ]; then
           grep -q '/lib/systemd/system/home-tunnel-client.service$' <<< "$listing"
+          if [ "$ARCH" = amd64 ]; then
+            python3 scripts/package-native-linux.py --verify-archive "$archive" --version "$VERSION" --revision "$GITHUB_SHA"
+          fi
         else
           grep -q '/Library/LaunchDaemons/com.hometunnel.client.plist$' <<< "$listing"
         fi
@@ -381,6 +396,16 @@ jobs:
           ${{ steps.artifact.outputs.checksum }}.sigstore.json
           ${{ steps.artifact.outputs.sbom }}.sigstore.json
         if-no-files-found: error
+    - name: Retain Linux native diagnostics
+      if: ${{ always() && matrix.platform == 'linux' && matrix.arch == 'amd64' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: linux-native-tag-build-evidence
+        path: |
+          .downloads/remote-webrtc-linux/checkout/src/out/home_tunnel/remote-build.log
+          outputs/native-linux-build/linux-xvfb-evidence.json
+        if-no-files-found: ignore
+        retention-days: 14
   android-controller-sdk:
     name: Tagged Android controller SDK and source evidence
     if: github.event_name == 'push'

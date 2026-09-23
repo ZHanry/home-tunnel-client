@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tarfile
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native/remote"
@@ -130,20 +132,89 @@ def stage(build, destination, record):
     require(sha(binary_dir / "home_tunnel_remote_host") == record["sha256"], "Worker changed during staging")
 
 
+def verify_archive(archive, version, revision, source_tree):
+    """Inspect original package bytes without extracting caller-chosen paths."""
+    prefix = "home-tunnel-linux-" + version + "-amd64"
+    selected = {
+        "bin/home_tunnel_remote_host": "home_tunnel_remote_host",
+        "native-remote/remote-host-build.json": "remote-host-build.json",
+        "native-remote/WEBRTC-THIRD-PARTY-NOTICES.md": "LICENSE.md",
+        "native-remote/remote-source-manifest.json": "remote-source-manifest.json",
+        "native-remote/linux-xvfb-evidence.json": "linux-xvfb-evidence.json",
+    }
+    required = {*selected, "bin/home-tunnel-gui", "bin/home-tunnel-client", "lib/home-tunnel-agent",
+                "native-remote/worker.sha256", "install.sh", "LICENSE", "FRP-LICENSE.txt",
+                "lib/systemd/system/home-tunnel-client.service", "docs/PLATFORM_SECURITY.md"}
+    with tarfile.open(archive, "r:gz") as bundle, tempfile.TemporaryDirectory(prefix="ht-native-linux-") as temporary:
+        members, names, total = {}, set(), 0
+        for entry in bundle:
+            require(len(names) < 10000 and entry.size >= 0, "Unbounded Linux candidate archive")
+            name = entry.name.rstrip("/")
+            parts = name.split("/")
+            require(name and "\\" not in name and ":" not in name and
+                    all(part not in ("", ".", "..") for part in parts) and
+                    not any(ord(char) < 32 or ord(char) == 127 for char in name) and
+                    (name == prefix or name.startswith(prefix + "/")), "Unsafe Linux candidate path")
+            require(name.casefold() not in names and (entry.isfile() or entry.isdir()) and
+                    not entry.mode & 0o7000, "Aliased, linked or special Linux candidate entry")
+            require(parts[-1].casefold() not in ("home_tunnel_remote_host_xvfb", "home_tunnel_x11_input_tests",
+                    "home_tunnel_webrtc_probe"), "Test-only executable in Linux candidate")
+            names.add(name.casefold())
+            total += entry.size
+            require(total <= 512 * 1024 * 1024, "Unbounded Linux candidate contents")
+            members[name] = entry
+        for name in members:
+            parent = name.rpartition("/")[0]
+            while parent:
+                require(parent not in members or members[parent].isdir(), "Linux candidate path crosses a regular file")
+                parent = parent.rpartition("/")[0]
+        require(all(prefix + "/" + name in members and members[prefix + "/" + name].isfile()
+                    for name in required), "Linux candidate is missing its production worker or evidence")
+
+        def payload(name, limit=8 * 1024 * 1024):
+            entry = members[prefix + "/" + name]
+            require(entry.size <= limit, "Oversized Linux candidate payload")
+            with bundle.extractfile(entry) as stream:
+                return stream.read()
+
+        build = Path(temporary)
+        for name, target in selected.items():
+            (build / target).write_bytes(payload(name, 256 * 1024 * 1024 if target == "home_tunnel_remote_host" else 8 * 1024 * 1024))
+        record = validate(build, version, revision, source_tree)
+        require(payload("native-remote/worker.sha256") == (record["sha256"] + "  bin/home_tunnel_remote_host\n").encode(),
+                "Linux install worker checksum differs from its native evidence")
+        for name in ("bin/home-tunnel-gui", "bin/home-tunnel-client", "lib/home-tunnel-agent", "bin/home_tunnel_remote_host"):
+            entry = members[prefix + "/" + name]
+            require(entry.mode & 0o100 and not entry.mode & 0o022, "Unsafe Linux executable permissions")
+            data = payload(name, 256 * 1024 * 1024)
+            require(data[:6] == b"\x7fELF\x02\x01" and data[18:20] == b"\x3e\x00", "Linux package executable architecture mismatch")
+            if name == "bin/home-tunnel-gui":
+                require(record["sha256"].encode("ascii") in data, "Linux GUI lacks the pinned native worker digest")
+        return record
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--build-record", required=True, type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--build-record", type=Path)
+    mode.add_argument("--verify-archive", type=Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--revision", help="Require this exact clean checkout for publication")
     parser.add_argument("--stage", type=Path)
     args = parser.parse_args()
-    require(args.build_record.name == "remote-host-build.json", "Use the original native build record")
+    require(not args.verify_archive or not args.stage, "Archive verification cannot stage another package")
     require(not subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT).strip(),
             "Candidate packaging requires a clean client checkout")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    require(args.revision is None or args.revision == revision, "Linux publication checkout differs from the tagged revision")
     module_spec = importlib.util.spec_from_file_location("native_linux", ROOT / "scripts/build-native-linux.py")
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
-    record = validate(args.build_record.resolve().parent, args.version, revision, module.source_identity())
+    if args.verify_archive:
+        record = verify_archive(args.verify_archive.resolve(), args.version, revision, module.source_identity())
+    else:
+        require(args.build_record.name == "remote-host-build.json", "Use the original native build record")
+        record = validate(args.build_record.resolve().parent, args.version, revision, module.source_identity())
     if args.stage:
         stage(args.build_record.resolve().parent, args.stage.resolve(), record)
     print(record["sha256"])
@@ -152,5 +223,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, KeyError, OSError, TypeError) as error:
+    except (ValueError, KeyError, OSError, TypeError, tarfile.TarError) as error:
         raise SystemExit(str(error))

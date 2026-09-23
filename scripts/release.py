@@ -86,6 +86,10 @@ def required_assets(directory, *, for_publication=True):
         if not (directory/name).is_file() or not (directory/name).stat().st_size:
             raise SystemExit(f"Missing release asset: {name}")
     if COMPONENT == "client":
+        # Validate the original Linux package on preparation and publication.
+        # A tunnel-only tarball or a test-mode worker must never become the x64 RC.
+        run(sys.executable, str(ROOT / "scripts/package-native-linux.py"), "--verify-archive",
+            str(directory / f"home-tunnel-linux-{version}-amd64.tar.gz"), "--version", version, "--revision", SHA)
         verify_windows_evidence(directory, version, SHA)
         verify_remote_sdk(directory, version, SHA)
         run(sys.executable, str(ROOT / "scripts/package-remote-android-sdk.py"), "--verify", "--output", str(directory), "--version", version, "--revision", SHA)
