@@ -67,14 +67,18 @@ jobs:
       - name: Build pinned WebRTC and production Xorg host, then verify separate Xvfb host
         run: python3 scripts/build-native-linux.py --build --jobs 4
       - name: Archive candidate without the test-only executable
-        run: tar -C outputs -czf outputs/native-linux-x64-candidate.tar.gz native-linux-build
+        run: |
+          tar -C outputs/native-linux-build -czf outputs/native-linux-x64-candidate.tar.gz \
+            home_tunnel_remote_host remote-host-build.json remote-source-manifest.json \
+            remote-webrtc-build.json LICENSE.md linux-xvfb-evidence.json runtime-libraries.txt
       - name: Build GUI candidate with the exact production worker digest
         run: |
           export VERSION=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' internal/model/model.go)
           export REMOTE_HOST_BUILD="$PWD/outputs/native-linux-build/remote-host-build.json"
           bash packaging/build-linux-remote-candidate.sh
           (cd outputs/linux && sha256sum --check "home-tunnel-linux-$VERSION-amd64.sha256")
-          if tar -tzf "outputs/linux/home-tunnel-linux-$VERSION-amd64.tar.gz" | grep -Eq 'home_tunnel_remote_host_xvfb|home_tunnel_x11_input_tests|home_tunnel_webrtc_probe'; then
+          listing=$(tar -tzf "outputs/linux/home-tunnel-linux-$VERSION-amd64.tar.gz")
+          if grep -Eq 'home_tunnel_remote_host_xvfb|home_tunnel_x11_input_tests|home_tunnel_webrtc_probe' <<< "$listing"; then
             echo 'Test-only native executable entered the candidate package' >&2
             exit 1
           fi
