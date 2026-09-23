@@ -43,8 +43,12 @@ INPUT key_event(uint16_t usage,bool down){
     return event;
 }
 bool key_held(uint16_t usage){
+    const auto thread=GetWindowThreadProcessId(GetForegroundWindow(),nullptr);
+    const auto layout=thread?GetKeyboardLayout(thread):nullptr;
+    if(!layout)return true;
+    // Scan-code injection is interpreted by the foreground thread's layout.
     const auto virtual_key=usage==72?UINT(VK_PAUSE):usage==70?UINT(VK_SNAPSHOT):
-        MapVirtualKeyW(WindowsInputSink::scan_code(usage),MAPVK_VSC_TO_VK_EX);
+        MapVirtualKeyExW(WindowsInputSink::scan_code(usage),MAPVK_VSC_TO_VK_EX,layout);
     // An unknown mapping cannot safely establish ownership of the key state.
     return !virtual_key || (GetAsyncKeyState(static_cast<int>(virtual_key))&0x8000)!=0;
 }
