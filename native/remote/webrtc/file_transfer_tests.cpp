@@ -686,7 +686,7 @@ void local_handle_boundaries_and_large_offsets() {
 #endif
 }
 }  // namespace
-int main() {
+void run_file_suite() {
   consent_integrity_collision();
   real_bidirectional_batch();
   cancellation_hash_disconnect_timeout();
@@ -698,3 +698,66 @@ int main() {
       << "File transfer: consent, real files, both directions, batch, SHA256, "
          "cancellation, IO errors, backpressure and 64-bit offsets passed\n";
 }
+#if defined(_WIN32)
+// Abrupt process termination closes kernel handles but skips C++ destructors.
+// Test both an incomplete receive and the point after a successful commit.
+int wmain(int argc, wchar_t** argv) {
+#pragma clang unsafe_buffer_usage begin
+  const std::span<wchar_t*> arguments(argv, static_cast<size_t>(argc));
+#pragma clang unsafe_buffer_usage end
+  if (arguments.size() == 3) {
+    const std::wstring_view mode(arguments[1]);
+    REQUIRE(mode == L"--crash-staging" || mode == L"--crash-committed");
+    const bool commit = mode == L"--crash-committed";
+    std::string error;
+    auto access = system_file_access();
+    auto destination = access->create_destination(
+        std::filesystem::path(arguments[2]) / "received.bin", commit ? 3 : 6,
+        error);
+    REQUIRE(destination);
+    const std::array<uint8_t, 3> data{'a', 'b', 'c'};
+    REQUIRE(destination->write(0, data));
+    if (commit) {
+      std::filesystem::path actual;
+      REQUIRE(destination->commit(actual));
+    }
+    TerminateProcess(GetCurrentProcess(), 73);
+    return 74;
+  }
+  REQUIRE(arguments.size() == 1);
+  run_file_suite();
+  std::array<wchar_t, 32768> executable{};
+  const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+                                        static_cast<DWORD>(executable.size()));
+  REQUIRE(length && length < executable.size());
+  for (const bool commit : {false, true}) {
+    Temp directory;
+    std::wstring command = L"\"" + std::wstring(executable.data(), length) +
+        (commit ? L"\" --crash-committed \"" : L"\" --crash-staging \"") +
+        directory.path.wstring() + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    REQUIRE(CreateProcessW(executable.data(), command.data(), nullptr, nullptr,
+                           FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup,
+                           &process));
+    const auto waited = WaitForSingleObject(process.hProcess, 10000);
+    if (waited != WAIT_OBJECT_0) TerminateProcess(process.hProcess, 75);
+    DWORD result = 0;
+    const bool exited = GetExitCodeProcess(process.hProcess, &result);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    REQUIRE(waited == WAIT_OBJECT_0 && exited && result == 73);
+    if (commit) {
+      REQUIRE(read(directory.path / "received.bin") == "abc");
+      REQUIRE(std::distance(std::filesystem::directory_iterator(directory.path),
+                            std::filesystem::directory_iterator{}) == 1);
+    } else {
+      REQUIRE(std::filesystem::is_empty(directory.path));
+    }
+  }
+  std::cout << "Windows file process death: partial bytes removed, committed file preserved\n";
+}
+#else
+int main() { run_file_suite(); }
+#endif

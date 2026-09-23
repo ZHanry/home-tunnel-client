@@ -215,6 +215,13 @@ class Destination final : public FileDestination {
       std::memcpy(rename->FileName, name.data(), rename->FileNameLength);
       if (SetFileInformationByHandle(file.value, FileRenameInfo, rename,
                                      static_cast<DWORD>(buffer.size()))) {
+        // Keep crash cleanup armed until the complete file has its final name.
+        // Clearing the disposition is the commit point; a crash before it must
+        // not leave a partial or unacknowledged destination behind.
+        FILE_DISPOSITION_INFO_EX keep{FILE_DISPOSITION_FLAG_ON_CLOSE};
+        if (!SetFileInformationByHandle(file.value, FileDispositionInfoEx, &keep,
+                                       sizeof(keep)))
+          return false;
         committed = true;
         actual = target;
         file = Handle{};
@@ -437,7 +444,7 @@ class SystemAccess final : public FileAccess {
     result->file = Handle(CreateFileW(
         temporary.c_str(), GENERIC_WRITE | DELETE, 0, nullptr, CREATE_NEW,
         FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_TEMPORARY |
-            FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_DELETE_ON_CLOSE,
         nullptr));
     if (!result->file) return {};
 #else
