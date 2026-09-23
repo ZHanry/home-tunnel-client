@@ -19,7 +19,8 @@ class SurfaceRenderer final : public webrtc::VideoSinkInterface<webrtc::VideoFra
   void SetAuthorized(bool authorized, uint64_t deadline_ms = 0);
   void Close();
   void OnFrame(const webrtc::VideoFrame& frame) override;
-  uint64_t presented_frames() const;
+  struct Presentation { uint64_t generation, frames; };
+  Presentation presentation() const;
  private:
   mutable std::mutex mutex_;
   ANativeWindow* window_ = nullptr;

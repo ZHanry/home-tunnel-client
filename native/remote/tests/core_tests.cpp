@@ -3,6 +3,7 @@
 #include "session_gate.hpp"
 #include "crypto.hpp"
 #include "../generated/test_vectors.hpp"
+#include "../android/surface_lifecycle.hpp"
 #if defined(_WIN32)
 #include "platform/windows_input.hpp"
 #endif
@@ -265,6 +266,19 @@ void signature_verification() {
 }
 }
 int main() {
+    android::SurfaceLifecycle surface;
+    CHECK(surface.Replace(1, true, 100)); CHECK(!surface.presented());
+    CHECK(surface.Presented(1, 10)); CHECK(surface.presented());
+    CHECK(surface.Replace(2, true, 200)); CHECK(!surface.presented());
+    CHECK(!surface.Presented(1, 11)); CHECK(!surface.Presented(2, 0));
+    CHECK(!surface.Expired(15199)); CHECK(surface.Expired(15200));
+    CHECK(surface.Replace(3, false, 300)); CHECK(!surface.Expired(999999));
+    CHECK(!surface.Presented(2, 12)); CHECK(!surface.Presented(3, 1));
+    CHECK(surface.Replace(4, true, 500)); surface.RestartWait(1000);
+    CHECK(!surface.Replace(3, true, 600)); CHECK(surface.generation() == 4);
+    CHECK(!surface.Presented(2, 13)); CHECK(!surface.Expired(15999));
+    CHECK(surface.Presented(4, 1)); CHECK(!surface.Expired(999999));
+    CHECK(!surface.Presented(4, 2));
     framing();watchdog_and_epoch();heartbeat_replay_cannot_hold_input();network_gate();button_coordinates_and_watchdog();pointer_wheel_text_and_release();rejected_release_blocks_reenable();lease_and_isolation();abi_contract();callback_quiescence();transcript();signature_verification();
 #if defined(_WIN32)
     CHECK(WindowsInputSink::scan_code(4)==0x1e && WindowsInputSink::scan_code(224)==0x1d && WindowsInputSink::scan_code(228)==0xe01d);

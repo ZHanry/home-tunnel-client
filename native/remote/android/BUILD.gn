@@ -34,6 +34,7 @@ rtc_source_set("controller_objects") {
     "../webrtc/peer_identity.cpp",
     "controller_identity.cpp",
     "controller_runtime.cpp",
+    "surface_lifecycle.hpp",
   ]
   defines = [
     "HT_RD_BUILD",

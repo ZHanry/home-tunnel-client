@@ -17,6 +17,7 @@ bool SurfaceRenderer::Attach(ANativeWindow* window, uint64_t generation) {
   if (window_) ANativeWindow_release(window_);
   window_ = window;
   generation_ = generation;
+  frames_ = 0;
   width_ = height_ = 0;
   return true;
 }
@@ -35,9 +36,9 @@ void SurfaceRenderer::Close() {
   window_ = nullptr;
 }
 
-uint64_t SurfaceRenderer::presented_frames() const {
+SurfaceRenderer::Presentation SurfaceRenderer::presentation() const {
   std::lock_guard lock(mutex_);
-  return frames_;
+  return {generation_, frames_};
 }
 
 void SurfaceRenderer::OnFrame(const webrtc::VideoFrame& frame) {
