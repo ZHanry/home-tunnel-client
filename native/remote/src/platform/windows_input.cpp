@@ -42,6 +42,16 @@ INPUT key_event(uint16_t usage,bool down){
     event.ki.dwFlags=KEYEVENTF_SCANCODE | (scan>0xff ? KEYEVENTF_EXTENDEDKEY : 0) | (down ? 0 : KEYEVENTF_KEYUP);
     return event;
 }
+bool key_held(uint16_t usage){
+    const auto virtual_key=usage==72?UINT(VK_PAUSE):usage==70?UINT(VK_SNAPSHOT):
+        MapVirtualKeyW(WindowsInputSink::scan_code(usage),MAPVK_VSC_TO_VK_EX);
+    // An unknown mapping cannot safely establish ownership of the key state.
+    return !virtual_key || (GetAsyncKeyState(static_cast<int>(virtual_key))&0x8000)!=0;
+}
+bool button_held(uint8_t button){
+    constexpr std::array<int,5> keys{VK_LBUTTON,VK_RBUTTON,VK_MBUTTON,VK_XBUTTON1,VK_XBUTTON2};
+    return (GetAsyncKeyState(keys[button-1])&0x8000)!=0;
+}
 INPUT button_event(uint8_t button,bool down){
     INPUT event{};event.type=INPUT_MOUSE;
     switch(button){
@@ -230,10 +240,12 @@ bool WindowsInputSink::key(uint16_t usage,bool down,bool) {
     const auto scan=scan_code(usage);
     if(scan==0 || (down && !ensure_guard()) || !guard_ || !guard_->ledger || !lock_ledger(guard_->mutex))return false;
     bool sent=false;
-    if(ordinary_desktop() && (!down || (guard_->healthy() && target_focused()))){
+    if(!down && !guard_->ledger->keys[usage])sent=true;
+    else if(ordinary_desktop() && (!down || (guard_->healthy() && target_focused() &&
+        (guard_->ledger->keys[usage] || !key_held(usage))))){
         auto event=key_event(usage,down);
         // Persist before injection: a crash after SendInput must still be
-        // observable to the guard. An extra up after a failed down is safe.
+        // observable to the guard. Never claim a key already held locally.
         const auto previous=guard_->ledger->keys[usage];
         if(down)guard_->ledger->keys[usage]=1;
         sent=SendInput(1,&event,sizeof(event))==1;
@@ -245,7 +257,9 @@ bool WindowsInputSink::key(uint16_t usage,bool down,bool) {
 bool WindowsInputSink::button(uint8_t button,bool down) {
     if(button<1 || button>5 || (down && !ensure_guard()) || !guard_ || !guard_->ledger || !lock_ledger(guard_->mutex))return false;
     bool sent=false;
-    if(ordinary_desktop() && (!down || (guard_->healthy() && pointer_known_ && target_at_point(pointer_x_,pointer_y_)))){
+    if(!down && !guard_->ledger->buttons[button-1])sent=true;
+    else if(ordinary_desktop() && (!down || (guard_->healthy() && pointer_known_ && target_at_point(pointer_x_,pointer_y_) &&
+        (guard_->ledger->buttons[button-1] || !button_held(button))))){
         std::array<INPUT,2> events{};events[down?1:0]=button_event(button,down);
         // MOVE completion is asynchronous. Use the button's own validated
         // coordinates in the SAME SendInput batch, rather than reading the
