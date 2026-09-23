@@ -11,6 +11,40 @@ SPEC.loader.exec_module(BUILD)
 
 
 class AndroidArtifactPolicy(unittest.TestCase):
+    def test_regular_header_must_be_tracked_inside_the_pinned_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve(); source = root / "source"; source.mkdir()
+            header = source / "real.h"; header.write_text("#pragma once\n")
+            self.assertEqual(BUILD.sdk_header_source(header, source, {header}), header)
+            with self.assertRaisesRegex(SystemExit, "untracked"):
+                BUILD.sdk_header_source(header, source, set())
+            with self.assertRaisesRegex(SystemExit, "escapes"):
+                BUILD.sdk_header_source(root / "private.h", source, {root / "private.h"})
+
+    def test_header_alias_is_materialized_only_from_a_tracked_internal_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve(); source = root / "source"; source.mkdir()
+            header = source / "real.h"; header.write_text("#pragma once\n")
+            alias = source / "alias.h"
+            try:
+                alias.symlink_to(header)
+            except OSError as error:
+                if getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows account cannot create symlinks; Linux build CI executes this boundary test")
+                raise
+            resolved = BUILD.sdk_header_source(alias, source, {alias, header})
+            self.assertEqual(resolved, header)
+            self.assertFalse(resolved.is_symlink())
+            with self.assertRaisesRegex(SystemExit, "untracked"):
+                BUILD.sdk_header_source(alias, source, {alias})
+            alias.unlink(); outside = root / "outside.h"; outside.write_text("private\n")
+            alias.symlink_to(outside)
+            with self.assertRaisesRegex(SystemExit, "Unsafe"):
+                BUILD.sdk_header_source(alias, source, {alias, outside})
+            outside.unlink()
+            with self.assertRaisesRegex(SystemExit, "Missing"):
+                BUILD.sdk_header_source(alias, source, {alias, outside})
+
     def test_redistributed_archive_cannot_reference_build_tree_objects(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "surface.a"

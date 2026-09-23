@@ -44,6 +44,22 @@ def require_regular_archive(path):
         raise SystemExit(f"Android SDK requires a real, non-thin archive: {path.name}")
 
 
+def sdk_header_source(path, source, tracked_headers):
+    """Materialize upstream header aliases without exporting filesystem links."""
+    if not path.is_relative_to(source):
+        raise SystemExit("Engine header path escapes the pinned checkout")
+    name = path.relative_to(source).as_posix()
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise SystemExit(f"Missing/unresolvable engine header: {name}") from None
+    # Perfetto publishes header aliases for its Rust SDK. Only a real tracked
+    # header in this exact Git dependency is permitted as the resolved target.
+    if not resolved.is_relative_to(source) or resolved not in tracked_headers or not resolved.is_file():
+        raise SystemExit(f"Unsafe/untracked engine header target: {name}")
+    return resolved
+
+
 def locks():
     upstream = json.loads((NATIVE / "remote-deps.lock.json").read_text())
     android = json.loads((ANDROID / "android-build.lock.json").read_text())
@@ -222,18 +238,19 @@ def main():
         folder = source.parent / entry
         if not folder.is_dir() or not (folder / ".git").exists():
             continue
-        for name in run(["git", "ls-files", "-z", "--", "*.h", "*.hpp", "*.inc"], folder, env, True).split("\0"):
+        names = run(["git", "ls-files", "-z", "--", "*.h", "*.hpp", "*.inc"], folder, env, True).split("\0")
+        tracked_headers = {folder / name for name in names if name}
+        for name in names:
             if not name:
                 continue
             path = folder / name
-            if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(source):
-                raise SystemExit("Unsafe/missing engine header path")
-            header_bytes += path.stat().st_size
+            materialized = sdk_header_source(path, source, tracked_headers)
+            header_bytes += materialized.stat().st_size
             if header_bytes > 512 * 1024 * 1024:
                 raise SystemExit("Engine header inventory exceeds its bounded size")
             destination = output / "include" / path.relative_to(source)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, destination)
+            shutil.copyfile(materialized, destination)
     public = output / "include/home_tunnel/remote.h"
     public.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(NATIVE / "include/home_tunnel/remote.h", public)
