@@ -2,8 +2,8 @@
   "component": "client",
   "stage": "internal-testing",
   "api_major": 1,
-  "contract_ref": "api-v1.1.0",
-  "support_policy": "8.0 development line; prereleases only. Existing tunnels retain server 7.0 compatibility. Remote desktop requires negotiated capabilities and remains unavailable until a usable native media backend is integrated and verified. FRP follows its separate upstream version.",
+  "contract_ref": "api-v1.2.0-rc.1",
+  "support_policy": "8.0 development line; prereleases only. Existing tunnels retain server 7.0 compatibility. Remote desktop requires negotiated capabilities and a matching verified worker; unsupported platforms/features remain unavailable. Same-machine Windows/browser development evidence does not replace final-package or cross-network acceptance. FRP follows its separate upstream version.",
   "version": "8.0.0-rc.1",
   "minimum_server": "7.0.0",
   "tested_combination": {
