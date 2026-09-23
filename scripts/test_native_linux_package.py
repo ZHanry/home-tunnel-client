@@ -47,6 +47,10 @@ class NativeLinuxPackage(unittest.TestCase):
                          "production_worker_sha256": self.record["sha256"],
                          "test_worker_sha256": self.record["xvfb_test_binary_sha256"],
                          "recipe_sha256": self.record["linux_recipe_sha256"],
+                         "input": {"status": "passed", "scope": "isolated-xvfb-real-xtest-input",
+                                   "physical_xorg_acceptance": False, "unrelated_key_preserved": True,
+                                   "already_held_key_preserved": True, "heartbeat_release_ms": 1200,
+                                   "worker_crash_release_ms": 20},
                          "production_ipc": {"hello": "passed", "capability_boundary": "passed", "unsigned_authorization": "not_started"},
                          "test_ipc": {"hello": "passed", "capability_boundary": "passed", "unsigned_authorization": "rejected"}}
         for codec in ("H264", "VP8"):
@@ -127,6 +131,17 @@ class NativeLinuxPackage(unittest.TestCase):
         self.write()
         with self.assertRaises(ValueError):
             self.validate()
+
+    def test_requires_measured_input_release_within_two_seconds(self):
+        original = copy.deepcopy(self.evidence)
+        for key in ("heartbeat_release_ms", "worker_crash_release_ms"):
+            for value in (None, True, -1, 2001, "1200"):
+                with self.subTest(key=key, value=value):
+                    self.evidence = copy.deepcopy(original)
+                    self.evidence["input"][key] = value
+                    self.write()
+                    with self.assertRaises(ValueError):
+                        self.validate()
 
     def test_refuses_stable_version_without_physical_acceptance(self):
         self.version = "8.0.0"

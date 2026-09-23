@@ -87,6 +87,15 @@ def validate(build, version, revision, source_tree):
     require(evidence.get("production_ipc") == {"hello": "passed", "capability_boundary": "passed", "unsigned_authorization": "not_started"} and
             evidence.get("test_ipc") == {"hello": "passed", "capability_boundary": "passed", "unsigned_authorization": "rejected"},
             "Native IPC production/test boundary was not verified")
+    input_evidence = evidence.get("input", {})
+    require(input_evidence.get("status") == "passed" and
+            input_evidence.get("scope") == "isolated-xvfb-real-xtest-input" and
+            input_evidence.get("physical_xorg_acceptance") is False and
+            input_evidence.get("unrelated_key_preserved") is True and
+            input_evidence.get("already_held_key_preserved") is True and
+            all(type(input_evidence.get(key)) is int and 0 <= input_evidence[key] <= 2000
+                for key in ("heartbeat_release_ms", "worker_crash_release_ms")),
+            "Missing isolated input preservation or measured two-second release evidence")
     for codec in ("H264", "VP8"):
         probe = evidence.get(codec, {})
         require(probe.get("status") == "passed" and probe.get("exit_code") == 0 and
