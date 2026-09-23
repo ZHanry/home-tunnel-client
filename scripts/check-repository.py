@@ -5,6 +5,15 @@ import json
 import re
 import subprocess
 
+
+def valid_contract_ref(value):
+    """Accept immutable API release identities, including canonical candidates."""
+    number = r"(?:0|[1-9][0-9]*)"
+    return isinstance(value, str) and re.fullmatch(
+        rf"api-v{number}\.{number}\.{number}(?:-rc\.[1-9][0-9]*)?", value
+    ) is not None
+
+
 root = Path(__file__).resolve().parents[1]
 compat = json.loads((root / "compatibility.json").read_text(encoding="utf-8"))
 component = compat["component"]
@@ -35,7 +44,7 @@ else:
     fixture = root / lock["path"]
     assert hashlib.sha256(fixture.read_bytes()).hexdigest() == lock["sha256"], "Protocol fixture drift"
     assert lock["repository"] == "ZHanry/home-tunnel-server"
-    assert re.fullmatch(r"api-v\d+\.\d+\.\d+", lock["ref"]), "Protocol source must use a versioned ref"
+    assert valid_contract_ref(lock["ref"]), "Protocol source must use a canonical versioned API ref"
     if component == "client":
         assert (root / "go.mod").read_text().startswith("module github.com/ZHanry/home-tunnel-client\n")
         assert (root / "agent/go.mod").exists(), "The FRP source must be isolated from the GUI/CLI module"

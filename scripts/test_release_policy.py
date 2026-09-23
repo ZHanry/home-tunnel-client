@@ -1,6 +1,7 @@
 """Release-stage regressions; these tests do not contact GitHub or publish artifacts."""
 from pathlib import Path
 import importlib.util
+import runpy
 import os
 import json
 import hashlib
@@ -21,6 +22,18 @@ finally:
     os.chdir(previous_directory)
 
 class ReleasePolicyTests(unittest.TestCase):
+    def test_contract_snapshot_accepts_candidates_but_never_moving_or_ambiguous_refs(self):
+        validator = runpy.run_path(str(Path(__file__).with_name("check-repository.py")))["valid_contract_ref"]
+        for ref in ("api-v0.0.0", "api-v1.1.0", "api-v1.2.0-rc.1", "api-v10.20.30-rc.123"):
+            with self.subTest(ref=ref):
+                self.assertTrue(validator(ref))
+        for ref in (None, 12, "main", "refs/tags/api-v1.2.0", "v1.2.0", "api-v01.2.0",
+                    "api-v1.02.0", "api-v1.2.00", "api-v1.2.0-rc.0", "api-v1.2.0-rc.01",
+                    "api-v1.2.0-rc.-1", "api-v1.2.0-beta.1", "api-v1.2.0+build",
+                    "api-v1.2.0-rc.1/other", "api-v1.2.0\n", "api-v\u0661.2.0", "api-v1.2.0-rc.\u0661"):
+            with self.subTest(ref=ref):
+                self.assertFalse(validator(ref))
+
     def windows_fixture(self, directory):
         version = "6.0.1"
         setup = "HomeTunnel-Setup-6.0.1-x64.exe"
