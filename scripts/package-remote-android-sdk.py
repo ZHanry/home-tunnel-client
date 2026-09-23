@@ -91,7 +91,8 @@ def verify(directory, version, revision):
                 source.get("header_sha256") != actual.get("include/home_tunnel/remote.h")):
             raise SystemExit("Android SDK engine/source/dependency identity mismatch")
         required = {"lib/arm64-v8a/libwebrtc.a", "lib/arm64-v8a/libhome_tunnel_android_surface.a",
-                    "lib/arm64-v8a/libhome_tunnel_remote.so", "include/home_tunnel/remote.h", "LICENSE.md", "source-manifest.json"}
+                    "lib/arm64-v8a/libhome_tunnel_remote.so", "include/home_tunnel/remote.h", "LICENSE.md", "source-manifest.json",
+                    "PROJECT-LICENSE", "source-license-inventory.json"}
         if not required.issubset(engine.get("files", {})):
             raise SystemExit("Android SDK omits required engine/source/license files")
         if {"android-webrtc-arm64/" + key for key in engine["files"]} != {key for key in members if key.startswith("android-webrtc-arm64/")} - {"android-webrtc-arm64/android-webrtc-build.json"}:
@@ -99,6 +100,13 @@ def verify(directory, version, revision):
         for key, checksum in engine["files"].items():
             if record["files"].get("android-webrtc-arm64/" + key) != checksum:
                 raise SystemExit("Android SDK engine digest differs from its build manifest")
+        spec = importlib.util.spec_from_file_location("android_notice_policy", ROOT / "scripts/build-remote-android-webrtc.py")
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        policy.verify_notice_record(read_json("android-webrtc-arm64/source-license-inventory.json"),
+                                    read_json("android-webrtc-arm64/source-manifest.json"), engine["files"])
+        if bundle.read("android-webrtc-arm64/PROJECT-LICENSE") != (ROOT / "LICENSE").read_bytes():
+            raise SystemExit("Android SDK engine project license differs from source")
         for key in ("libwebrtc.a", "libhome_tunnel_android_surface.a"):
             with bundle.open("android-webrtc-arm64/lib/arm64-v8a/" + key) as stream:
                 if stream.read(8) != b"!<arch>\n":

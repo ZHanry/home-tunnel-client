@@ -55,7 +55,10 @@ class AndroidSDKPolicy(unittest.TestCase):
                   "source_archive": "native-source.tar.gz", "source_archive_sha256": hashlib.sha256(buffer.getvalue()).hexdigest()}
         engine_files = {"lib/arm64-v8a/libwebrtc.a": b"!<arch>\nfixture", "lib/arm64-v8a/libhome_tunnel_android_surface.a": b"!<arch>\nfixture",
                         "lib/arm64-v8a/libhome_tunnel_remote.so": b"fixture-not-executable", "LICENSE.md": b"fixture-notice",
-                        "include/home_tunnel/remote.h": (SDK.NATIVE / "include/home_tunnel/remote.h").read_bytes(), "source-manifest.json": b"{}"}
+                        "include/home_tunnel/remote.h": (SDK.NATIVE / "include/home_tunnel/remote.h").read_bytes(), "source-manifest.json": b"{}",
+                        "PROJECT-LICENSE": (SDK.ROOT / "LICENSE").read_bytes(),
+                        "source-license-inventory.json": json.dumps({"schema_version": 1, "dependencies": {},
+                            "project": {"headers": ["include/home_tunnel/remote.h"], "notice": "PROJECT-LICENSE"}}).encode()}
         engine = {"source_revision": revision, "source_modified": False, "controller_backend_linked": True,
                   "target": "arm64-v8a", "android_api": 26, "available": False,
                   "gn_args": json.loads((SDK.NATIVE / "android/android-build.lock.json").read_text())["gn_args"],
@@ -98,6 +101,19 @@ class AndroidSDKPolicy(unittest.TestCase):
             contents["android-webrtc-arm64/lib/arm64-v8a/libhome_tunnel_remote.so"] = b"changed bytes"
             self.write(directory, contents, version, revision)
             with self.assertRaisesRegex(SystemExit, "engine digest"):
+                SDK.verify(directory, version, revision)
+
+    def test_release_verifier_rejects_unattributed_headers_even_after_rehashing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary); version, revision, contents = self.fixture(directory)
+            key = "android-webrtc-arm64/include/third_party/unlinked/header.h"
+            contents[key] = b"Redistributed dependency header"
+            engine_key = "android-webrtc-arm64/android-webrtc-build.json"
+            engine = json.loads(contents[engine_key])
+            engine["files"][key.removeprefix("android-webrtc-arm64/")] = hashlib.sha256(contents[key]).hexdigest()
+            contents[engine_key] = json.dumps(engine).encode()
+            self.write(directory, contents, version, revision)
+            with self.assertRaisesRegex(SystemExit, "trace every redistributed header"):
                 SDK.verify(directory, version, revision)
 
     def test_archive_paths_cannot_escape_or_alias(self):

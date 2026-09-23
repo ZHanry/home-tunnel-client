@@ -19,6 +19,13 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native/remote"
 ANDROID = NATIVE / "android"
+NOTICE_INVENTORY = "source-license-inventory.json"
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+# This fixed Chromium test notice predates UTF-8. Preserve its reviewed bytes.
+LATIN1_NOTICE = ("third_party/blink/web_tests/svg/W3C-SVG-1.1/resources/copyright-documents-19990405.html",
+                "eb7c524421b243607db1b4a4baae18718bf2bc8f57a42c2f2e0f8d2cba2b5140")
+INHERITED_NOTICES = {"src/third_party/libFuzzer/src": (
+    "third_party/libFuzzer/LICENSE.TXT", "third_party/libFuzzer/README.chromium")}
 
 
 def sha(path):
@@ -31,7 +38,7 @@ def sha(path):
 
 def run(command, cwd, env, capture=False):
     result = subprocess.run([str(value) for value in command], cwd=cwd, env=env,
-                            check=True, text=True, stdout=subprocess.PIPE if capture else None)
+                            check=True, text=True, encoding="utf-8", stdout=subprocess.PIPE if capture else None)
     return result.stdout if capture else None
 
 
@@ -58,6 +65,128 @@ def sdk_header_source(path, source, tracked_headers):
     if not resolved.is_relative_to(source) or resolved not in tracked_headers or not resolved.is_file():
         raise SystemExit(f"Unsafe/untracked engine header target: {name}")
     return resolved
+
+
+def is_sdk_notice(name):
+    path = PurePosixPath(name)
+    return (bool(re.match(r"^(?:LICENSE|LICENCE|COPYING|COPYRIGHTS?|NOTICES?|AUTHORS|UNLICENSE)(?:$|[._-])", path.name.upper())) or
+            path.name == "README.chromium" or any(part.upper() in ("LICENSES", "LICENCES") for part in path.parts[:-1]))
+
+
+def notice_bytes(path, source, tracked):
+    original = sdk_header_source(path, source, tracked)
+    if original.stat().st_size > 4 * 1024 * 1024:
+        raise SystemExit(f"Dependency notice is oversized: {path.relative_to(source).as_posix()}")
+    content = original.read_bytes()
+    if any(value < 32 and value not in (9, 10, 12, 13) or value == 127 for value in content):
+        raise SystemExit(f"Binary/control bytes are not dependency notices: {path.relative_to(source).as_posix()}")
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        if (path.relative_to(source).as_posix(), hashlib.sha256(content).hexdigest()) != LATIN1_NOTICE:
+            raise SystemExit(f"Unreviewed dependency notice encoding: {path.relative_to(source).as_posix()}") from None
+    return content
+
+
+def collect_sdk_sources(source, entries, output, env):
+    """Redistributed headers carry the notices of every pinned source provider."""
+    providers = {}; notice_outputs = {}; total_bytes = 0; total_notices = 0; source_count = 0
+    for entry in sorted(entries):
+        if ":" in entry:
+            continue
+        folder = source.parent / entry
+        if not folder.is_dir() or not (folder / ".git").exists():
+            continue
+        names = [name for name in run(["git", "ls-files", "-z"], folder, env, True).split("\0") if name]
+        headers = {name for name in names if PurePosixPath(name).suffix in {".h", ".hpp", ".inc"}}
+        if not headers:
+            continue
+        notices = {name for name in names if is_sdk_notice(name)}
+        selected = headers | notices
+        source_count += len(selected)
+        if source_count > 65000:
+            raise SystemExit("SDK source inventory exceeds its bounded file count")
+        tracked = {folder / name for name in selected}
+        provider = {"upstream": entries[entry], "headers": [], "notices": []}
+        for name in sorted(selected):
+            path = folder / name
+            original = sdk_header_source(path, source, tracked)
+            content = notice_bytes(path, source, tracked) if name in notices else None
+            size = len(content) if content is not None else original.stat().st_size
+            total_bytes += size
+            if content is not None:
+                total_notices += size
+            if total_bytes > 512 * 1024 * 1024 or total_notices > 64 * 1024 * 1024:
+                raise SystemExit("SDK header/notice inventory exceeds its bounded size")
+            destination = output / "include" / path.relative_to(source)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if content is None:
+                shutil.copyfile(original, destination)
+            else:
+                destination.write_bytes(content)
+            exported = destination.relative_to(output).as_posix()
+            if name in headers:
+                provider["headers"].append(exported)
+            if name in notices:
+                provider["notices"].append(exported)
+                notice_outputs[path.relative_to(source).as_posix()] = exported
+        providers[entry] = provider
+    for entry, provider in providers.items():
+        if entry in INHERITED_NOTICES:
+            try:
+                provider["notices"].extend(notice_outputs[name] for name in INHERITED_NOTICES[entry])
+            except KeyError:
+                raise SystemExit("Pinned dependency wrapper notices are missing") from None
+        if not any((output / name).stat().st_size and re.match(r"^(?:LICENSE|LICENCE|COPYING|COPYRIGHTS?|NOTICES?|UNLICENSE)(?:$|[._-])", PurePosixPath(name).name.upper())
+                   for name in provider["notices"]):
+            raise SystemExit(f"Redistributed dependency has no license notice: {entry}")
+    return {"schema_version": 1, "dependencies": providers,
+            "project": {"headers": ["include/home_tunnel/remote.h"], "notice": "PROJECT-LICENSE"}}
+
+
+def verify_notice_record(inventory, source_manifest, files):
+    sources = source_manifest.get("dependency_sources", {})
+    git_sources = {entry for entry, origin in sources.items() if ":" not in entry and origin.startswith("https://")}
+    if inventory.get("schema_version") != 1 or inventory.get("project") != {"headers": ["include/home_tunnel/remote.h"], "notice": "PROJECT-LICENSE"}:
+        raise SystemExit("SDK source notice schema/project binding mismatch")
+    headers = {"include/home_tunnel/remote.h"}; notices = {"PROJECT-LICENSE"}
+    for entry, provider in inventory.get("dependencies", {}).items():
+        parts = PurePosixPath(entry).parts
+        if (not parts or parts[0] != "src" or ".." in parts or "\\" in entry or ":" in entry or
+                entry not in sources or provider.get("upstream") != sources[entry] or
+                not provider.get("headers") or not provider.get("notices")):
+            raise SystemExit("SDK header provider has no pinned source/notices")
+        prefix = "include/" + ("/".join(parts[1:]) + "/" if len(parts) > 1 else "")
+        for name in provider["headers"]:
+            if name in headers or name not in files or not name.startswith(prefix) or PurePosixPath(name).suffix not in {".h", ".hpp", ".inc"}:
+                raise SystemExit("SDK header provenance is incomplete or duplicated")
+            source_path = PurePosixPath("src") / PurePosixPath(name).relative_to("include")
+            owner = next((parent.as_posix() for parent in source_path.parents if parent.as_posix() in git_sources), None)
+            if owner != entry:
+                raise SystemExit("SDK header is attributed to the wrong pinned provider")
+            headers.add(name)
+        inherited = {"include/" + name for name in INHERITED_NOTICES.get(entry, ())}
+        for name in provider["notices"]:
+            if name not in files or (not name.startswith(prefix) and name not in inherited) or not is_sdk_notice(name):
+                raise SystemExit("SDK dependency notice is missing from its hashed inventory")
+            notices.add(name)
+        if not any(files[name] != EMPTY_SHA256 and re.match(r"^(?:LICENSE|LICENCE|COPYING|COPYRIGHTS?|NOTICES?|UNLICENSE)(?:$|[._-])", PurePosixPath(name).name.upper())
+                   for name in provider["notices"]):
+            raise SystemExit("SDK dependency has no license notice")
+    actual_headers = {name for name in files if name.startswith("include/") and PurePosixPath(name).suffix in {".h", ".hpp", ".inc"}}
+    actual_sources = {name for name in files if name.startswith("include/")}
+    if headers != actual_headers or actual_sources != (headers | notices) - {"PROJECT-LICENSE"} or any(name not in files for name in notices):
+        raise SystemExit("SDK does not trace every redistributed header to source notices")
+
+
+def verify_notice_inventory(directory, files):
+    path = directory / NOTICE_INVENTORY
+    if not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
+        raise SystemExit("SDK source notice inventory is missing or oversized")
+    verify_notice_record(json.loads(path.read_text(encoding="utf-8")),
+                         json.loads((directory / "source-manifest.json").read_text()), files)
+    if (directory / "PROJECT-LICENSE").read_bytes() != (ROOT / "LICENSE").read_bytes():
+        raise SystemExit("SDK project license differs from its source")
 
 
 def locks():
@@ -116,9 +245,10 @@ def verify_artifact(directory):
         path = directory / name
         if not path.resolve().is_relative_to(directory) or path.is_symlink() or not re.fullmatch(r"[0-9a-f]{64}", expected) or sha(path) != expected:
             raise SystemExit("Engine artifact hash/path mismatch")
-    required = {"lib/arm64-v8a/libwebrtc.a", "lib/arm64-v8a/libhome_tunnel_android_surface.a", "lib/arm64-v8a/libhome_tunnel_remote.so", "LICENSE.md", "source-manifest.json", "include/api/peer_connection_interface.h", "include/home_tunnel/remote.h"}
+    required = {"lib/arm64-v8a/libwebrtc.a", "lib/arm64-v8a/libhome_tunnel_android_surface.a", "lib/arm64-v8a/libhome_tunnel_remote.so", "LICENSE.md", "PROJECT-LICENSE", NOTICE_INVENTORY, "source-manifest.json", "include/api/peer_connection_interface.h", "include/home_tunnel/remote.h"}
     if not required.issubset(files):
         raise SystemExit("Engine artifact omits a required library/header/license/source manifest")
+    verify_notice_inventory(directory, files)
     print("Android engine library/header/license hashes verified; device media acceptance remains required")
 
 
@@ -229,28 +359,11 @@ def main():
     if symbols - {"HT_REMOTE_ANDROID_1"} != expected:
         raise SystemExit("Controller exported symbols differ from the reviewed C ABI")
     shutil.copyfile(controller, library_dir / controller.name)
-    # Collect headers from each pinned Git source, excluding generated build trees.
-    # Preserve paths exactly so the inventory can be compared with source revisions.
-    header_bytes = 0
-    for entry in sorted(entries):
-        if ":" in entry:
-            continue  # Binary package metadata does not identify a Git checkout.
-        folder = source.parent / entry
-        if not folder.is_dir() or not (folder / ".git").exists():
-            continue
-        names = run(["git", "ls-files", "-z", "--", "*.h", "*.hpp", "*.inc"], folder, env, True).split("\0")
-        tracked_headers = {folder / name for name in names if name}
-        for name in names:
-            if not name:
-                continue
-            path = folder / name
-            materialized = sdk_header_source(path, source, tracked_headers)
-            header_bytes += materialized.stat().st_size
-            if header_bytes > 512 * 1024 * 1024:
-                raise SystemExit("Engine header inventory exceeds its bounded size")
-            destination = output / "include" / path.relative_to(source)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(materialized, destination)
+    # GN's linked-library summary does not cover headers from unlinked source
+    # dependencies. Preserve all pinned header providers' original notices too.
+    notice_inventory = collect_sdk_sources(source, entries, output, env)
+    shutil.copyfile(ROOT / "LICENSE", output / "PROJECT-LICENSE")
+    (output / NOTICE_INVENTORY).write_text(json.dumps(notice_inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     public = output / "include/home_tunnel/remote.h"
     public.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(NATIVE / "include/home_tunnel/remote.h", public)
