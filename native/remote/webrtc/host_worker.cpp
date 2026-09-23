@@ -4,6 +4,7 @@
 #include "clipboard.hpp"
 #include "file_transfer.hpp"
 #include "host_platform.hpp"
+#include "no_audio_device.hpp"
 #include "../generated/host_version.hpp"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
@@ -683,7 +684,7 @@ int main(int argc,char** argv){
   {
     auto network=webrtc::Thread::CreateWithSocketServer(),signaling=webrtc::Thread::Create();
     if(network->Start() && signaling->Start()){
-      auto factory=webrtc::CreatePeerConnectionFactory(network.get(),network.get(),signaling.get(),nullptr,
+      auto factory=webrtc::CreatePeerConnectionFactory(network.get(),network.get(),signaling.get(),webrtc::make_ref_counted<NoAudioDevice>(),
         webrtc::CreateBuiltinAudioEncoderFactory(),webrtc::CreateBuiltinAudioDecoderFactory(),
         webrtc::CreateBuiltinVideoEncoderFactory(),webrtc::CreateBuiltinVideoDecoderFactory(),nullptr,nullptr);
       if(factory)result=serve(*factory,*signaling);factory=nullptr;

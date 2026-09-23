@@ -10,6 +10,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "no_audio_device.hpp"
 
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
@@ -423,7 +424,7 @@ int main(int argc, char** argv) {
     auto worker = webrtc::Thread::Create();
     auto signaling = webrtc::Thread::Create();
     if (network->Start() && worker->Start() && signaling->Start()) {
-      auto factory = webrtc::CreatePeerConnectionFactory(network.get(), worker.get(), signaling.get(), nullptr,
+      auto factory = webrtc::CreatePeerConnectionFactory(network.get(), worker.get(), signaling.get(), webrtc::make_ref_counted<ht::rd::NoAudioDevice>(),
           webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(),
           webrtc::CreateBuiltinVideoEncoderFactory(), webrtc::CreateBuiltinVideoDecoderFactory(), nullptr, nullptr);
       if (factory) result = probe(*factory, *signaling, codec_name);

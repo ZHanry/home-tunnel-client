@@ -2,6 +2,7 @@
 #include "surface_renderer.hpp"
 #include "../include/home_tunnel/remote.h"
 #include "../webrtc/sdp_policy.hpp"
+#include "../webrtc/no_audio_device.hpp"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/create_peerconnection_factory.h"
@@ -12,7 +13,6 @@
 #include "api/stats/rtc_stats_collector_callback.h"
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "api/video_codecs/builtin_video_encoder_factory.h"
-#include "modules/audio_device/include/audio_device_default.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/ssl_adapter.h"
 #include "rtc_base/thread.h"
@@ -43,17 +43,6 @@ bool candidate_allowed(std::string_view value) {
   const auto& parsed = candidate->candidate();
   return parsed.protocol() == "udp" && parsed.type() != webrtc::IceCandidateType::kRelay && parsed.address().port() > 0;
 }
-// The current controller advertises no audio. WebRTC still requires an ADM when
-// constructing its composite media engine, even for video-only transceivers.
-// This explicit device performs no capture/playout and never touches Java audio.
-class NoAudioDevice : public webrtc::webrtc_impl::AudioDeviceModuleDefault<webrtc::AudioDeviceModule> {
- public:
-  int32_t ActiveAudioLayer(AudioLayer* layer) const override { *layer = kDummyAudio; return 0; }
-  int32_t PlayoutIsAvailable(bool* available) override { *available = false; return 0; }
-  int32_t RecordingIsAvailable(bool* available) override { *available = false; return 0; }
-  int32_t StartPlayout() override { return -1; }
-  int32_t StartRecording() override { return -1; }
-};
 class Runtime {
  public:
   Runtime() {
