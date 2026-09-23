@@ -69,6 +69,9 @@ def required_assets(directory, *, for_publication=True):
         expected += ["agent-provenance.json", "windows-defender-scan.json", "windows-installer-smoke.json",
                      "remote-host-provenance.json", "remote-host-build.json", "remote-source-manifest.json",
                      f"HomeTunnel-Remote-SDK-{version}-windows-x64.zip", "remote-sdk-provenance.json"]
+        android_sdk = f"HomeTunnel-Remote-SDK-{version}-android-arm64.zip"
+        android_sdk_assets = [android_sdk, android_sdk + ".sha256", "android-sdk-provenance.json", "android-sdk.spdx.json"]
+        expected += android_sdk_assets + [name + ".sigstore.json" for name in android_sdk_assets]
         if for_publication:
             expected.append("windows-remote-native-acceptance.json")
     elif COMPONENT == "android":
@@ -85,6 +88,7 @@ def required_assets(directory, *, for_publication=True):
     if COMPONENT == "client":
         verify_windows_evidence(directory, version, SHA)
         verify_remote_sdk(directory, version, SHA)
+        run(sys.executable, str(ROOT / "scripts/package-remote-android-sdk.py"), "--verify", "--output", str(directory), "--version", version, "--revision", SHA)
         if for_publication:
             verify_remote_evidence(directory, version, SHA)
         else:
