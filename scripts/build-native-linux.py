@@ -147,6 +147,9 @@ def isolated_tests(build, output):
                           "scope": "isolated-xvfb-local-udp-loopback", "physical_xorg_acceptance": False})
             evidence[codec] = probe
             if result.returncode:
+                # The isolated probe disables WebRTC debug logging and never
+                # saves frames. Retain bounded fatal-stage diagnostics in CI.
+                print(result.stderr[-4096:], file=sys.stderr)
                 raise RuntimeError("Isolated " + codec + " capture/encode/decode failed")
         evidence["status"] = "passed"
     finally:
