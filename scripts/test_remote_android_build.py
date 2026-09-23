@@ -11,6 +11,18 @@ SPEC.loader.exec_module(BUILD)
 
 
 class AndroidArtifactPolicy(unittest.TestCase):
+    def test_redistributed_archive_cannot_reference_build_tree_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "surface.a"
+            path.write_bytes(b"!<thin>\n" + b"x" * 2000)
+            with self.assertRaisesRegex(SystemExit, "non-thin"):
+                BUILD.require_regular_archive(path)
+            path.write_bytes(b"!<arch>\n")
+            with self.assertRaisesRegex(SystemExit, "non-thin"):
+                BUILD.require_regular_archive(path)
+            path.write_bytes(b"!<arch>\n" + b"x" * 2000)
+            BUILD.require_regular_archive(path)  # ELF member architecture is checked separately by readelf.
+
     def test_cipd_package_suffix_is_metadata_not_a_filesystem_path(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".gclient_entries"

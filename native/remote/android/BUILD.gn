@@ -61,6 +61,9 @@ rtc_source_set("controller_objects") {
 # Compiled with the exact same headers/toolchain/stdlib as WebRTC. This archive
 # is an internal controller building block, not a separately loadable app ABI.
 rtc_static_library("home_tunnel_android_surface") {
+  # The SDK redistributes this archive beside libwebrtc.a. A thin archive would
+  # retain build-tree object paths and become unusable after extraction.
+  suppressed_configs += [ "//build/config/compiler:thin_archive" ]
   sources = [
     "surface_renderer.cpp",
     "surface_renderer.hpp",

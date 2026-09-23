@@ -35,6 +35,15 @@ def run(command, cwd, env, capture=False):
     return result.stdout if capture else None
 
 
+def require_regular_archive(path):
+    if not path.is_file():
+        raise SystemExit(f"Expected Android engine archive is missing: {path.name}")
+    with path.open("rb") as stream:
+        signature = stream.read(8)
+    if signature != b"!<arch>\n" or path.stat().st_size < 1000:
+        raise SystemExit(f"Android SDK requires a real, non-thin archive: {path.name}")
+
+
 def locks():
     upstream = json.loads((NATIVE / "remote-deps.lock.json").read_text())
     android = json.loads((ANDROID / "android-build.lock.json").read_text())
@@ -179,8 +188,7 @@ def main():
     library_dir.mkdir(parents=True)
     readelf = source / "third_party/llvm-build/Release+Asserts/bin/llvm-readelf"
     for library in [build / "obj/libwebrtc.a", build / "obj/home_tunnel_remote/android/libhome_tunnel_android_surface.a"]:
-        if not library.is_file() or library.stat().st_size < 1000:
-            raise SystemExit("Expected real Android engine archive was not produced")
+        require_regular_archive(library)
         architecture = run([readelf, "--file-headers", library], source, env, True)
         machines = {value.strip() for value in re.findall(r"Machine:\s*(.+)", architecture)}
         if not machines or machines != {"AArch64"}:
