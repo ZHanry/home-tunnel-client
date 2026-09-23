@@ -77,7 +77,10 @@ def verify(directory, version, revision):
         source = read_json("source/remote-artifact.json")
         actual = source_files()
         tree = hashlib.sha256(json.dumps(actual, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        recipe = json.loads((NATIVE / "android/android-build.lock.json").read_text())
         if (engine.get("source_revision") != revision or engine.get("source_modified") is not False or
+                engine.get("target") != "arm64-v8a" or engine.get("android_api") != 26 or engine.get("available") is not False or
+                engine.get("gn_args") != recipe["gn_args"] or
                 engine.get("controller_backend_linked") is not True or engine.get("device_media_accepted") is not False or
                 engine.get("source_files") != actual or engine.get("source_tree_sha256") != tree or
                 engine.get("upstream_lock_sha256") != digest(NATIVE / "remote-deps.lock.json") or

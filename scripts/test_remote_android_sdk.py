@@ -48,6 +48,8 @@ class AndroidSDKPolicy(unittest.TestCase):
                         "lib/arm64-v8a/libhome_tunnel_remote.so": b"fixture-not-executable", "LICENSE.md": b"fixture-notice",
                         "include/home_tunnel/remote.h": (SDK.NATIVE / "include/home_tunnel/remote.h").read_bytes(), "source-manifest.json": b"{}"}
         engine = {"source_revision": revision, "source_modified": False, "controller_backend_linked": True,
+                  "target": "arm64-v8a", "android_api": 26, "available": False,
+                  "gn_args": json.loads((SDK.NATIVE / "android/android-build.lock.json").read_text())["gn_args"],
                   "device_media_accepted": False, "source_files": sources, "source_tree_sha256": tree,
                   "upstream_lock_sha256": SDK.digest(SDK.NATIVE / "remote-deps.lock.json"),
                   "recipe_sha256": SDK.digest(SDK.NATIVE / "android/android-build.lock.json"),
