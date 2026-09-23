@@ -1,6 +1,7 @@
 """Archive the real built Windows WebRTC library, headers and pinned sources."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,9 @@ import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location("sdk_notice_policy", ROOT / "scripts/build-remote-android-webrtc.py")
+NOTICE_POLICY = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(NOTICE_POLICY)
 
 
 def sha256(path):
@@ -36,6 +40,10 @@ def main():
     for name, key in [("LICENSE.md", "notices_sha256"), ("remote-source-manifest.json", "source_manifest_sha256")]:
         if sha256(build / name) != record[key]:
             raise SystemExit("Native dependency source or license record changed")
+    sources = json.loads((build / "remote-source-manifest.json").read_text(encoding="utf-8"))["dependency_sources"]
+    source_licenses = NOTICE_POLICY.chromium_license_record(sources)
+    if set(source_licenses) != set(NOTICE_POLICY.CHROMIUM_MIRRORS):
+        raise SystemExit("Windows SDK Chromium header sources are missing from the pinned dependency manifest")
     # LICENSE.md is generated from the actual linked GN dependency graph. Do not
     # redistribute unrelated downloaded compiler, Android or Rust toolchains.
     linked_modules = set(re.findall(r"^# ([a-zA-Z0-9_+./-]+)\n```", (build / "LICENSE.md").read_text(encoding="utf-8"), re.MULTILINE))
@@ -82,6 +90,10 @@ dependency notices. The Windows host profile negotiates H.264 constrained
 baseline or VP8. Its verified native paths use software OpenH264/FFmpeg and
 libvpx; optional HEVC code is not advertised as a verified host codec.
 
+source-license-inventory.json binds Chromium mirror headers to the exact original
+repository revisions and their root LICENSE, preserved in source-licenses/chromium.
+These original notices supplement each redistributed dependency's own notices.
+
 This SDK does not establish Android, macOS or Linux media interoperability.
 """
     headers = 0
@@ -127,6 +139,8 @@ This SDK does not establish Android, macOS or Linux media interoperability.
             bundle.write(path, "upstream/" + path.name)
         bundle.write(build / "remote-source-manifest.json", "remote-source-manifest.json")
         bundle.write(build / "LICENSE.md", "WEBRTC-THIRD-PARTY-NOTICES.md")
+        bundle.writestr(NOTICE_POLICY.CHROMIUM_LICENSE_PATH, NOTICE_POLICY.chromium_license_bytes())
+        bundle.writestr("source-license-inventory.json", json.dumps(source_licenses, indent=2, sort_keys=True) + "\n")
         bundle.writestr("remote-sdk-build.json", json.dumps(bundled_record, indent=2) + "\n")
         bundle.writestr("README.md", readme)
     if headers < 100 or license_files < 10 or not library.stat().st_size:

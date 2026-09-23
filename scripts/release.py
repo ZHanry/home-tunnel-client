@@ -252,6 +252,7 @@ def verify_remote_evidence(directory, version, revision):
 def verify_remote_sdk(directory, version, revision):
     """Bind the reusable native dependency to the same reviewed source and lock."""
     import zipfile
+    import importlib.util
     evidence = json.loads((directory / 'remote-sdk-provenance.json').read_text(encoding='utf-8'))
     lock_bytes = (ROOT / 'native/remote/remote-deps.lock.json').read_bytes()
     dependency = json.loads(lock_bytes)
@@ -274,7 +275,8 @@ def verify_remote_sdk(directory, version, revision):
         names = set(bundle.namelist())
         required = {'lib/webrtc.lib', 'include/webrtc/api/peer_connection_interface.h',
                     'native/include/home_tunnel/remote.h', 'remote-deps.lock.json',
-                    'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md'}
+                    'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md',
+                    'source-license-inventory.json', 'source-licenses/chromium/LICENSE'}
         if not required.issubset(names):
             raise SystemExit('Native SDK library, public headers or notices are missing')
         if bundle.getinfo('lib/webrtc.lib').file_size != library['bytes']:
@@ -297,6 +299,15 @@ def verify_remote_sdk(directory, version, revision):
             data = bundle.read(path)
             if data != (directory / path).read_bytes() or hashlib.sha256(data).hexdigest() != evidence.get(field):
                 raise SystemExit('Native SDK source manifest or notices differ from the worker build')
+        spec = importlib.util.spec_from_file_location('sdk_notice_policy', ROOT / 'scripts/build-remote-android-webrtc.py')
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        sources = json.loads(bundle.read('remote-source-manifest.json')).get('dependency_sources', {})
+        expected_licenses = policy.chromium_license_record(sources)
+        if (set(expected_licenses) != set(policy.CHROMIUM_MIRRORS) or
+                json.loads(bundle.read('source-license-inventory.json')) != expected_licenses or
+                bundle.read(policy.CHROMIUM_LICENSE_PATH) != policy.chromium_license_bytes()):
+            raise SystemExit('Native SDK Chromium headers omit their pinned original root license')
 
 def seal(*, for_publication=True):
     directory = ROOT / "release"

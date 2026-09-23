@@ -21,11 +21,46 @@ NATIVE = ROOT / "native/remote"
 ANDROID = NATIVE / "android"
 NOTICE_INVENTORY = "source-license-inventory.json"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
-# This fixed Chromium test notice predates UTF-8. Preserve its reviewed bytes.
+# This fixed Chromium test notice predates UTF-8. Pin its original Git blob,
+# accepting Git's CRLF checkout conversion while preserving the actual bytes.
 LATIN1_NOTICE = ("third_party/blink/web_tests/svg/W3C-SVG-1.1/resources/copyright-documents-19990405.html",
-                "eb7c524421b243607db1b4a4baae18718bf2bc8f57a42c2f2e0f8d2cba2b5140")
+                "6206bc1b5bee83bce73d788a13ebe5f65a08125af67d9b32243dc848a017fa1b")
 INHERITED_NOTICES = {"src/third_party/libFuzzer/src": (
     "third_party/libFuzzer/LICENSE.TXT", "third_party/libFuzzer/README.chromium")}
+# Chromium's split Git mirrors omit the original repository's root LICENSE.
+# The origin revisions below are their exact GitOrigin-RevId trailers. Each
+# original root LICENSE was fetched and verified to have this same byte digest.
+CHROMIUM_LICENSE_SHA256 = "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+CHROMIUM_LICENSE_PATH = "source-licenses/chromium/LICENSE"
+CHROMIUM_MIRRORS = {
+    "src/testing": ("6f55acdadefd12ad87e386cab5cee31ae610ed7e", "6a5a7bde528fb0d0a3cff46e4e10fb6885acc1c7"),
+    "src/build": ("0a2808e883f9443b41ed1f49eb0aa4da0cfe3cf6", "41e5cf5e71b16fdde8ae211bb6d39d5e871134a1"),
+    "src/tools": ("c60db23bebc8938b6bfa250eee92fefee66bd571", "41e5cf5e71b16fdde8ae211bb6d39d5e871134a1"),
+    "src/third_party": ("e7b072867dcb5c59a461d58b853a498f938f8f96", "17a3918979e73d9a840546b79c3f5a7c0a49d35f"),
+}
+
+
+def chromium_notice(entry, upstream):
+    if entry not in CHROMIUM_MIRRORS:
+        return None
+    mirror, origin = CHROMIUM_MIRRORS[entry]
+    expected = f"https://chromium.googlesource.com/chromium/{entry}@{mirror}"
+    if upstream != expected:
+        raise SystemExit("Chromium mirror revision has no reviewed original root license")
+    return {"path": CHROMIUM_LICENSE_PATH, "sha256": CHROMIUM_LICENSE_SHA256,
+            "source": f"https://chromium.googlesource.com/chromium/src/+/{origin}/LICENSE"}
+
+
+def chromium_license_bytes():
+    content = (ROOT / "scripts/licenses/CHROMIUM-LICENSE").read_bytes()
+    if hashlib.sha256(content).hexdigest() != CHROMIUM_LICENSE_SHA256:
+        raise SystemExit("Pinned original Chromium license bytes changed")
+    return content
+
+
+def chromium_license_record(sources):
+    return {entry: {"upstream": upstream, **notice} for entry, upstream in sorted(sources.items())
+            if (notice := chromium_notice(entry, upstream)) is not None}
 
 
 def sha(path):
@@ -83,7 +118,7 @@ def notice_bytes(path, source, tracked):
     try:
         content.decode("utf-8")
     except UnicodeDecodeError:
-        if (path.relative_to(source).as_posix(), hashlib.sha256(content).hexdigest()) != LATIN1_NOTICE:
+        if (path.relative_to(source).as_posix(), hashlib.sha256(content.replace(b"\r\n", b"\n")).hexdigest()) != LATIN1_NOTICE:
             raise SystemExit(f"Unreviewed dependency notice encoding: {path.relative_to(source).as_posix()}") from None
     return content
 
@@ -132,6 +167,13 @@ def collect_sdk_sources(source, entries, output, env):
                 notice_outputs[path.relative_to(source).as_posix()] = exported
         providers[entry] = provider
     for entry, provider in providers.items():
+        original_notice = chromium_notice(entry, provider["upstream"])
+        if original_notice:
+            destination = output / original_notice["path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(chromium_license_bytes())
+            provider["original_root_license"] = original_notice
+            provider["notices"].append(original_notice["path"])
         if entry in INHERITED_NOTICES:
             try:
                 provider["notices"].extend(notice_outputs[name] for name in INHERITED_NOTICES[entry])
@@ -166,6 +208,15 @@ def verify_notice_record(inventory, source_manifest, files):
                 raise SystemExit("SDK header is attributed to the wrong pinned provider")
             headers.add(name)
         inherited = {"include/" + name for name in INHERITED_NOTICES.get(entry, ())}
+        original_notice = chromium_notice(entry, provider["upstream"])
+        if original_notice:
+            if (provider.get("original_root_license") != original_notice or
+                    files.get(original_notice["path"]) != original_notice["sha256"] or
+                    original_notice["path"] not in provider["notices"]):
+                raise SystemExit("Chromium headers omit their pinned original root license")
+            inherited.add(original_notice["path"])
+        elif "original_root_license" in provider:
+            raise SystemExit("Unexpected original root license on a dependency")
         for name in provider["notices"]:
             if name not in files or (not name.startswith(prefix) and name not in inherited) or not is_sdk_notice(name):
                 raise SystemExit("SDK dependency notice is missing from its hashed inventory")
@@ -175,7 +226,7 @@ def verify_notice_record(inventory, source_manifest, files):
             raise SystemExit("SDK dependency has no license notice")
     actual_headers = {name for name in files if name.startswith("include/") and PurePosixPath(name).suffix in {".h", ".hpp", ".inc"}}
     actual_sources = {name for name in files if name.startswith("include/")}
-    if headers != actual_headers or actual_sources != (headers | notices) - {"PROJECT-LICENSE"} or any(name not in files for name in notices):
+    if headers != actual_headers or actual_sources != {name for name in headers | notices if name.startswith("include/")} or any(name not in files for name in notices):
         raise SystemExit("SDK does not trace every redistributed header to source notices")
 
 

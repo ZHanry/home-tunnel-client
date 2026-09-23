@@ -31,6 +31,9 @@ class AndroidArtifactPolicy(unittest.TestCase):
             content = b"Legacy copyright: \xa9\n"; notice.write_bytes(content)
             with patch.object(BUILD, "LATIN1_NOTICE", ("LICENSE", hashlib.sha256(content).hexdigest())):
                 self.assertEqual(BUILD.notice_bytes(notice, source, {notice}), content)
+                converted = content.replace(b"\n", b"\r\n")
+                notice.write_bytes(converted)
+                self.assertEqual(BUILD.notice_bytes(notice, source, {notice}), converted)
                 notice.write_bytes(content + b"changed")
                 with self.assertRaisesRegex(SystemExit, "encoding"):
                     BUILD.notice_bytes(notice, source, {notice})
@@ -47,6 +50,8 @@ class AndroidArtifactPolicy(unittest.TestCase):
                      "src/third_party/libFuzzer/src": {"Fuzzer.h": b"header"},
                      "src/third_party/zstd/src": {"lib/zstd.h": b"header", "LICENSE": b"Zstd license", "COPYING": b"Zstd copying", "NOTICE": b""}}
             entries = {entry: "https://example.invalid/" + entry + "@" + "a" * 40 for entry in repos}
+            mirror = BUILD.CHROMIUM_MIRRORS["src/third_party"][0]
+            entries["src/third_party"] = "https://chromium.googlesource.com/chromium/src/third_party@" + mirror
             for entry, files in repos.items():
                 folder = root / entry; folder.mkdir(parents=True, exist_ok=True); (folder / ".git").mkdir()
                 for name, content in files.items():
@@ -93,6 +98,36 @@ class AndroidArtifactPolicy(unittest.TestCase):
             (source / "third_party/zstd/src/README.chromium").write_bytes(b"Not a license")
             with patch.object(BUILD, "run", side_effect=listing), self.assertRaisesRegex(SystemExit, "no license notice"):
                 BUILD.collect_sdk_sources(source, entries, root / "missing-license", {})
+
+    def test_split_chromium_testing_uses_its_exact_original_root_license(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve(); source = root / "src"; output = root / "output"
+            folder = source / "testing"; folder.mkdir(parents=True); (folder / ".git").mkdir()
+            (folder / "example.h").write_bytes(b"// Copyright The Chromium Authors\n")
+            (folder / "README.chromium").write_bytes(b"Testing mirror without a root license\n")
+            upstream = "https://chromium.googlesource.com/chromium/src/testing@" + BUILD.CHROMIUM_MIRRORS["src/testing"][0]
+            entries = {"src/testing": upstream}
+            with patch.object(BUILD, "run", return_value="example.h\0README.chromium\0"):
+                record = BUILD.collect_sdk_sources(source, entries, output, {})
+            public = output / "include/home_tunnel/remote.h"; public.parent.mkdir(parents=True); public.write_bytes(b"public ABI")
+            (output / "PROJECT-LICENSE").write_bytes(b"project license")
+            files = {path.relative_to(output).as_posix(): BUILD.sha(path) for path in output.rglob("*") if path.is_file()}
+            BUILD.verify_notice_record(record, {"dependency_sources": entries}, files)
+            provider = record["dependencies"]["src/testing"]
+            notice = provider["original_root_license"]
+            self.assertIn("6a5a7bde528fb0d0a3cff46e4e10fb6885acc1c7", notice["source"])
+            self.assertEqual((output / notice["path"]).read_bytes(), BUILD.chromium_license_bytes())
+            for mutation in ("missing_bytes", "changed_bytes", "changed_origin", "wrong_mirror", "unlisted_notice"):
+                altered = json.loads(json.dumps(record)); altered_files = dict(files); altered_entries = dict(entries)
+                item = altered["dependencies"]["src/testing"]
+                if mutation == "missing_bytes": del altered_files[notice["path"]]
+                elif mutation == "changed_bytes": altered_files[notice["path"]] = "a" * 64
+                elif mutation == "changed_origin": item["original_root_license"]["source"] += "changed"
+                elif mutation == "unlisted_notice": item["notices"].remove(notice["path"])
+                else:
+                    item["upstream"] += "changed"; altered_entries["src/testing"] = item["upstream"]
+                with self.subTest(mutation=mutation), self.assertRaises(SystemExit):
+                    BUILD.verify_notice_record(altered, {"dependency_sources": altered_entries}, altered_files)
 
     def test_regular_header_must_be_tracked_inside_the_pinned_source(self):
         with tempfile.TemporaryDirectory() as directory:

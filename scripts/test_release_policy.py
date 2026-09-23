@@ -105,6 +105,12 @@ class ReleasePolicyTests(unittest.TestCase):
 
     def sdk_fixture(self, directory):
         provenance, _ = self.remote_fixture(directory)
+        spec = importlib.util.spec_from_file_location('sdk_notice_policy', module.ROOT / 'scripts/build-remote-android-webrtc.py')
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        sources = {entry: f'https://chromium.googlesource.com/chromium/{entry}@{mirror}'
+                   for entry, (mirror, _) in policy.CHROMIUM_MIRRORS.items()}
+        (directory / 'remote-source-manifest.json').write_text(json.dumps({'dependency_sources': sources}))
         root = module.ROOT / 'native/remote'
         lock = json.loads((root / 'remote-deps.lock.json').read_text())
         payloads = {'lib/webrtc.lib': b'real library is built separately, this is only a policy fixture',
@@ -112,7 +118,9 @@ class ReleasePolicyTests(unittest.TestCase):
                     'native/include/home_tunnel/remote.h': (root / 'include/home_tunnel/remote.h').read_bytes(),
                     'remote-deps.lock.json': (root / 'remote-deps.lock.json').read_bytes(),
                     'remote-source-manifest.json': (directory / 'remote-source-manifest.json').read_bytes(),
-                    'WEBRTC-THIRD-PARTY-NOTICES.md': b'fixture notices'}
+                    'WEBRTC-THIRD-PARTY-NOTICES.md': b'fixture notices',
+                    'source-license-inventory.json': json.dumps(policy.chromium_license_record(sources)).encode(),
+                    policy.CHROMIUM_LICENSE_PATH: policy.chromium_license_bytes()}
         for item in lock['patches']: payloads[item['path']] = (root / item['path']).read_bytes()
         name = 'HomeTunnel-Remote-SDK-6.0.1-windows-x64.zip'
         (directory / 'WEBRTC-THIRD-PARTY-NOTICES.md').write_bytes(payloads['WEBRTC-THIRD-PARTY-NOTICES.md'])
@@ -123,7 +131,7 @@ class ReleasePolicyTests(unittest.TestCase):
                     'archive': {'name': name, 'sha256': hashlib.sha256((directory / name).read_bytes()).hexdigest()},
                     'library': {'name': 'lib/webrtc.lib', 'sha256': hashlib.sha256(payloads['lib/webrtc.lib']).hexdigest(),
                                 'bytes': len(payloads['lib/webrtc.lib'])},
-                    'source_manifest_sha256': provenance['source_manifest_sha256'], 'notices_sha256': provenance['notices_sha256']}
+                    'source_manifest_sha256': hashlib.sha256(payloads['remote-source-manifest.json']).hexdigest(), 'notices_sha256': provenance['notices_sha256']}
         (directory / 'remote-sdk-provenance.json').write_text(json.dumps(evidence))
         return payloads, evidence
 
@@ -138,7 +146,8 @@ class ReleasePolicyTests(unittest.TestCase):
             module.verify_remote_sdk(directory, '6.0.1', 'revision')
             patch_path = json.loads((module.ROOT / 'native/remote/remote-deps.lock.json').read_text())['patches'][0]['path']
             for field in ('lib/webrtc.lib', 'native/include/home_tunnel/remote.h', 'remote-deps.lock.json',
-                          'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', patch_path):
+                          'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md',
+                          'source-licenses/chromium/LICENSE', patch_path):
                 with self.subTest(field=field):
                     payloads, evidence = self.sdk_fixture(directory)
                     payloads[field] += b'changed'
@@ -148,6 +157,16 @@ class ReleasePolicyTests(unittest.TestCase):
                     evidence['archive']['sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
                     (directory / 'remote-sdk-provenance.json').write_text(json.dumps(evidence))
                     with self.assertRaises(SystemExit): module.verify_remote_sdk(directory, '6.0.1', 'revision')
+            payloads, evidence = self.sdk_fixture(directory)
+            inventory = json.loads(payloads['source-license-inventory.json'])
+            inventory['src/testing']['source'] += '-changed'
+            payloads['source-license-inventory.json'] = json.dumps(inventory).encode()
+            archive = directory / evidence['archive']['name']
+            self.write_sdk(archive, payloads)
+            evidence['archive']['sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
+            (directory / 'remote-sdk-provenance.json').write_text(json.dumps(evidence))
+            with self.assertRaisesRegex(SystemExit, 'original root license'):
+                module.verify_remote_sdk(directory, '6.0.1', 'revision')
             payloads, evidence = self.sdk_fixture(directory)
             payloads.pop('include/webrtc/api/peer_connection_interface.h')
             archive = directory / evidence['archive']['name']
