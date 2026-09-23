@@ -1,6 +1,6 @@
-# 7.0.0 desktop and CLI
+# 8.0.0 desktop and CLI
 
-Use server **7.0.0** and the Agent bundled in the same client release. The desktop
+Use server **8.0.0** and the Agent bundled in the same client release. The desktop
 is a device client: it manages only this computer. Web/Android manage account-wide
 resources. Use Android's encrypted saved profiles to switch between deployments;
 on a desktop, logging out stops its active tunnels and clears that device's state.
@@ -24,9 +24,9 @@ renamed atomically; failed downloads never become a successful installer.
 [NAS Compose template](../packaging/nas/README.md) ·
 [CLI/service operations](OPERATIONS.md)
 
-## 8.0 candidate development
+## Remote desktop support
 
-The candidate adds opt-in remote hosting through a separately verified native
+This release adds opt-in remote hosting through a separately verified native
 worker. Windows supports the H.264/VP8 viewing path, ordinary-desktop input,
 explicit text clipboard permissions and consent-bound file transfer. Only
 capabilities reported by the actual packaged worker can be selected; a missing,
@@ -37,5 +37,5 @@ the signaling server.
 
 The Linux Xorg worker and Android controller have separate build/acceptance
 records. Wayland/macOS hosting, native desktop viewing and audio remain under
-development. See [candidate notes](RELEASE_NOTES.md) for actual tested scope and
-remaining restrictions. These additions do not change the 7.0 stable downloads.
+development. See [release notes](RELEASE_NOTES.md) for actual tested scope and
+remaining restrictions. Historical 7.0 downloads remain available.
