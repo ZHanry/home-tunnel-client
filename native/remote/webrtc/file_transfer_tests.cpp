@@ -45,6 +45,10 @@ void junction(const std::filesystem::path& link,
   const auto data_bytes =
       (substitute.size() + 1 + printable.size() + 1) * sizeof(wchar_t);
   std::vector<uint8_t> buffer(sizeof(Header) + data_bytes, 0);
+  // The bounded Win32 reparse structure includes both counted UTF-16 strings.
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage begin
+#endif
   auto* header = reinterpret_cast<Header*>(buffer.data());
   header->tag = IO_REPARSE_TAG_MOUNT_POINT;
   header->length = static_cast<USHORT>(8 + data_bytes);
@@ -57,6 +61,9 @@ void junction(const std::filesystem::path& link,
               header->sub_length);
   std::memcpy(buffer.data() + sizeof(Header) + header->print_offset,
               printable.data(), header->print_length);
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage end
+#endif
   HANDLE handle = CreateFileW(
       link.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
       FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
@@ -75,7 +82,7 @@ Json::Value body(std::string_view text) {
   Json::Value result;
   std::string error;
   REQUIRE(
-      reader->parse(text.data(), text.data() + text.size(), &result, &error));
+      reader->parse(text.data(), std::to_address(text.end()), &result, &error));
   return result;
 }
 std::string json(const Json::Value& value) {
@@ -197,7 +204,8 @@ struct Harness {
   }
   bool event(std::string_view code) const {
     return std::any_of(events.begin(), events.end(), [&](const auto& event) {
-      return event["error_code"] == code;
+      const auto value = event.get("error_code", Json::Value{});
+      return value.isString() && value.asString() == code;
     });
   }
 };
@@ -305,7 +313,7 @@ void real_bidirectional_batch() {
   REQUIRE(contents == std::multiset<std::string>({content, "", "abc"}));
   REQUIRE(std::count_if(sender.events.begin(), sender.events.end(),
                         [](const auto& event) {
-                          return event["event"] == "complete";
+                          return event.get("event", Json::Value{}) == "complete";
                         }) == 3);
   // Opposite direction uses the other permission on the same live instances.
   REQUIRE(receiver.transfer->offer_sources({destination.path / "selected.bin"},
@@ -367,6 +375,89 @@ void cancellation_hash_disconnect_timeout() {
   h.tick();
   REQUIRE(h.count(protocol::FILE_ACK) == 0);
   REQUIRE(read(directory.path / "empty.bin").empty());
+}
+void revoked_frames_validate_before_draining() {
+  // Exercise both a never-enabled direction and remembered transfers after
+  // revocation or cancellation. A stale ID must not bypass wire validation.
+  for (unsigned scenario = 0; scenario < 3; ++scenario) {
+    Harness h;
+    if (scenario) {
+      h.enable();
+      REQUIRE(h.offer());
+      REQUIRE(h.transfer->cancel(id, h.now));
+      if (scenario == 1) {
+        REQUIRE(h.transfer->enable("files.send", false, h.now));
+        REQUIRE(h.transfer->enable("files.receive", false, h.now));
+      }
+    }
+    const auto accept = body("{\"id\":\"" + id + "\"}");
+    const auto ack = body("{\"id\":\"" + id + "\",\"offset\":3}");
+    const auto final_ack =
+        body("{\"id\":\"" + id + "\",\"sha256\":\"" + abc_hash + "\"}");
+    REQUIRE(h.receive(protocol::FILE_ACCEPT, accept));
+    REQUIRE(h.receive(protocol::FILE_ACK, ack));
+    REQUIRE(h.receive(protocol::FILE_ACK, final_ack));
+    REQUIRE(h.complete());
+    auto malformed = accept;
+    malformed["extra"] = true;
+    REQUIRE(!h.receive(protocol::FILE_ACCEPT, malformed));
+    malformed = ack;
+    malformed["sha256"] = abc_hash;
+    REQUIRE(!h.receive(protocol::FILE_ACK, malformed));
+    malformed = ack;
+    malformed["offset"] = Json::UInt64(protocol::FILE_BYTES + 1);
+    REQUIRE(!h.receive(protocol::FILE_ACK, malformed));
+    malformed["offset"] = -1;
+    REQUIRE(!h.receive(protocol::FILE_ACK, malformed));
+    malformed["offset"] = "3";
+    REQUIRE(!h.receive(protocol::FILE_ACK, malformed));
+    malformed = final_ack;
+    malformed["sha256"] = "invalid";
+    REQUIRE(!h.receive(protocol::FILE_ACK, malformed));
+    REQUIRE(!h.complete(3, "invalid"));
+    REQUIRE(!h.complete(protocol::FILE_BYTES + 1));
+    malformed = final_ack;
+    REQUIRE(!h.receive(protocol::FILE_COMPLETE, malformed));
+    malformed["size"] = 3;
+    malformed["extra"] = true;
+    REQUIRE(!h.receive(protocol::FILE_COMPLETE, malformed));
+    REQUIRE(!h.chunk("x", protocol::FILE_BYTES));
+    REQUIRE(!h.chunk("x", UINT64_MAX));
+    REQUIRE(!h.chunk(""));
+    REQUIRE(!h.chunk(std::string(protocol::FILE_CHUNK_BYTES + 1, 'x')));
+    REQUIRE(h.transfer->pending() == 0);
+  }
+
+  // A disabled outgoing direction cannot consume an incoming transfer's ID.
+  Temp directory;
+  Harness receiver;
+  REQUIRE(receiver.transfer->enable("files.send", true, receiver.now));
+  REQUIRE(receiver.offer());
+  const auto accept = body("{\"id\":\"" + id + "\"}");
+  const auto ack = body("{\"id\":\"" + id + "\",\"offset\":3}");
+  REQUIRE(!receiver.receive(protocol::FILE_ACCEPT, accept));
+  REQUIRE(!receiver.receive(protocol::FILE_ACK, ack));
+  REQUIRE(receiver.transfer->approve_destination(
+      id, directory.path / "received.bin", receiver.now));
+  receiver.tick();
+  REQUIRE(receiver.chunk("abc"));
+  receiver.tick();
+  REQUIRE(receiver.complete());
+  REQUIRE(read(directory.path / "received.bin") == "abc");
+
+  // Neither OFFER, CHUNK nor COMPLETE may collide with a live outgoing ID,
+  // even if receiving is disabled. Legal unknown in-flight data is drained.
+  Harness sender;
+  REQUIRE(sender.transfer->enable("files.receive", true, sender.now));
+  REQUIRE(sender.transfer->offer_sources({directory.path / "received.bin"},
+                                         sender.now));
+  const auto outgoing_id = sender.frames.front().value()["id"].asString();
+  REQUIRE(!sender.offer(3, outgoing_id));
+  REQUIRE(!sender.chunk("abc", 0, outgoing_id));
+  REQUIRE(!sender.complete(3, abc_hash, outgoing_id));
+  REQUIRE(sender.chunk("abc"));
+  REQUIRE(sender.complete());
+  REQUIRE(sender.transfer->pending() == 1);
 }
 class FaultDestination final : public FileDestination {
  public:
@@ -599,6 +690,7 @@ int main() {
   consent_integrity_collision();
   real_bidirectional_batch();
   cancellation_hash_disconnect_timeout();
+  revoked_frames_validate_before_draining();
   disk_failures_never_ack_success();
   limits_names_and_stream_backpressure();
   local_handle_boundaries_and_large_offsets();

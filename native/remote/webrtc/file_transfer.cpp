@@ -23,7 +23,7 @@ namespace {
 constexpr uint64_t timeout_ms = 30000;
 constexpr size_t max_active = 2, max_queue = 256;
 std::string hex(std::span<const uint8_t> bytes) {
-  constexpr char table[] = "0123456789abcdef";
+  constexpr std::string_view table = "0123456789abcdef";
   std::string result;
   for (const auto c : bytes) {
     result += table[c >> 4];
@@ -94,7 +94,9 @@ bool parse(std::span<const uint8_t> bytes, Json::Value& body) {
   const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
   const auto* begin = reinterpret_cast<const char*>(bytes.data());
   std::string error;
-  return reader->parse(begin, begin + bytes.size(), &body, &error) &&
+  return reader->parse(
+             begin, reinterpret_cast<const char*>(std::to_address(bytes.end())),
+             &body, &error) &&
          body.isObject();
 }
 bool digest_text(const Json::Value& value) {
@@ -388,13 +390,17 @@ class FileTransfer::Impl {
       if (payload.size() <= 24 ||
           payload.size() > 24 + protocol::FILE_CHUNK_BYTES)
         return false;
-      if (!incoming_enabled) return true;
       const auto id = uuid_text(payload.first(16));
-      const auto found = items.find(id);
-      if (found == items.end()) return remembered(id);
-      auto& item = *found->second;
       const auto offset = read_u64(payload, 16);
       const auto bytes = payload.subspan(24);
+      if (offset > protocol::FILE_BYTES ||
+          bytes.size() > protocol::FILE_BYTES - offset)
+        return false;
+      const auto found = items.find(id);
+      if (found != items.end() && found->second->outgoing) return false;
+      if (!incoming_enabled) return true;
+      if (found == items.end()) return remembered(id);
+      auto& item = *found->second;
       if (item.outgoing || !item.destination || !item.accepted ||
           item.pending_ack || offset != item.offset ||
           bytes.size() > item.size - item.offset)
@@ -432,6 +438,8 @@ class FileTransfer::Impl {
           !body["size"].isUInt64() ||
           body["size"].asUInt64() > protocol::FILE_BYTES)
         return false;
+      const auto existing = items.find(id);
+      if (existing != items.end() && existing->second->outgoing) return false;
       if (!incoming_enabled) return true;
       if (items.contains(id) || remembered(id)) return false;
       if (items.size() >= protocol::BATCH_FILES ||
@@ -457,9 +465,26 @@ class FileTransfer::Impl {
       cancel(id, now, false);
       return true;
     }
+    // Revocation can race frames already sent on another SCTP channel. Drain
+    // valid in-flight frames, but never let disabled or remembered identities
+    // bypass schema, global bounds, or the opposite direction's live identity.
+    if (type == protocol::FILE_ACCEPT && !fields(body, {"id"})) return false;
+    if (type == protocol::FILE_COMPLETE &&
+        (!fields(body, {"id", "size", "sha256"}) ||
+         !body["size"].isUInt64() ||
+         body["size"].asUInt64() > protocol::FILE_BYTES ||
+         !digest_text(body["sha256"])))
+      return false;
+    if (type == protocol::FILE_ACK &&
+        !((fields(body, {"id", "offset"}) && body["offset"].isUInt64() &&
+           body["offset"].asUInt64() <= protocol::FILE_BYTES) ||
+          (fields(body, {"id", "sha256"}) && digest_text(body["sha256"]))))
+      return false;
     const bool from_sender = type == protocol::FILE_COMPLETE;
-    if (from_sender ? !incoming_enabled : !outgoing_enabled) return true;
     const auto found = items.find(id);
+    if (found != items.end() && found->second->outgoing == from_sender)
+      return false;
+    if (from_sender ? !incoming_enabled : !outgoing_enabled) return true;
     if (found == items.end()) return remembered(id);
     auto& item = *found->second;
     if (now >= item.deadline) {
