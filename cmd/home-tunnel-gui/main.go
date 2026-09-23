@@ -53,10 +53,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var remoteEngine remotehost.HostEngine
-	if runtime.GOOS == "windows" && expectedRemoteHostSHA256 != "" {
+	if (runtime.GOOS == "windows" || runtime.GOOS == "linux") && expectedRemoteHostSHA256 != "" {
 		if executable, err := os.Executable(); err == nil {
+			workerName := "home_tunnel_remote_host"
+			if runtime.GOOS == "windows" {
+				workerName += ".exe"
+			}
 			worker, err := remoteengine.New(ctx, remoteengine.Options{
-				ExecutablePath: filepath.Join(filepath.Dir(executable), "home_tunnel_remote_host.exe"),
+				ExecutablePath: filepath.Join(filepath.Dir(executable), workerName),
 				ExpectedSHA256: expectedRemoteHostSHA256,
 			})
 			if err != nil {

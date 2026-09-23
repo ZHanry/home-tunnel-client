@@ -20,9 +20,16 @@ agent_source="$root_dir/lib/home-tunnel-agent"
 unit_source="$root_dir/lib/systemd/system/home-tunnel-client.service"
 enroll_source="$root_dir/libexec/home-tunnel-enroll"
 desktop_source="$root_dir/lib/home-tunnel.desktop"
+native_source="$root_dir/bin/home_tunnel_remote_host"
+native_checksum="$root_dir/native-remote/worker.sha256"
 for required in "$client_source" "$gui_source" "$agent_source" "$unit_source" "$enroll_source"; do
   [[ -f "$required" ]] || { echo "missing package file: $required" >&2; exit 1; }
 done
+if [[ -e "$native_source" || -L "$native_source" || -e "$native_checksum" || -L "$native_checksum" ]]; then
+  [[ -f "$native_source" && ! -L "$native_source" && -f "$native_checksum" && ! -L "$native_checksum" ]] || { echo "Native package is incomplete or linked" >&2; exit 1; }
+  [[ $(wc -l < "$native_checksum") -eq 1 ]] && grep -Eq '^[0-9a-f]{64}  bin/home_tunnel_remote_host$' "$native_checksum" || { echo "Invalid native worker checksum" >&2; exit 1; }
+  (cd "$root_dir" && sha256sum --check --strict native-remote/worker.sha256) || { echo "Native worker package verification failed" >&2; exit 1; }
+fi
 
 client_target=/usr/local/bin/home-tunnel-client
 gui_target=/usr/local/bin/home-tunnel-gui
@@ -30,7 +37,8 @@ agent_target=/usr/local/lib/home-tunnel/home-tunnel-agent
 unit_target=/etc/systemd/system/home-tunnel-client.service
 enroll_target=/usr/local/sbin/home-tunnel-enroll
 desktop_target=/usr/local/share/applications/home-tunnel.desktop
-if [[ -e "$client_target" || -e "$gui_target" || -e "$agent_target" || -e "$unit_target" || -e "$enroll_target" ]] && ! $upgrade; then
+native_target=/usr/local/bin/home_tunnel_remote_host
+if [[ -e "$client_target" || -e "$gui_target" || -e "$agent_target" || -e "$unit_target" || -e "$enroll_target" || -e "$native_target" ]] && ! $upgrade; then
   echo "Home Tunnel Linux client is already installed; use --upgrade to replace binaries" >&2
   exit 1
 fi
@@ -70,7 +78,7 @@ rollback() {
       echo "Could not stop the service for rollback; previous files are retained at $backup_dir" >&2
       exit 1
     fi
-    for target in "$client_target" "$gui_target" "$agent_target" "$unit_target" "$enroll_target" "$desktop_target"; do
+    for target in "$client_target" "$gui_target" "$agent_target" "$unit_target" "$enroll_target" "$desktop_target" "$native_target"; do
       name=$(printf '%s' "$target" | tr '/' '_')
       if [[ -f "$backup_dir/$name" ]]; then
         if ! cp -p -- "$backup_dir/$name" "$target"; then recovery_failed=true; fi
@@ -96,7 +104,7 @@ rollback() {
 trap rollback EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-for target in "$client_target" "$gui_target" "$agent_target" "$unit_target" "$enroll_target" "$desktop_target"; do
+for target in "$client_target" "$gui_target" "$agent_target" "$unit_target" "$enroll_target" "$desktop_target" "$native_target"; do
   if [[ -L "$target" ]]; then
     echo "Refusing to replace a linked installation target: $target" >&2
     exit 1
@@ -123,6 +131,12 @@ install -d -o home-tunnel -g home-tunnel -m 0700 /var/lib/home-tunnel
 files_modified=true
 install -m 0755 "$client_source" "$client_target"
 install -m 0755 "$gui_source" "$gui_target"
+if [[ -f "$native_source" ]]; then
+  install -m 0755 "$native_source" "$native_target"
+elif [[ -e "$native_target" ]]; then
+  # A tunnel-only package must not retain a worker from an older installation.
+  rm -f -- "$native_target"
+fi
 install -m 0755 "$agent_source" "$agent_target"
 install -m 0755 "$enroll_source" "$enroll_target"
 install -m 0644 "$unit_source" "$unit_target"

@@ -28,6 +28,15 @@ def sha(path):
     return digest.hexdigest()
 
 
+def source_identity():
+    """Bind the copied overlay and build recipes, including development edits."""
+    paths = list(NATIVE.rglob("*")) + [ROOT / "scripts" / name for name in (
+        "build-native-linux.py", "build-remote-webrtc.py", "generate-remote-notices.py")]
+    paths.append(ROOT / "internal/model/model.go")
+    entries = {path.relative_to(ROOT).as_posix(): sha(path) for path in paths if path.is_file()}
+    return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def recipe():
     value = json.loads((NATIVE / "linux/linux-build.lock.json").read_text())
     if (value["schema_version"] != 1 or value["target_os"] != "linux" or
@@ -173,6 +182,7 @@ def main():
     if shutil.disk_usage(cache).free < 24 * 1024 ** 3:
         raise SystemExit("The pinned native build requires 24 GiB free space")
     mode = "--build" if args.build else "--build-existing"
+    before = source_identity()
     run([sys.executable, ROOT / "scripts/build-remote-webrtc.py", mode, "--target-os", "linux",
          "--target-cpu", "x64", "--cache", cache, "--jobs", args.jobs, "--media-probe"], cwd=ROOT)
     build = cache / "checkout/src/out/home_tunnel"
@@ -188,7 +198,10 @@ def main():
         shutil.copy2(build / name, output / name)
     record_path = output / "remote-host-build.json"
     record = json.loads(record_path.read_text())
+    if source_identity() != before:
+        raise SystemExit("Native source changed during the build; rebuild the candidate from a fixed checkout")
     record["executable"] = str(output / "home_tunnel_remote_host")
+    record["linux_source_tree_sha256"] = before
     record["isolated_xvfb_evidence_sha256"] = sha(output / "linux-xvfb-evidence.json")
     record["physical_xorg_acceptance"] = False
     record_path.write_text(json.dumps(record, indent=2) + "\n")

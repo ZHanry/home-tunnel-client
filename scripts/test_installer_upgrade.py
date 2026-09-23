@@ -5,6 +5,7 @@ production backup, mutation, rollback and signal handlers execute unchanged.
 System service/account commands are mocked; no host installation is touched.
 """
 from pathlib import Path
+import hashlib
 import os
 import re
 import shutil
@@ -24,7 +25,7 @@ def shell_path(path):
 
 
 class InstallerUpgrade(unittest.TestCase):
-    def run_fixture(self, platform, failure="", *, active_gui=False, restore_failure=False):
+    def run_fixture(self, platform, failure="", *, active_gui=False, restore_failure=False, native=True, corrupt_native=False):
         with tempfile.TemporaryDirectory(prefix="ht-installer-test-") as temp:
             work = Path(temp)
             package, filesystem, mocks = work / "package", work / "fs", work / "mocks"
@@ -45,6 +46,9 @@ class InstallerUpgrade(unittest.TestCase):
             if platform == "linux":
                 package_names += ["lib/systemd/system/home-tunnel-client.service", "lib/home-tunnel.desktop"]
                 targets += ["etc/systemd/system/home-tunnel-client.service", "usr/local/share/applications/home-tunnel.desktop"]
+                if native:
+                    package_names += ["bin/home_tunnel_remote_host"]
+                targets += ["usr/local/bin/home_tunnel_remote_host"]
                 state = filesystem / "var/lib/home-tunnel/state.json"
             else:
                 package_names += ["Library/LaunchDaemons/com.hometunnel.client.plist"]
@@ -55,6 +59,11 @@ class InstallerUpgrade(unittest.TestCase):
                 path = package / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("new version: " + name)
+            if platform == "linux" and native:
+                checksum = package / "native-remote/worker.sha256"
+                checksum.parent.mkdir()
+                digest = hashlib.sha256((package / "bin/home_tunnel_remote_host").read_bytes()).hexdigest()
+                checksum.write_text(("0" * 64 if corrupt_native else digest) + "  bin/home_tunnel_remote_host\n", newline="\n")
             for name in targets:
                 path = filesystem / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +121,7 @@ done
 if ! $directory; then
  count=0; if [[ -f "$HT_TEST_COUNT.install" ]]; then count=$(<"$HT_TEST_COUNT.install"); fi
  count=$((count+1)); printf '%s' "$count" > "$HT_TEST_COUNT.install"
+ if [[ "$HT_TEST_FAILURE" == native-next && $count -eq 4 ]]; then exit 28; fi
  if [[ $count -eq 2 ]]; then
   if [[ "$HT_TEST_FAILURE" == install ]]; then exit 28; fi
   if [[ "$HT_TEST_FAILURE" == signal ]]; then kill -TERM "$PPID"; exit 143; fi
@@ -136,15 +146,19 @@ fi
                        HT_TEST_MOCKS=shell_path(mocks), HT_TEST_ENTRY=shell_path(entry))
             result = subprocess.run([BASH, "-c", 'export PATH="$HT_TEST_MOCKS:$PATH"; exec bash "$HT_TEST_ENTRY" --upgrade'],
                                     env=env, capture_output=True, encoding="utf-8", timeout=20)
-            if not failure and not active_gui:
+            if not failure and not active_gui and not corrupt_native:
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertTrue(all(path.read_bytes() != old for path, old in originals.items()))
+                for path, old in originals.items():
+                    if platform == "linux" and not native and path.name == "home_tunnel_remote_host":
+                        self.assertFalse(path.exists(), "tunnel-only upgrade retained an older native worker")
+                    else:
+                        self.assertNotEqual(path.read_bytes(), old)
             else:
                 self.assertNotEqual(result.returncode, 0, "failure did not stop installer")
                 if failure and not restore_failure:
                     self.assertEqual(result.returncode, 143 if failure == "signal" else 28, result.stderr)
                     counter = "backup" if failure == "backup" else "install"
-                    self.assertEqual((work / ("count." + counter)).read_text(), "2")
+                    self.assertEqual((work / ("count." + counter)).read_text(), "4" if failure == "native-next" else "2")
                 if not restore_failure:
                     for path, expected in originals.items():
                         self.assertTrue(path.is_file(), f"original was deleted: {path}; {result.stderr}")
@@ -162,6 +176,9 @@ fi
             if active_gui:
                 self.assertIn("Choose Quit", result.stderr)
                 self.assertFalse((work / "trace").exists(), "service was changed before GUI quit")
+            if corrupt_native:
+                self.assertIn("Native worker package verification failed", result.stderr)
+                self.assertFalse((work / "trace").exists(), "corrupt native package changed the service")
             if failure == "backup":
                 trace = (work / "trace").read_text()
                 self.assertNotIn("stop", trace)
@@ -187,6 +204,15 @@ fi
         for platform in ("linux", "macos"):
             with self.subTest(platform=platform):
                 self.run_fixture(platform)
+
+    def test_linux_native_worker_is_restored_after_later_install_failure(self):
+        self.run_fixture("linux", "native-next")
+
+    def test_linux_corrupt_native_worker_is_rejected_before_mutation(self):
+        self.run_fixture("linux", corrupt_native=True)
+
+    def test_linux_tunnel_only_package_remains_independent(self):
+        self.run_fixture("linux", native=False)
 
 
 if __name__ == "__main__":

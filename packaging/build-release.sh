@@ -21,6 +21,13 @@ client_dir=$(cd -- "$script_dir/.." && pwd)
 workspace_dir="$client_dir"
 source_version=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' "$client_dir/internal/model/model.go")
 [[ "$version" == "$source_version" ]] || { echo "Linux client source version $source_version does not match release version $version" >&2; exit 1; }
+native_hash=""
+if [[ -n ${REMOTE_HOST_BUILD:-} ]]; then
+  [[ "$architecture" == amd64 ]] || { echo "The native Linux candidate currently supports amd64 only" >&2; exit 1; }
+  [[ "$(go env GOOS)" == linux && "$(go env GOARCH)" == amd64 ]] || { echo "Build the native desktop candidate on Linux amd64" >&2; exit 1; }
+  native_hash=$(python3 "$client_dir/scripts/package-native-linux.py" --build-record "$REMOTE_HOST_BUILD" --version "$version")
+  [[ "$native_hash" =~ ^[a-f0-9]{64}$ ]] || { echo "Native candidate validation did not return a worker digest" >&2; exit 1; }
+fi
 downloads_dir="$workspace_dir/.downloads"
 output_dir="$workspace_dir/outputs/linux"
 frp_version=0.70.1
@@ -69,6 +76,10 @@ cp "$workspace_dir/agent/main.go" "$temporary_command/main.go"
 mkdir -p "$stage/bin" "$stage/lib/systemd/system" "$stage/libexec"
 package_dir="$stage/home-tunnel-linux-$version-$architecture"
 mkdir -p "$package_dir/bin" "$package_dir/lib" "$package_dir/lib/systemd/system" "$package_dir/libexec"
+if [[ -n "$native_hash" ]]; then
+  staged_hash=$(python3 "$client_dir/scripts/package-native-linux.py" --build-record "$REMOTE_HOST_BUILD" --version "$version" --stage "$package_dir")
+  [[ "$staged_hash" == "$native_hash" ]] || { echo "Native worker changed during packaging" >&2; exit 1; }
+fi
 agent_output="$package_dir/lib/home-tunnel-agent"
 (
   cd "$frp_source"
@@ -100,7 +111,7 @@ agent_hash=$(sha256sum "$agent_output" | awk '{print $1}')
   fi
   CGO_ENABLED="$gui_cgo" GOOS=linux GOARCH="$architecture" GOFLAGS=-buildvcs=false \
     go build -trimpath \
-    -ldflags "-s -w -buildid= -X main.version=$version -X main.agentVersion=$agent_version -X main.expectedAgentSHA256=$agent_hash" \
+    -ldflags "-s -w -buildid= -X main.version=$version -X main.agentVersion=$agent_version -X main.expectedAgentSHA256=$agent_hash -X main.expectedRemoteHostSHA256=$native_hash" \
     -o "$package_dir/bin/home-tunnel-gui" ./cmd/home-tunnel-gui
 )
 cp "$script_dir/home-tunnel-client.service" "$package_dir/lib/systemd/system/"
@@ -119,6 +130,10 @@ if [[ "$(go env GOOS)" == "linux" && "$architecture" == "$(go env GOARCH)" ]]; t
   agent_version_output=$("$package_dir/lib/home-tunnel-agent" version)
   [[ "$client_version_output" == "Home Tunnel Linux Client $version (Agent $agent_version)" ]] || { echo "client version self-check failed: $client_version_output" >&2; exit 1; }
   [[ "$agent_version_output" == "Home Tunnel Agent $agent_version (FRP $frp_version, $frp_commit)" ]] || { echo "Agent version self-check failed: $agent_version_output" >&2; exit 1; }
+fi
+if [[ -n "$native_hash" ]]; then
+  final_hash=$(python3 "$client_dir/scripts/package-native-linux.py" --build-record "$REMOTE_HOST_BUILD" --version "$version")
+  [[ "$final_hash" == "$native_hash" ]] || { echo "Native candidate source changed during packaging" >&2; exit 1; }
 fi
 tar -C "$stage" -czf "$archive" "$(basename "$package_dir")"
 archive_hash=$(sha256sum "$archive" | awk '{print $1}')
