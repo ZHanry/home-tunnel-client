@@ -1,8 +1,8 @@
-name: Native Linux Xorg candidate build
+name: Native Linux Xorg build
 on:
   workflow_dispatch:
   push:
-    branches: [codex/8.0.0-remote-desktop]
+    branches: [main]
     paths:
       - '.github/workflows/native-linux.yml'
       - 'scripts/build-native-linux.py'

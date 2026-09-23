@@ -3,10 +3,12 @@ name: Android pinned WebRTC engine
 on:
   workflow_dispatch:
   push:
-    branches: ["codex/8.0.0-remote-desktop"]
+    branches: [main]
     paths:
       - ".github/workflows/android-webrtc.yml"
       - "scripts/build-remote-android-webrtc.py"
+      - "scripts/package-remote-android-sdk.py"
+      - "scripts/test_remote_android_sdk.py"
       - "native/remote/**"
 
 permissions:
@@ -42,6 +44,13 @@ jobs:
         run: python3 scripts/build-remote-android-webrtc.py --build --jobs 4
       - name: Independently verify engine artifact inventory
         run: python3 scripts/build-remote-android-webrtc.py --verify-artifact outputs/android-webrtc-arm64
+      - name: Exercise the actual distributable SDK archive before tagging
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("compatibility.json"))["version"])')
+          python3 scripts/package-remote-android-sdk.py --sdk outputs/android-webrtc-arm64 --output outputs/android-sdk-release --version "$version" --revision "$GITHUB_SHA"
+          python3 scripts/package-remote-android-sdk.py --verify --output outputs/android-sdk-release --version "$version" --revision "$GITHUB_SHA"
       - name: Archive internal SDK
         run: tar -C outputs -czf outputs/android-webrtc-arm64.tar.gz android-webrtc-arm64
       - name: Preserve verified build products
@@ -58,4 +67,11 @@ jobs:
           name: android-webrtc-arm64-build-log
           path: .downloads/remote-webrtc-android/checkout/src/out/home_tunnel_android_arm64/android-build.log
           if-no-files-found: ignore
+          retention-days: 14
+      - name: Preserve distributable SDK validation evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-controller-sdk-distribution
+          path: outputs/android-sdk-release/*
+          if-no-files-found: error
           retention-days: 14

@@ -1,8 +1,8 @@
-name: Native Windows candidate build
+name: Native Windows build
 on:
   workflow_dispatch:
   push:
-    branches: [codex/8.0.0-remote-desktop]
+    branches: [main]
     paths:
       - '.github/workflows/native-windows.yml'
       - 'scripts/build-native-windows.ps1'
