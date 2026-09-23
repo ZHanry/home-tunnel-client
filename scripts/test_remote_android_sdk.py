@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
 import zipfile
 
@@ -17,6 +18,14 @@ SPEC.loader.exec_module(SDK)
 
 
 class AndroidSDKPolicy(unittest.TestCase):
+    def test_pinned_header_volume_fits_but_the_file_limit_stays_bounded(self):
+        entries = [zipfile.ZipInfo(f"include/header-{index}.h") for index in range(SDK.MAX_SDK_FILES)]
+        bundle = SimpleNamespace(infolist=lambda: entries)
+        self.assertEqual(len(SDK.checked_members(bundle)), SDK.MAX_SDK_FILES)
+        entries.append(zipfile.ZipInfo("include/overflow.h"))
+        with self.assertRaisesRegex(SystemExit, "oversized"):
+            SDK.checked_members(bundle)
+
     def test_source_archive_order_and_bytes_are_reproducible_across_hosts(self):
         with tempfile.TemporaryDirectory() as temporary:
             hashes = []

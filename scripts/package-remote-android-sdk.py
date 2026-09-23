@@ -16,6 +16,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native/remote"
 PROVENANCE = "android-sdk-provenance.json"
+MAX_SDK_FILES = 65536  # The pinned dependency snapshot currently contains about 40,000 headers.
 
 
 def digest(path):
@@ -44,7 +45,7 @@ def checked_members(bundle):
         if (not name or name != path.as_posix() or path.is_absolute() or any(p in (".", "..") for p in name.split("/")) or
                 "\\" in name or ":" in name or any(ord(c) < 32 for c in name) or entry.is_dir() or
                 stat.S_ISLNK(entry.external_attr >> 16) or name in result or entry.flag_bits & 1 or
-                entry.file_size > 1024 ** 3 or total > 3 * 1024 ** 3 or len(result) >= 30000):
+                entry.file_size > 1024 ** 3 or total > 3 * 1024 ** 3 or len(result) >= MAX_SDK_FILES):
             raise SystemExit("Unsafe, duplicate or oversized Android SDK member")
         result[name] = entry
     return result
