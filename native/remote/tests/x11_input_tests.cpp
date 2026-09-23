@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
+#include <span>
 #include <string>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -33,7 +34,7 @@ void collect(Display* display,KeyCode key,Events& events){
 }
 bool held(Display* display,KeyCode key){std::array<char,32> keys{};XQueryKeymap(display,keys.data());return (static_cast<unsigned char>(keys[key/8])&(1u<<(key%8)))!=0;}
 bool left_held(Display* display){Window root=0,child=0;int rx=0,ry=0,wx=0,wy=0;unsigned mask=0;
-    REQUIRE(XQueryPointer(display,DefaultRootWindow(display),&root,&child,&rx,&ry,&wx,&wy,&mask));return (mask&Button1Mask)!=0;}
+    REQUIRE(XQueryPointer(display,XDefaultRootWindow(display),&root,&child,&rx,&ry,&wx,&wy,&mask));return (mask&Button1Mask)!=0;}
 int child(std::string_view mode,uint32_t target){
     ht::rd::X11InputSink sink({0,0,800,600,0},target);REQUIRE(sink.watchdog_tick());
     REQUIRE(sink.pointer(0,24576,32768));REQUIRE(sink.key(4,true,false));REQUIRE(sink.button(1,true));
@@ -70,12 +71,22 @@ long run_case(Display* display,Window window,std::string_view mode,KeyCode key,K
 int main(int argc,char** argv){
     REQUIRE(ht::rd::x11_initialize_threads());const int guard=ht::rd::X11InputSink::run_release_guard(argc,argv);if(guard>=0)return guard;
     REQUIRE(std::getenv("HT_RD_XVFB_ISOLATED_TEST"));REQUIRE(ht::rd::X11InputSink::pidfd_available());REQUIRE(ht::rd::x11_ordinary_desktop());
-    if(argc==4 && std::string_view(argv[1])=="--held")return child(argv[2],static_cast<uint32_t>(std::stoul(argv[3])));
+    REQUIRE(argv && (argc==1 || argc==4));
+    // The OS supplies exactly argc arguments; only the two fixture forms above
+    // are accepted before constructing this bounded process-startup view.
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage begin
+#endif
+    const std::span<char*> arguments(argv,static_cast<size_t>(argc));
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage end
+#endif
+    if(argc==4 && std::string_view(arguments[1])=="--held")return child(arguments[2],static_cast<uint32_t>(std::stoul(arguments[3])));
     REQUIRE(argc==1);const auto screens=ht::rd::x11_screens();REQUIRE(!screens.empty());
     const std::string authority=std::getenv("XAUTHORITY");setenv("XAUTHORITY","/dev/null",1);REQUIRE(!ht::rd::x11_ordinary_desktop());setenv("XAUTHORITY",authority.c_str(),1);
     setenv("WAYLAND_DISPLAY","test-wayland",1);REQUIRE(!ht::rd::x11_ordinary_desktop());unsetenv("WAYLAND_DISPLAY");
     Display* display=XOpenDisplay(nullptr);REQUIRE(display);Bool detectable=False;REQUIRE(XkbSetDetectableAutoRepeat(display,True,&detectable) && detectable);
-    Window window=XCreateSimpleWindow(display,DefaultRootWindow(display),100,100,500,350,0,0,0xffffff);REQUIRE(window);
+    Window window=XCreateSimpleWindow(display,XDefaultRootWindow(display),100,100,500,350,0,0,0xffffff);REQUIRE(window);
     const unsigned long owner=static_cast<unsigned long>(getpid());const Atom property=XInternAtom(display,"_NET_WM_PID",False);
     XChangeProperty(display,window,property,XA_CARDINAL,32,PropModeReplace,reinterpret_cast<const unsigned char*>(&owner),1);
     XSelectInput(display,window,KeyPressMask|KeyReleaseMask|ButtonPressMask|ButtonReleaseMask);XMapRaised(display,window);XSync(display,False);

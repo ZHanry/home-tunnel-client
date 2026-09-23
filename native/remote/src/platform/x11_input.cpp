@@ -12,10 +12,12 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <memory>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
+#include <span>
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -52,7 +54,7 @@ bool key_held(Display* display,unsigned key){
 bool button_held(Display* display,unsigned button){
     if(button>5)return false;
     Window root=0,child=0;int rx=0,ry=0,wx=0,wy=0;unsigned mask=0;
-    return !XQueryPointer(display,DefaultRootWindow(display),&root,&child,&rx,&ry,&wx,&wy,&mask) || (mask&(Button1Mask<<(button-1)))!=0;
+    return !XQueryPointer(display,XDefaultRootWindow(display),&root,&child,&rx,&ry,&wx,&wy,&mask) || (mask&(Button1Mask<<(button-1)))!=0;
 }
 bool release(Ledger& ledger,Display* display){
     if(!display || !x11_ordinary_desktop())return false;
@@ -68,7 +70,7 @@ pid_t pidfd_owner(int fd){
     std::array<char,128> line{};pid_t result=-1;
     while(std::fgets(line.data(),static_cast<int>(line.size()),input))if(std::strncmp(line.data(),"Pid:\t",5)==0){
         const auto value=std::string_view(line.data()).substr(5);int parsed=-1;
-        const auto converted=std::from_chars(value.data(),value.data()+value.size(),parsed);
+        const auto converted=std::from_chars(std::to_address(value.begin()),std::to_address(value.end()),parsed);
         if(converted.ec==std::errc{})result=parsed;
         break;}
     std::fclose(input);return result;
@@ -127,9 +129,18 @@ uint32_t window_pid(Display* display,Window window){
 std::array<uint8_t,232> physical_keys(Display* display){
     std::array<uint8_t,232> result{};auto* keyboard=XkbGetKeyboard(display,XkbAllComponentsMask,XkbUseCoreKbd);
     if(!keyboard || !keyboard->names || !keyboard->names->keys){if(keyboard)XkbFreeKeyboard(keyboard,0,True);return result;}
+    // XkbGetKeyboard owns max_key_code + 1 entries, including unused low keys.
+    // Convert this documented Xlib allocation once; subsequent access is bounded.
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage begin
+#endif
+    const std::span<const XkbKeyNameRec> names(keyboard->names->keys,size_t(keyboard->max_key_code)+1);
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage end
+#endif
     auto add=[&](uint16_t usage,std::string_view wanted){for(unsigned code=keyboard->min_key_code;code<=keyboard->max_key_code;++code){
-        const auto& raw=keyboard->names->keys[code].name;size_t size=4;while(size && (raw[size-1]=='\0' || raw[size-1]==' '))--size;
-        if(std::string_view(raw,size)==wanted){result[usage]=static_cast<uint8_t>(code);break;}}};
+        std::string_view name(names[code].name,XkbKeyNameLength);while(!name.empty() && (name.back()=='\0' || name.back()==' '))name.remove_suffix(1);
+        if(name==wanted){result[usage]=static_cast<uint8_t>(code);break;}}};
     const std::array<std::string_view,26> letters{"AC01","AB05","AB03","AC03","AD03","AC04","AC05","AC06","AD08","AC07","AC08","AC09","AB07","AB06","AD09","AD10","AD01","AD04","AC02","AD05","AD07","AB04","AD02","AB02","AD06","AB01"};
     for(size_t n=0;n<letters.size();++n)add(static_cast<uint16_t>(n+4),letters[n]);
     for(unsigned n=0;n<10;++n)add(static_cast<uint16_t>(30+n),"AE"+std::string(n<9?"0":"")+std::to_string(n+1));
@@ -151,7 +162,7 @@ struct X11InputSink::Impl {
     bool ensure(){if(failed || !display)return false;if(!guard){guard=std::make_unique<Guard>();if(!guard->start())failed=true;}if(!guard->healthy())failed=true;return !failed;}
     bool focused()const{if(!target)return true;Window window=0;int revert=0;XGetInputFocus(display,&window,&revert);return window && window!=PointerRoot && window_pid(display,window)==target;}
     bool at_point(int x,int y)const{if(!target)return true;Window child=0;int dx=0,dy=0;
-        return focused() && XTranslateCoordinates(display,DefaultRootWindow(display),DefaultRootWindow(display),x,y,&dx,&dy,&child) && child && window_pid(display,child)==target;}
+        return focused() && XTranslateCoordinates(display,XDefaultRootWindow(display),XDefaultRootWindow(display),x,y,&dx,&dy,&child) && child && window_pid(display,child)==target;}
 };
 X11InputSink::X11InputSink(DisplayGeometry display,uint32_t target):impl_(std::make_unique<Impl>(display,target)){}
 X11InputSink::~X11InputSink()=default;X11InputSink::X11InputSink(X11InputSink&&)noexcept=default;X11InputSink& X11InputSink::operator=(X11InputSink&&)noexcept=default;
@@ -172,7 +183,7 @@ bool X11InputSink::key(uint16_t usage,bool down,bool){
 bool X11InputSink::pointer(uint16_t slot,uint16_t x,uint16_t y){
     auto& state=*impl_;const auto& g=state.geometry;if(slot!=g.slot || g.width<1 || g.height<1 || !ordinary_desktop() || !state.ensure())return false;
     const int px=static_cast<int>(int64_t(g.x)+int64_t(x)*(g.width-1)/65535),py=static_cast<int>(int64_t(g.y)+int64_t(y)*(g.height-1)/65535);
-    if(px<0 || py<0 || px>=DisplayWidth(state.display,DefaultScreen(state.display)) || py>=DisplayHeight(state.display,DefaultScreen(state.display)) || !state.at_point(px,py))return false;
+    if(px<0 || py<0 || px>=XDisplayWidth(state.display,XDefaultScreen(state.display)) || py>=XDisplayHeight(state.display,XDefaultScreen(state.display)) || !state.at_point(px,py))return false;
     auto& ledger=*state.guard->ledger;if(!lock_ledger(ledger))return false;
     const bool sent=state.guard->healthy() && ordinary_desktop() && state.at_point(px,py) && XTestFakeMotionEvent(state.display,-1,px,py,CurrentTime);
     XSync(state.display,False);if(sent){state.px=px;state.py=py;state.point=true;}pthread_mutex_unlock(&ledger.mutex);return sent;
@@ -201,7 +212,17 @@ bool X11InputSink::wheel(int32_t dx,int32_t dy){
     pthread_mutex_unlock(&ledger.mutex);return sent;
 }
 int X11InputSink::run_release_guard(int argc,char** argv){
-    if(argc!=2 || !argv || !argv[1] || std::string_view(argv[1])!="--input-release-guard=40,41,42")return -1;
+    if(argc!=2 || !argv)return -1;
+    // The OS supplies argc entries. Check the exact supported argument count
+    // before converting the process startup ABI to a bounded view.
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage begin
+#endif
+    const std::span<char*> arguments(argv,2);
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage end
+#endif
+    if(!arguments[1] || std::string_view(arguments[1])!="--input-release-guard=40,41,42")return -1;
     constexpr int parent=40,mapping=41,ready=42;const pid_t owner=pidfd_owner(parent);struct stat status{};
     const int seals=fcntl(mapping,F_GET_SEALS);
     if(owner<=1 || owner!=getppid() || !alive(parent) || fstat(mapping,&status)!=0 || status.st_size!=sizeof(Ledger) ||

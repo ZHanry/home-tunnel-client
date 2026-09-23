@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -19,11 +20,11 @@ using OwnedText=std::unique_ptr<char,Free>;
 bool local_display(std::string_view name,unsigned& number){
     if(name.size()<2 || name.front()!=':' || name.size()>24)return false;
     name.remove_prefix(1);const auto dot=name.find('.');const auto display=name.substr(0,dot);
-    const auto parsed=std::from_chars(display.data(),display.data()+display.size(),number);
-    if(parsed.ec!=std::errc{} || parsed.ptr!=display.data()+display.size() || number>65535)return false;
+    const auto parsed=std::from_chars(std::to_address(display.begin()),std::to_address(display.end()),number);
+    if(parsed.ec!=std::errc{} || parsed.ptr!=std::to_address(display.end()) || number>65535)return false;
     if(dot!=std::string_view::npos){unsigned screen=0;const auto tail=name.substr(dot+1);
-        const auto value=std::from_chars(tail.data(),tail.data()+tail.size(),screen);
-        if(value.ec!=std::errc{} || value.ptr!=tail.data()+tail.size() || screen!=0)return false;}
+        const auto value=std::from_chars(std::to_address(tail.begin()),std::to_address(tail.end()),screen);
+        if(value.ec!=std::errc{} || value.ptr!=std::to_address(tail.end()) || screen!=0)return false;}
     return true;
 }
 bool native_x11(Display* display){
@@ -94,13 +95,23 @@ std::vector<X11Screen> x11_screens(){
     std::vector<X11Screen> screens;if(!x11_ordinary_desktop())return screens;
     Display* display=XOpenDisplay(nullptr);if(!display)return screens;
     XWindowAttributes root{};
-    if(!XGetWindowAttributes(display,DefaultRootWindow(display),&root)){XCloseDisplay(display);return screens;}
-    int count=0;auto* monitors=XRRGetMonitors(display,DefaultRootWindow(display),True,&count);
-    if(monitors && count>0 && count<=16)for(int n=0;n<count;++n){const auto& monitor=monitors[n];
+    if(!XGetWindowAttributes(display,XDefaultRootWindow(display),&root)){XCloseDisplay(display);return screens;}
+    int count=0;auto* monitors=XRRGetMonitors(display,XDefaultRootWindow(display),True,&count);
+    if(monitors && count>0 && count<=16){
+        // XRRGetMonitors returns exactly count records. Validate the maximum
+        // accepted count before viewing the library-owned allocation.
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage begin
+#endif
+        const std::span<const XRRMonitorInfo> records(monitors,static_cast<size_t>(count));
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage end
+#endif
+        for(const auto& monitor:records){
         if(!monitor.name || monitor.x<0 || monitor.y<0 || monitor.width<1 || monitor.height<1 || monitor.width>16384 || monitor.height>16384 ||
            int64_t(monitor.x)+monitor.width>root.width || int64_t(monitor.y)+monitor.height>root.height)continue;
         char* name=XGetAtomName(display,monitor.name);
-        screens.push_back({monitor.name,{monitor.x,monitor.y,monitor.width,monitor.height,0},name?name:"Display"});if(name)XFree(name);}
+        screens.push_back({monitor.name,{monitor.x,monitor.y,monitor.width,monitor.height,0},name?name:"Display"});if(name)XFree(name);}}
     if(monitors)XRRFreeMonitors(monitors);
     XCloseDisplay(display);return screens;
 }
