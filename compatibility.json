@@ -2,7 +2,7 @@
   "component": "client",
   "stage": "public-release",
   "api_major": 1,
-  "contract_ref": "api-v1.2.0-rc.1",
+  "contract_ref": "api-v1.2.0",
   "support_policy": "8.0 public release with explicitly limited remote-desktop platform coverage. Existing tunnels retain server 7.0 compatibility. Remote desktop requires negotiated capabilities and a matching verified worker; unsupported platforms/features remain unavailable. Development evidence is separate from final-package and cross-network acceptance. FRP follows its separate upstream version.",
   "version": "8.0.0",
   "minimum_server": "7.0.0",
