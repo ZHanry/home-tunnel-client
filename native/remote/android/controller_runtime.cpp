@@ -447,13 +447,18 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if (!ready_ && steady_ms()-started_ >= protocol::ICE_DEADLINE_MS) { Close("RD_NO_DIRECT_PATH"); return; }
     if (ready_ && !first_frame_ && !paused_ && surface_ && steady_ms()-ready_at_ >= 15000) { Close("RD_MEDIA_FAILED"); return; }
     State(0);
-    if (!stats_pending_) { stats_pending_=true; peer_->GetStats(webrtc::make_ref_counted<Statistics>(weak_from_this()).get()); }
+    // State/Send and cached stats callbacks may synchronously close the peer.
+    // Hold it through GetStats and stop this tick before touching closed state.
+    if (closed_ || !peer_) return;
+    if (!stats_pending_) { stats_pending_=true; const auto peer=peer_; peer->GetStats(webrtc::make_ref_counted<Statistics>(weak_from_this()).get()); }
+    if (closed_) return;
     if (input_enabled_) {
       Json::Value heartbeat; heartbeat["input_epoch"]=input_epoch_; heartbeat["state_version"]=Json::UInt64(++heartbeat_version_); heartbeat["keys"]=Json::Value(Json::arrayValue); heartbeat["buttons"]=held_buttons_;
       for (const auto usage : held_keys_) { Json::Value key; key["usage_page"]=7; key["usage"]=usage; heartbeat["keys"].append(key); }
       const auto payload = PeerIdentity::json(heartbeat);
       SendBinary(3, protocol::INPUT_HEARTBEAT, std::span(reinterpret_cast<const uint8_t*>(payload.data()), payload.size()), 0);
     }
+    if (closed_) return;
     if (!input_enabled_ && !input_request_.empty() && steady_ms() >= input_deadline_) { ReleaseInput("request_timeout"); Json::Value body; body["reason"]="request_timeout"; Control(protocol::CONTROL_RELEASED,body); }
     if (!first_frame_ && renderer_.presented_frames()) { first_frame_=true; Json::Value body; body["epoch"]=identity_->epoch(); body["frames_presented"]=Json::UInt64(renderer_.presented_frames()); Emit(first_frame,body); }
     const auto weak=weak_from_this(); runtime().signaling->PostDelayedTask([weak] { if (auto self=weak.lock()) self->Tick(); },webrtc::TimeDelta::Millis(250));
