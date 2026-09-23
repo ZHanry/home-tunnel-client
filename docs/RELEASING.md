@@ -1,6 +1,6 @@
 # 发布流程
 
-8.0 当前采用 `8.0.0-rc.1` / `v8.0.0-rc.1`，`compatibility.json` 的阶段为 `internal-testing`。这个阶段只能发布 GitHub prerelease，不能把尚未完成的平台或功能验收标为正式可用。正式版本使用 `vX.Y.Z`，源码版本与标签必须完全一致，并先将阶段明确改为 `public-release`。
+8.0 按维护者确认直接发布 `8.0.0` / `v8.0.0`，`compatibility.json` 的阶段为 `public-release`。安装包、界面和标签必须使用相同版本。正式发布不等于所有规划功能都已实现：未完成或未验证的平台能力必须在界面和发行说明中如实呈现；不得把开发测试替代为完整实机验收。
 
 客户端采用“构建、实机验收、发布同一产物”的两阶段流程。发布入口是 [release.yml](../.github/workflows/release.yml)，最终校验由 [scripts/release.py](../scripts/release.py) 执行。原生核心单元测试、授权测试、Go 控制面测试和浏览器模拟测试都不能代替实际 Windows worker 的媒体与输入验收。
 

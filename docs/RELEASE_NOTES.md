@@ -1,6 +1,6 @@
-# Home Tunnel 8.0.0-rc.1
+# Home Tunnel 8.0.0
 
-This source is restricted to prereleases (`stage=internal-testing`). The existing
+This is the 8.0.0 public release with the platform limits listed below. The existing
 7.0 API contract and tunnel behavior remain supported; the managed Agent version
 is 8.0.0 and upstream FRP remains 0.70.1.
 
@@ -37,11 +37,11 @@ microphones and AV1/HEVC are not available. Android's same-source controller and
 Surface acceptance entry are implemented, but actual device decoding has not
 passed acceptance. Unsupported capabilities remain unavailable in the UI.
 
-The candidate has incomplete platform coverage. Development evidence does not
+This release has incomplete platform coverage. Development evidence does not
 replace the separate final-package release gate. Cross-network traversal,
 physical platforms, upgrade/restore, long-running and signing gates remain open.
 
 Windows/macOS publisher-signature status must be read from each artifact's actual
 evidence; source checksums and CI do not replace certificates. The original
-stable download links continue pointing to 7.0.0 until real prerelease artifacts
-are available. See [native implementation status](../native/remote/README.md).
+7.0.0 release remains available from its versioned download links. See
+[native implementation status](../native/remote/README.md).

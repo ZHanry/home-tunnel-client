@@ -1,6 +1,6 @@
 #define AppName "Home Tunnel"
 #ifndef AppVersion
-  #define AppVersion "8.0.0-rc.1"
+  #define AppVersion "8.0.0"
 #endif
 #ifndef AppNumericVersion
   #define AppNumericVersion "8.0.0"

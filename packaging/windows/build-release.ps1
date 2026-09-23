@@ -1,6 +1,6 @@
 # Builds the unified Windows x64 desktop package: home-tunnel-gui.exe + Agent.
 param(
-    [string]$Version = "8.0.0-rc.1",
+    [string]$Version = "8.0.0",
     [string]$WindRes = "",
     [string]$OutputDir = "",
     [string]$IsccPath = $env:HOME_TUNNEL_ISCC,
