@@ -33,7 +33,7 @@ struct Sink : InputSink {
     bool text(std::string_view value) override { texts.emplace_back(value);return !fail; }
 };
 void put32(std::vector<uint8_t>& bytes, size_t offset, uint32_t value) {
-    for (unsigned n=0; n<4; ++n) bytes[offset+n] = static_cast<uint8_t>(value >> (24-n*8));
+    for (unsigned n=0; n<4; ++n) bytes.at(offset+n) = static_cast<uint8_t>(value >> (24-n*8));
 }
 std::vector<uint8_t> key(uint32_t epoch=1, uint32_t input=1, uint32_t sequence=1, bool down=true) {
     std::vector<uint8_t> bytes{0x52,0x44,1,0x20,0,0,0,24,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,8,0,7,0,0xe0,1,0,0,0};
@@ -73,8 +73,8 @@ void watchdog_and_epoch() {
     Sink sink;SessionGate session(sink);ready(session);
     CHECK(session.accept_key(key(),1001)==GateResult::ok);
     CHECK(sink.calls.size()==1);
-    CHECK(session.tick(2749)==GateResult::ok);CHECK(session.input_allowed());
-    CHECK(session.tick(2750)==GateResult::ok);CHECK(!session.input_allowed());
+    CHECK(session.tick(2499)==GateResult::ok);CHECK(session.input_allowed());
+    CHECK(session.tick(2500)==GateResult::ok);CHECK(!session.input_allowed());
     CHECK(sink.calls.size()==2 && !std::get<1>(sink.calls.back()));
     CHECK(session.accept_key(key(1,1,2),3001)==GateResult::state);
     CHECK(session.synchronize_input(1,1,1,3002)==GateResult::state);
@@ -88,6 +88,20 @@ void watchdog_and_epoch() {
     CHECK(session.peer_authenticated(1,3005)==GateResult::identity);
     CHECK(session.tick(deadline)==GateResult::expired);
     CHECK(session.renew({2,2,3,1000000,1900000},1000000,deadline)==GateResult::closed);
+}
+void heartbeat_replay_cannot_hold_input() {
+    Sink sink;SessionGate session(sink);ready(session);
+    CHECK(session.accept_key(key(),1001)==GateResult::ok);
+    // Normal quarter-second heartbeats keep a held key alive across several
+    // watchdog windows. Replaying the last sequence cannot renew that hold.
+    for(uint64_t sequence=1;sequence<=8;++sequence){
+        const auto now=1000+sequence*250;
+        CHECK(session.heartbeat(1,1,sequence,now)==GateResult::ok);
+        CHECK(session.tick(now+200)==GateResult::ok && session.input_allowed());
+    }
+    CHECK(session.heartbeat(1,1,8,4250)==GateResult::replay);
+    CHECK(session.tick(4500)==GateResult::ok && !session.input_allowed());
+    CHECK(sink.calls.size()==2 && !std::get<1>(sink.calls.back()));
 }
 void network_gate() {
     for (const auto candidate: {Candidate::relay,Candidate::unknown}) {
@@ -251,7 +265,7 @@ void signature_verification() {
 }
 }
 int main() {
-    framing();watchdog_and_epoch();network_gate();button_coordinates_and_watchdog();pointer_wheel_text_and_release();rejected_release_blocks_reenable();lease_and_isolation();abi_contract();callback_quiescence();transcript();signature_verification();
+    framing();watchdog_and_epoch();heartbeat_replay_cannot_hold_input();network_gate();button_coordinates_and_watchdog();pointer_wheel_text_and_release();rejected_release_blocks_reenable();lease_and_isolation();abi_contract();callback_quiescence();transcript();signature_verification();
 #if defined(_WIN32)
     CHECK(WindowsInputSink::scan_code(4)==0x1e && WindowsInputSink::scan_code(224)==0x1d && WindowsInputSink::scan_code(228)==0xe01d);
     CHECK(WindowsInputSink::scan_code(0)==0 && WindowsInputSink::scan_code(300)==0);

@@ -47,8 +47,10 @@ GateResult SessionGate::tick(uint64_t now) {
     if (closed_) { if(input_releases_pending()) release_inputs(); return GateResult::closed; }
     if (now < last_now_ || now >= deadline_) { close(); return GateResult::expired; }
     last_now_ = now;
-    // Reserve one 250 ms host tick for scheduling before the wire deadline.
-    if (input_enabled_ && now - heartbeat_at_ >= protocol::INPUT_WATCHDOG_MS - 250) release_inputs();
+    // The wire value is an upper bound, not the time to begin OS releases.
+    // Reserve two heartbeat/tick intervals for scheduling and actual key-up
+    // delivery; a busy encoder or file write must not consume the last margin.
+    if (input_enabled_ && now - heartbeat_at_ >= protocol::INPUT_WATCHDOG_MS - 2 * protocol::INPUT_HEARTBEAT_MS) release_inputs();
     else if (!input_enabled_ && (!pressed_keys_.empty() || !pressed_buttons_.empty())) release_inputs();
     return GateResult::ok;
 }
