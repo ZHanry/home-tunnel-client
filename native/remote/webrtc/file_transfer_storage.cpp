@@ -310,7 +310,7 @@ class Source final : public FileSource {
     size_t done = 0;
     while (done < output.size()) {
       const auto count =
-          pread(file.value, output.data() + done, output.size() - done,
+          pread(file.value, output.subspan(done).data(), output.size() - done,
                 static_cast<off_t>(offset + done));
       if (count < 0 && errno == EINTR) continue;
       if (count <= 0) return false;
@@ -334,7 +334,7 @@ class Destination final : public FileDestination {
     size_t done = 0;
     while (done < bytes.size()) {
       const auto count =
-          pwrite(file.value, bytes.data() + done, bytes.size() - done,
+          pwrite(file.value, bytes.subspan(done).data(), bytes.size() - done,
                  static_cast<off_t>(at + done));
       if (count < 0 && errno == EINTR) continue;
       if (count <= 0) return false;
