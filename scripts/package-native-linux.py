@@ -186,7 +186,7 @@ def verify_archive(archive, version, revision, source_tree):
                 "Linux install worker checksum differs from its native evidence")
         for name in ("bin/home-tunnel-gui", "bin/home-tunnel-client", "lib/home-tunnel-agent", "bin/home_tunnel_remote_host"):
             entry = members[prefix + "/" + name]
-            require(entry.mode & 0o100 and not entry.mode & 0o022, "Unsafe Linux executable permissions")
+            require(entry.mode & 0o500 == 0o500 and not entry.mode & 0o022, "Unsafe Linux executable permissions")
             data = payload(name, 256 * 1024 * 1024)
             require(data[:6] == b"\x7fELF\x02\x01" and data[18:20] == b"\x3e\x00", "Linux package executable architecture mismatch")
             if name == "bin/home-tunnel-gui":

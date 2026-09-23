@@ -289,7 +289,7 @@ class NativeLinuxPackage(unittest.TestCase):
 
     def test_archive_rejects_unsafe_modes_and_other_architectures(self):
         entries = self.archive_fixture()
-        for mode in (0o644, 0o777, 0o4755, 0o2001):
+        for mode in (0o644, 0o111, 0o777, 0o4755, 0o2001):
             changed = copy.deepcopy(entries)
             for info, _ in changed:
                 if info.name.endswith("/bin/home-tunnel-gui"):
