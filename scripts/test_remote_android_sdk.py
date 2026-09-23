@@ -4,6 +4,8 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -15,6 +17,20 @@ SPEC.loader.exec_module(SDK)
 
 
 class AndroidSDKPolicy(unittest.TestCase):
+    def test_source_archive_order_and_bytes_are_reproducible_across_hosts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            hashes = []
+            for name in ("first", "second"):
+                output = Path(temporary) / name
+                subprocess.run([sys.executable, SDK.ROOT / "scripts/package-remote-core.py", "--output", output],
+                               check=True, stdout=subprocess.DEVNULL)
+                record = json.loads((output / "remote-artifact.json").read_text())
+                hashes.append(record["source_archive_sha256"])
+                with tarfile.open(output / record["source_archive"], "r:gz") as archive:
+                    names = archive.getnames()
+                    self.assertEqual(names, sorted(names))
+            self.assertEqual(hashes[0], hashes[1])
+
     def fixture(self, directory):
         version, revision = "8.0.0-rc.1", "a" * 40
         sources = SDK.source_files()
