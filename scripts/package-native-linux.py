@@ -1,6 +1,7 @@
 """Validate a clean Linux native build and stage only its production worker.
 
-This prepares a candidate; Xvfb evidence does not claim physical Xorg acceptance.
+Stable or RC packaging preserves the recorded limits of Xvfb evidence;
+neither version form claims physical Xorg acceptance.
 No test executable, source-selected executable path or unverified library is copied.
 """
 import argparse
@@ -36,8 +37,8 @@ def require(condition, message):
 
 def validate(build, version, revision, source_tree):
     """Validate bounded records before returning the exact allowlisted files."""
-    require(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-rc\.[1-9][0-9]*", version),
-            "Linux remote candidates require a complete RC version")
+    require(re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-rc\.[1-9][0-9]*)?", version),
+            "Linux remote packages require a canonical stable or RC version")
     record = read(build / "remote-host-build.json")
     lock = read(NATIVE / "remote-deps.lock.json")
     recipe = read(NATIVE / "linux/linux-build.lock.json")

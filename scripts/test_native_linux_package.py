@@ -4,7 +4,11 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -145,10 +149,48 @@ class NativeLinuxPackage(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         self.validate()
 
-    def test_refuses_stable_version_without_physical_acceptance(self):
+    def test_stable_version_preserves_recorded_acceptance_limits(self):
         self.version = "8.0.0"
+        self.record["version"] = self.version
+        self.write()
+        self.assertFalse(self.validate()["physical_xorg_acceptance"])
+        entries = self.archive_fixture()
+        self.assertFalse(self.verify_archive(entries)["physical_xorg_acceptance"])
         with self.assertRaises(ValueError):
-            self.validate()
+            self.verify_archive([(info, data + b"changed" if info.name.endswith("/bin/home_tunnel_remote_host") else data)
+                                 for info, data in entries])
+
+    def test_rejects_malformed_stable_and_rc_versions(self):
+        for version in ("08.0.0", "8.00.0", "8.0.00", "8.0", "v8.0.0", "8.0.0-rc.0", "8.0.0-rc.01",
+                        "8.0.0-rc.", "8.0.0-beta.1", "8.0.0+build", "8.0.0\n", "8.0.0-rc.1\n", "\u0668.0.0"):
+            self.version = version
+            self.record["version"] = version
+            self.write()
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "canonical stable or RC"):
+                self.validate()
+
+    def test_stable_and_rc_record_versions_cannot_substitute_each_other(self):
+        for expected, built in (("8.0.0", "8.0.0-rc.1"), ("8.0.0-rc.1", "8.0.0"), ("8.0.0", "8.0.1")):
+            self.version = expected
+            self.record["version"] = built
+            self.write()
+            with self.subTest(expected=expected, built=built), self.assertRaisesRegex(ValueError, "clean build"):
+                self.validate()
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux packaging entry point")
+    def test_entry_point_accepts_complete_versions_and_rejects_malformed_versions(self):
+        packaging = Path(self.temporary.name) / "entry"
+        packaging.mkdir()
+        entry = packaging / "build-linux-remote-candidate.sh"
+        shutil.copyfile(PACKAGE.ROOT / "packaging/build-linux-remote-candidate.sh", entry)
+        (packaging / "build-release.sh").write_text('[[ "$ARCH" == amd64 && "$REMOTE_HOST_BUILD" == fixture ]]\n', newline="\n")
+        for version, expected in (("8.0.0", 0), ("8.0.0-rc.1", 0), ("8.0.0-rc.22", 0),
+                                  ("8.0.0-rc.0", 2), ("8.0.0-rc.01", 2), ("08.0.0", 2),
+                                  ("8.0.0-beta.1", 2), ("8.0.0+build", 2), ("8.0.0\n", 2)):
+            result = subprocess.run(["bash", str(entry)], env={**os.environ, "VERSION": version, "REMOTE_HOST_BUILD": "fixture"},
+                                    capture_output=True, text=True)
+            with self.subTest(version=version):
+                self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_staging_cannot_overwrite_existing_native_files(self):
         destination = Path(self.temporary.name) / "package"
