@@ -239,7 +239,8 @@ def verify_remote_evidence(directory, version, revision):
             dist['file_count'] < 1 or not re.fullmatch(r'[0-9a-f]{64}', dist.get('sha256', ''))):
         raise SystemExit('Native acceptance must freshly build the locked server and identify its output')
     required = ('isolated_real_server', 'native_backend_ready', 'real_browser_identity', 'signed_pairing_and_code_match',
-                'explicit_session_approval', 'real_continuing_video', 'selected_udp_and_dtls', 'clean_session_shutdown')
+                'session_approval_verified', 'one_time_grant_auto_approval', 'real_continuing_video',
+                'selected_udp_and_dtls', 'clean_session_shutdown')
     if any(acceptance.get('checks', {}).get(check) is not True for check in required):
         raise SystemExit('Native acceptance is incomplete')
     media = acceptance.get('media', {})

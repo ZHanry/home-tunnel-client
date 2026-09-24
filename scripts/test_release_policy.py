@@ -79,7 +79,8 @@ class ReleasePolicyTests(unittest.TestCase):
                   'server_build': {'fresh': True, 'source_commit': server['revision'], 'command': 'pnpm run build',
                                    'dist': {'file_count': 1, 'sha256': hashlib.sha256(b'fixture build').hexdigest()}},
                   'checks': {key: True for key in ('isolated_real_server', 'native_backend_ready', 'real_browser_identity', 'signed_pairing_and_code_match',
-                             'explicit_session_approval', 'real_continuing_video', 'selected_udp_and_dtls', 'clean_session_shutdown')},
+                             'session_approval_verified', 'one_time_grant_auto_approval', 'real_continuing_video',
+                             'selected_udp_and_dtls', 'clean_session_shutdown')},
                   'media': {'ready': True, 'peer_verified': True, 'host_path_verified': True, 'browser_udp_verified': True,
                             'closed': False, 'dtls_state': 'connected', 'frames_decoded': 20, 'failures': []}}
         (directory / 'remote-host-provenance.json').write_text(json.dumps(provenance))
@@ -185,6 +186,8 @@ class ReleasePolicyTests(unittest.TestCase):
             lambda p, r: r['server_build'].update(source_commit='a' * 40),
             lambda p, r: r.update(worker_sha256='b' * 64),
             lambda p, r: r['checks'].update(clean_session_shutdown=False),
+            lambda p, r: r['checks'].update(session_approval_verified=False),
+            lambda p, r: r['checks'].update(one_time_grant_auto_approval=False),
             lambda p, r: r['media'].update(browser_udp_verified=False),
             lambda p, r: r['media'].update(closed=True),
             lambda p, r: r['media'].update(frames_decoded=0),
