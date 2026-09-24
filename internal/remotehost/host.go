@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -21,19 +22,22 @@ type pairing struct {
 	Transcript json.RawMessage `json:"transcript"`
 }
 type transcript struct {
-	Domain          string    `json:"domain"`
-	Instance        string    `json:"server_instance_id"`
-	PairingID       string    `json:"pairing_id"`
-	HostID          string    `json:"host_endpoint_id"`
-	ControllerID    string    `json:"controller_endpoint_id"`
-	HostJKT         string    `json:"host_jkt"`
-	ControllerJKT   string    `json:"controller_jkt"`
-	HostNonce       *string   `json:"nonce_host"`
-	ControllerNonce string    `json:"nonce_controller"`
-	Scope           []string  `json:"scope"`
-	Mode            string    `json:"mode"`
-	RequestID       string    `json:"session_request_id"`
-	ExpiresAt       time.Time `json:"expires_at"`
+	Domain            string    `json:"domain"`
+	Instance          string    `json:"server_instance_id"`
+	PairingID         string    `json:"pairing_id"`
+	HostID            string    `json:"host_endpoint_id"`
+	ControllerID      string    `json:"controller_endpoint_id"`
+	AssistInviteID    string    `json:"assist_invite_id,omitempty"`
+	HostOwnerID       string    `json:"host_owner_user_id,omitempty"`
+	ControllerOwnerID string    `json:"controller_owner_user_id,omitempty"`
+	HostJKT           string    `json:"host_jkt"`
+	ControllerJKT     string    `json:"controller_jkt"`
+	HostNonce         *string   `json:"nonce_host"`
+	ControllerNonce   string    `json:"nonce_controller"`
+	Scope             []string  `json:"scope"`
+	Mode              string    `json:"mode"`
+	RequestID         string    `json:"session_request_id"`
+	ExpiresAt         time.Time `json:"expires_at"`
 }
 type authority struct {
 	Iss           string   `json:"iss"`
@@ -59,25 +63,34 @@ type authority struct {
 	JTI           string   `json:"jti"`
 }
 type runningSession struct {
-	Session     Session
-	Prepared    PreparedSession
-	Grant       LocalGrant
-	Ticket      authority
-	Deadline    time.Time
-	LastRenew   time.Time
-	Sequence    uint64
-	PeerMaximum uint64
-	PeerSeen    map[uint64]bool
-	Proofs      map[string]bool
-	OfferJWS    string
-	AnswerJWS   string
-	Started     bool
-	Verified    bool
-	Files       map[string]FileEvent
-	FileOrder   []string
-	Closing     bool
-	Superseded  bool
-	Cancel      context.CancelFunc
+	Session      Session
+	Prepared     PreparedSession
+	Grant        LocalGrant
+	Ticket       authority
+	Deadline     time.Time
+	LastRenew    time.Time
+	Sequence     uint64
+	PeerMaximum  uint64
+	PeerSeen     map[uint64]bool
+	PeerQueue    []queuedPeer
+	PeerFlushing bool
+	Proofs       map[string]bool
+	OfferJWS     string
+	AnswerJWS    string
+	Started      bool
+	Verified     bool
+	Files        map[string]FileEvent
+	FileOrder    []string
+	Closing      bool
+	Superseded   bool
+	Cancel       context.CancelFunc
+}
+type queuedPeer struct {
+	raw     json.RawMessage
+	kind    string
+	id      string
+	epoch   int64
+	compact string
 }
 
 func subset(have, want []string) bool {
@@ -98,6 +111,47 @@ func subset(have, want []string) bool {
 	return seen["view"]
 }
 func sameScopes(a, b []string) bool { return len(a) == len(b) && subset(a, b) }
+func canAutoApprove(grant LocalGrant, session Session, unattendedEnabled bool) bool {
+	if grant.Revoked || !grant.ExpiresAt.After(time.Now()) || !subset(grant.Permissions, session.Permissions) || grant.ControllerEndpointID != session.ControllerEndpointID {
+		return false
+	}
+	if grant.Mode == "persistent" {
+		return unattendedEnabled && grant.AssistInviteID == ""
+	}
+	return grant.Mode == "one_session" && grant.OneSessionRequestID == session.SessionRequestID &&
+		(grant.SessionID == "" || grant.SessionID == session.SessionID)
+}
+func canAutoApproveAssist(inviteExpires time.Time, request transcript, now time.Time) bool {
+	return request.AssistInviteID != "" && request.Mode == "one_session" && inviteExpires.After(now) &&
+		subset([]string{"view", "input.keyboard", "input.pointer", "input.text", "clipboard.read", "clipboard.write"}, request.Scope)
+}
+
+func (s *Service) autoApprovePairing(ctx context.Context, request transcript, event ApprovalEvent) {
+	approvalCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	err := s.ApprovePairing(approvalCtx, request.PairingID, request.Scope, request.Mode, time.Now().Add(10*time.Minute))
+	s.mu.Lock()
+	delete(s.autoPairing, request.PairingID)
+	fallback := err != nil && ctx.Err() == nil && !s.disabled && !s.assistRevoked[request.AssistInviteID]
+	s.mu.Unlock()
+	if fallback {
+		_ = s.emit(event)
+	}
+}
+
+func (s *Service) autoApprove(ctx context.Context, session Session, event ApprovalEvent) {
+	approvalCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	err := s.ApproveSessionExpected(approvalCtx, session.SessionID, session.ConnectionEpoch, session.StateVersion)
+	s.mu.Lock()
+	delete(s.autoApproving, session.SessionID)
+	pending, exists := s.pending[session.SessionID]
+	fallback := err != nil && ctx.Err() == nil && exists && pending.ConnectionEpoch == session.ConnectionEpoch && pending.StateVersion == session.StateVersion && !s.disabled
+	s.mu.Unlock()
+	if fallback {
+		_ = s.emit(event)
+	}
+}
 func (s *Service) emit(event ApprovalEvent) error {
 	select {
 	case s.approvals <- event:
@@ -118,7 +172,7 @@ func (s *Service) loadPairing(ctx context.Context, id string) (pairing, transcri
 	}
 	d := s.config.Store.snapshot()
 	keys, e := parseKeyset(d.Keyset)
-	if e != nil || p.ID != id || p.State != "pending" || !p.ExpiresAt.After(time.Now()) || t.Domain != "ht-rd-pairing-v1" || t.Instance != keys.ServerInstanceID || t.PairingID != id || t.HostID != d.EndpointID || t.HostJKT != jwk(&s.key.PublicKey).Thumbprint() || t.ControllerID == d.EndpointID || len(t.ControllerJKT) != 43 || len(t.ControllerNonce) != 43 || !t.ExpiresAt.Equal(p.ExpiresAt) || (t.Mode != "one_session" && t.Mode != "persistent") {
+	if e != nil || p.ID != id || p.State != "pending" || !p.ExpiresAt.After(time.Now()) || t.Domain != "ht-rd-pairing-v1" || t.Instance != keys.ServerInstanceID || t.PairingID != id || t.HostID != d.EndpointID || t.HostJKT != jwk(&s.key.PublicKey).Thumbprint() || t.ControllerID == d.EndpointID || len(t.ControllerJKT) != 43 || len(t.ControllerNonce) != 43 || !t.ExpiresAt.Equal(p.ExpiresAt) || (t.Mode != "one_session" && t.Mode != "persistent") || (t.AssistInviteID == "" && (t.HostOwnerID != "" || t.ControllerOwnerID != "")) || (t.AssistInviteID != "" && (t.HostOwnerID != d.OwnerUserID || t.ControllerOwnerID == "" || t.ControllerOwnerID == d.OwnerUserID || t.Mode != "one_session")) {
 		return p, t, ErrAuthorization
 	}
 	return p, t, nil
@@ -134,6 +188,11 @@ func (s *Service) ApprovePairing(ctx context.Context, id string, selected []stri
 	d := s.config.Store.snapshot()
 	if !d.Enabled || mode != t.Mode || !sameScopes(t.Scope, selected) {
 		return ErrLocalApproval
+	}
+	if mode == "persistent" {
+		if !d.UnattendedEnabled || s.config.LocalAdminCheck == nil || s.config.LocalAdminCheck(ctx) != nil {
+			return ErrLocalApproval
+		}
 	}
 	caps, e := s.config.Engine.Capabilities(ctx)
 	if e != nil || !caps.Available || !subset(caps.Permissions, selected) || (mode == "persistent" && !caps.UnattendedEnabled) {
@@ -167,24 +226,40 @@ func (s *Service) ApprovePairing(ctx context.Context, id string, selected []stri
 	if mode == "one_session" {
 		requestID = t.RequestID
 	}
-	payload := map[string]any{"id": id, "server_instance_id": t.Instance, "owner_user_id": d.OwnerUserID, "host_endpoint_id": d.EndpointID, "controller_endpoint_id": t.ControllerID, "host_jkt": t.HostJKT, "controller_jkt": t.ControllerJKT, "scope": selected, "mode": mode, "one_session_request_id": requestID, "grant_version": 1, "expires_at": expires.UTC().Format("2006-01-02T15:04:05.000Z")}
+	payload := map[string]any{"id": id, "server_instance_id": t.Instance, "owner_user_id": d.OwnerUserID, "host_endpoint_id": d.EndpointID, "controller_endpoint_id": t.ControllerID, "host_jkt": t.HostJKT, "controller_jkt": t.ControllerJKT, "scope": t.Scope, "mode": mode, "one_session_request_id": requestID, "grant_version": 1, "expires_at": expires.UTC().Format("2006-01-02T15:04:05.000Z")}
 	grantProof, e := signJWS(s.key, "ht-rd-grant+jwt", payload, false)
 	if e != nil {
 		return e
 	}
-	grant := LocalGrant{ID: id, ControllerEndpointID: t.ControllerID, ControllerJKT: t.ControllerJKT, Permissions: append([]string(nil), selected...), Mode: mode, OneSessionRequestID: t.RequestID, Version: 1, ExpiresAt: expires, GrantJWS: grantProof}
-	if e = s.config.Store.update(func(d *diskState) error {
-		if _, exists := d.Grants[id]; exists {
+	grant := LocalGrant{ID: id, AssistInviteID: t.AssistInviteID, ControllerEndpointID: t.ControllerID, ControllerJKT: t.ControllerJKT, Permissions: append([]string(nil), t.Scope...), Mode: mode, Version: 1, ExpiresAt: expires, GrantJWS: grantProof}
+	if mode == "one_session" {
+		grant.OneSessionRequestID = t.RequestID
+	}
+	s.mu.Lock()
+	if t.AssistInviteID != "" && s.assistRevoked[t.AssistInviteID] {
+		s.mu.Unlock()
+		return ErrLocalApproval
+	}
+	e = s.config.Store.update(func(d *diskState) error {
+		if _, exists := d.Grants[id]; exists || (mode == "persistent" && !d.UnattendedEnabled) {
 			return ErrAuthorization
 		}
 		d.Grants[id] = grant
 		return nil
-	}); e != nil {
+	})
+	s.mu.Unlock()
+	if e != nil {
 		return e
 	}
 	if e = s.request(ctx, "POST", "/pairings/"+url.PathEscape(id)+"/confirm", map[string]any{"nonce_host": hostNonce, "signed_proof": pairProof, "grant_jws": grantProof}, "dpop", nil); e != nil {
 		_ = s.config.Store.RevokeGrant(id)
 		return e
+	}
+	s.mu.Lock()
+	revoked := t.AssistInviteID != "" && s.assistRevoked[t.AssistInviteID]
+	s.mu.Unlock()
+	if revoked {
+		return ErrLocalApproval
 	}
 	return s.emit(pairingApproval(pairing{ID: id, Transcript: raw}, t, "pairing_display"))
 }
@@ -250,7 +325,7 @@ func (s *Service) grantFor(session Session) (LocalGrant, error) {
 		return LocalGrant{}, e
 	}
 	g, exists := d.Grants[claim.ID]
-	if !exists || g.Revoked || g.Version != claim.Version || g.GrantJWS != session.GrantJWS || !g.ExpiresAt.After(time.Now()) || g.ControllerEndpointID != session.ControllerEndpointID || !subset(g.Permissions, session.Permissions) || (g.Mode == "one_session" && (g.OneSessionRequestID != session.SessionRequestID || (g.SessionID != "" && g.SessionID != session.SessionID))) {
+	if !exists || g.Revoked || g.Version != claim.Version || g.GrantJWS != session.GrantJWS || !g.ExpiresAt.After(time.Now()) || g.ControllerEndpointID != session.ControllerEndpointID || !subset(g.Permissions, session.Permissions) || (g.Mode == "persistent" && !d.UnattendedEnabled) || (g.Mode == "one_session" && (g.OneSessionRequestID != session.SessionRequestID || (g.SessionID != "" && g.SessionID != session.SessionID))) {
 		return g, ErrAuthorization
 	}
 	return g, nil
@@ -292,6 +367,12 @@ func (s *Service) approveSession(ctx context.Context, id string, epoch, version 
 	grant, e := s.grantFor(session)
 	if e != nil {
 		return e
+	}
+	if grant.Mode == "persistent" {
+		caps, capabilityError := s.config.Engine.Capabilities(ctx)
+		if capabilityError != nil || !caps.Available || !caps.UnattendedEnabled {
+			return ErrUnavailable
+		}
 	}
 	stunURLs, e := s.serverSTUN(ctx)
 	if e != nil {
@@ -340,7 +421,9 @@ func (s *Service) approveSession(ctx context.Context, id string, epoch, version 
 		if !d.Enabled || g.Revoked || g.Version != grant.Version || (g.SessionID != "" && g.SessionID != id && g.Mode == "one_session") {
 			return ErrAuthorization
 		}
-		g.SessionID = id
+		if g.Mode == "one_session" {
+			g.SessionID = id
+		}
 		d.Grants[g.ID] = g
 		return nil
 	}); e != nil {
@@ -386,8 +469,8 @@ func (s *Service) approveSession(ctx context.Context, id string, epoch, version 
 	stale = s.active != running || running.Closing || generation != s.generation || s.disabled
 	if e == nil && !stale {
 		running.Started = true
+		running.PeerFlushing = true
 		delete(s.pending, id)
-		succeeded = true
 	}
 	s.mu.Unlock()
 	s.engineMu.Unlock()
@@ -397,12 +480,36 @@ func (s *Service) approveSession(ctx context.Context, id string, epoch, version 
 	if stale {
 		return ErrLocalApproval
 	}
+	if e = s.flushPeer(startCtx, running); e != nil {
+		return e
+	}
+	succeeded = true
 	return nil
+}
+func (s *Service) flushPeer(ctx context.Context, running *runningSession) error {
+	for {
+		s.mu.Lock()
+		if s.active != running || running.Closing {
+			s.mu.Unlock()
+			return ErrAuthorization
+		}
+		if len(running.PeerQueue) == 0 {
+			running.PeerFlushing = false
+			s.mu.Unlock()
+			return nil
+		}
+		peer := running.PeerQueue[0]
+		running.PeerQueue = running.PeerQueue[1:]
+		s.mu.Unlock()
+		if err := s.handlePeer(ctx, peer.raw, peer.kind, peer.id, peer.epoch, peer.compact, true); err != nil {
+			return err
+		}
+	}
 }
 func (s *Service) checkAuthority(r *runningSession) error {
 	d := s.config.Store.snapshot()
 	local, exists := d.Grants[r.Grant.ID]
-	if !d.Enabled || !exists || local.Revoked || local.Version != r.Grant.Version || local.GrantJWS != r.Grant.GrantJWS || !local.ExpiresAt.After(time.Now()) {
+	if !d.Enabled || !exists || local.Revoked || local.Version != r.Grant.Version || local.GrantJWS != r.Grant.GrantJWS || !local.ExpiresAt.After(time.Now()) || (local.Mode == "persistent" && !d.UnattendedEnabled) {
 		return ErrAuthorization
 	}
 	keys, e := parseKeyset(d.Keyset)
@@ -500,6 +607,10 @@ func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 			return e
 		}
 		if p.State != "pending" {
+			s.mu.Lock()
+			delete(s.autoPairing, p.ID)
+			delete(s.autoPairAttempted, p.ID)
+			s.mu.Unlock()
 			return s.emit(ApprovalEvent{Kind: "pairing_complete", ID: p.ID})
 		}
 		p, t, e := s.loadPairing(ctx, p.ID)
@@ -509,7 +620,32 @@ func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 		if t.HostNonce != nil {
 			return s.emit(pairingApproval(p, t, "pairing_display"))
 		}
-		return s.emit(pairingApproval(p, t, "pairing"))
+		event := pairingApproval(p, t, "pairing")
+		if t.AssistInviteID != "" {
+			if e := s.loadFixedAccessAuthorization(ctx, t.AssistInviteID); e != nil {
+				var apiError *APIError
+				if !errors.As(e, &apiError) || apiError.Status != 404 {
+					return e
+				}
+			}
+		}
+		s.mu.Lock()
+		inviteExpires, trusted := s.assistInvites[t.AssistInviteID]
+		auto := trusted && !s.disabled && !s.assistRevoked[t.AssistInviteID] && !s.autoPairAttempted[p.ID] && canAutoApproveAssist(inviteExpires, t, time.Now())
+		if auto {
+			s.autoPairAttempted[p.ID] = true
+			s.autoPairing[p.ID] = true
+		}
+		pending := s.autoPairing[p.ID]
+		s.mu.Unlock()
+		if auto {
+			go s.autoApprovePairing(ctx, t, event)
+			return nil
+		}
+		if pending {
+			return nil
+		}
+		return s.emit(event)
 	}
 	if strings.HasPrefix(message.Type, "peer.") {
 		return s.incomingPeer(ctx, raw, message.Type, message.SessionID, message.Epoch, message.PayloadJWS)
@@ -528,6 +664,8 @@ func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 		s.mu.Lock()
 		matches := s.active != nil && s.active.Session.SessionRef == session.SessionRef
 		delete(s.pending, session.SessionID)
+		delete(s.autoApproving, session.SessionID)
+		delete(s.autoAttempted, session.SessionID)
 		s.mu.Unlock()
 		if matches {
 			return s.Stop(ctx, "RD_SERVER_REVOKED")
@@ -564,7 +702,20 @@ func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 				return e
 			}
 		}
-		return s.emit(ApprovalEvent{Kind: "session", ID: session.SessionID, ConnectionEpoch: session.ConnectionEpoch, StateVersion: session.StateVersion, ControllerEndpointID: grant.ControllerEndpointID, ControllerThumbprint: grant.ControllerJKT, Permissions: append([]string(nil), session.Permissions...), Mode: grant.Mode, ExpiresAt: sessionApprovalExpiry(session)})
+		event := ApprovalEvent{Kind: "session", ID: session.SessionID, ConnectionEpoch: session.ConnectionEpoch, StateVersion: session.StateVersion, ControllerEndpointID: grant.ControllerEndpointID, ControllerThumbprint: grant.ControllerJKT, Permissions: append([]string(nil), session.Permissions...), Mode: grant.Mode, ExpiresAt: sessionApprovalExpiry(session)}
+		unattendedEnabled := s.config.Store.snapshot().UnattendedEnabled
+		s.mu.Lock()
+		auto := canAutoApprove(grant, session, unattendedEnabled) && s.autoAttempted[session.SessionID] != session.ConnectionEpoch && s.active == nil
+		if auto {
+			s.autoAttempted[session.SessionID] = session.ConnectionEpoch
+			s.autoApproving[session.SessionID] = session.ConnectionEpoch
+		}
+		s.mu.Unlock()
+		if auto {
+			go s.autoApprove(ctx, session, event)
+			return nil
+		}
+		return s.emit(event)
 	}
 	s.mu.Lock()
 	if pending, exists := s.pending[session.SessionID]; exists && pending.ConnectionEpoch <= session.ConnectionEpoch {
@@ -579,11 +730,23 @@ func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 	return nil
 }
 func (s *Service) incomingPeer(ctx context.Context, raw json.RawMessage, kind, id string, epoch int64, compact string) error {
+	return s.handlePeer(ctx, raw, kind, id, epoch, compact, false)
+}
+func (s *Service) handlePeer(ctx context.Context, raw json.RawMessage, kind, id string, epoch int64, compact string, flushing bool) error {
 	s.mu.Lock()
 	r := s.active
-	if r == nil || r.Closing || r.Session.SessionID != id || r.Session.ConnectionEpoch != epoch || !r.Started {
+	if r == nil || r.Closing || r.Session.SessionID != id || r.Session.ConnectionEpoch != epoch {
 		s.mu.Unlock()
-		return ErrAuthorization
+		return fmt.Errorf("peer session unavailable: %w", ErrAuthorization)
+	}
+	if !r.Started || (r.PeerFlushing && !flushing) {
+		if flushing || len(raw) > 65536 || len(r.PeerQueue) >= 32 {
+			s.mu.Unlock()
+			return ErrAuthorization
+		}
+		r.PeerQueue = append(r.PeerQueue, queuedPeer{raw: append(json.RawMessage(nil), raw...), kind: kind, id: id, epoch: epoch, compact: compact})
+		s.mu.Unlock()
+		return nil
 	}
 	publicRaw := append([]byte(nil), r.Session.ControllerPublicJWK...)
 	snapshot := *r
@@ -594,7 +757,7 @@ func (s *Service) incomingPeer(ctx context.Context, raw json.RawMessage, kind, i
 	}
 	payload, e := verifyJWS(compact, public, "ht-rd-peer+jwt")
 	if e != nil {
-		return e
+		return fmt.Errorf("peer signature: %w", e)
 	}
 	var inner struct {
 		V         int             `json:"v"`
@@ -609,11 +772,11 @@ func (s *Service) incomingPeer(ctx context.Context, raw json.RawMessage, kind, i
 		Payload   json.RawMessage `json:"payload"`
 	}
 	if e = strictDecode(payload, &inner, true); e != nil {
-		return e
+		return fmt.Errorf("peer payload: %w", e)
 	}
 	seq, e := strconv.ParseUint(inner.Seq, 10, 64)
 	if e != nil || strconv.FormatUint(seq, 10) != inner.Seq || inner.V != 1 || inner.Type != kind || inner.SessionID != id || inner.Epoch != epoch || inner.From != snapshot.Session.ControllerEndpointID || inner.To != snapshot.Session.HostEndpointID || inner.TicketJTI != snapshot.Ticket.JTI || time.Since(inner.Created) > time.Minute || time.Until(inner.Created) > time.Minute || (kind != "peer.offer" && kind != "peer.candidates" && kind != "peer.candidates_done") {
-		return ErrAuthorization
+		return fmt.Errorf("peer binding: %w", ErrAuthorization)
 	}
 	s.mu.Lock()
 	if s.active != r || r.Closing || r.PeerSeen[seq] || (seq < r.PeerMaximum && r.PeerMaximum-seq >= 32) || (kind == "peer.offer" && r.OfferJWS != "") {

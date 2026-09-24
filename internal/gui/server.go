@@ -38,20 +38,23 @@ type Options struct {
 }
 
 type Server struct {
-	options           Options
-	parent            context.Context
-	mu                sync.Mutex
-	cancel            context.CancelFunc
-	done              chan struct{}
-	running           bool
-	quit              func()
-	show              func()
-	remoteMu          sync.Mutex
-	remoteHost        *localRemoteHost
-	remoteBlocked     bool
-	accountMu         sync.Mutex
-	accountGeneration uint64
-	accountCancel     context.CancelFunc
+	options            Options
+	parent             context.Context
+	mu                 sync.Mutex
+	cancel             context.CancelFunc
+	done               chan struct{}
+	running            bool
+	quit               func()
+	show               func()
+	openRemote         func(string) error
+	closeRemote        func()
+	remoteMu           sync.Mutex
+	remoteHost         *localRemoteHost
+	remoteBlocked      bool
+	setEmergencyHotkey func(string) error
+	accountMu          sync.Mutex
+	accountGeneration  uint64
+	accountCancel      context.CancelFunc
 }
 
 func New(options Options) *Server {
@@ -77,6 +80,18 @@ func (server *Server) SetShow(show func()) {
 	server.mu.Unlock()
 }
 
+func (server *Server) SetOpenRemote(open func(string) error) {
+	server.mu.Lock()
+	server.openRemote = open
+	server.mu.Unlock()
+}
+
+func (server *Server) SetCloseRemote(close func()) {
+	server.mu.Lock()
+	server.closeRemote = close
+	server.mu.Unlock()
+}
+
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	content, err := fs.Sub(webFiles, "web")
@@ -90,6 +105,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/state", server.state)
 	mux.HandleFunc("/local/login", server.login)
 	mux.HandleFunc("/local/connections", server.connections)
+	mux.HandleFunc("/local/devices", server.devices)
 	mux.HandleFunc("/local/connections/", server.connectionItem)
 	mux.HandleFunc("/local/logout", server.logout)
 	mux.HandleFunc("/local/show", server.showWindow)
@@ -101,6 +117,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/remote/trust", server.remoteTrust)
 	mux.HandleFunc("/local/remote/action", server.remoteAction)
 	mux.HandleFunc("/local/remote/files", server.remoteFiles)
+	mux.HandleFunc("/local/remote/window", server.remoteWindow)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
 	mux.HandleFunc("/local/doctor", server.doctor)
 	mux.HandleFunc("/local/device/metadata", server.deviceMetadata)
@@ -260,6 +277,12 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 // Account mutations are serialized; their generation is invalidated immediately
 // so a slow login cannot save credentials or restart services after sign-out.
 func (server *Server) beginAccountChange(cancel context.CancelFunc) uint64 {
+	server.mu.Lock()
+	closeRemote := server.closeRemote
+	server.mu.Unlock()
+	if closeRemote != nil {
+		closeRemote()
+	}
 	server.remoteMu.Lock()
 	defer server.remoteMu.Unlock()
 	if server.accountCancel != nil {
@@ -343,6 +366,26 @@ func (server *Server) connections(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	writeJSON(writer, created)
+}
+
+func (server *Server) devices(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	client, state, err := server.client()
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+	defer cancel()
+	items, err := client.ListRemoteDevices(ctx)
+	if err != nil {
+		writeError(writer, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(writer, map[string]any{"items": items, "local_device_id": state.DeviceID})
 }
 
 func (server *Server) connectionItem(writer http.ResponseWriter, request *http.Request) {

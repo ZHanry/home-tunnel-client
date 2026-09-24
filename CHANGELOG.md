@@ -1,5 +1,11 @@
 # Changelog
 
+## 9.0.0
+
+- Rework the desktop around a sidebar and separate remote viewer; add request approval, a fixed password, a one-time password and an emergency disconnect hotkey.
+- Cross-account access keeps signed grants and leases. Fixed-password access currently covers an already signed-in Windows desktop, not the lock screen, login screen or UAC secure desktop.
+- The native worker still requires exact-package verification before publication. A high-privilege Windows service and secure-desktop control are not included. System audio and full clipboard interoperability remain unavailable or unverified.
+
 ## 8.0.0 — development (not a stable release)
 
 - Adds the shared C++20 remote ABI, locked WebRTC source/build inputs, protocol framing/transcript tests, UDP selected-pair/lease/epoch safety gates, keyboard and mouse watchdog tests, and Windows input adapter groundwork.

@@ -61,6 +61,23 @@ func TestConnectionsRequireLogin(t *testing.T) {
 	}
 }
 
+func TestDevicesRequireLoginAndReadOnly(t *testing.T) {
+	server := New(Options{LocalToken: testLocalToken, StatePath: filepath.Join(t.TempDir(), "missing.json")})
+	for _, test := range []struct {
+		method string
+		status int
+	}{
+		{http.MethodGet, http.StatusUnauthorized},
+		{http.MethodPost, http.StatusMethodNotAllowed},
+	} {
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, trustedLocalRequest(test.method, "/local/devices", nil))
+		if rec.Code != test.status {
+			t.Fatalf("%s status = %d, want %d", test.method, rec.Code, test.status)
+		}
+	}
+}
+
 func TestLogoutClearsStateAfterStop(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")

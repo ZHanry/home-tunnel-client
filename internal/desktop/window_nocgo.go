@@ -13,3 +13,7 @@ func runNativeWindow() {}
 func showNativeWindow() {}
 
 func quitNativeWindow() {}
+
+func openNativeRemoteWindow(string) error { return ErrRemoteWindowUnavailable }
+
+func closeNativeRemoteWindow() {}

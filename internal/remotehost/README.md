@@ -16,8 +16,30 @@ The UI calls `InitialKeyset` to preview public origin/instance/key information,
 then approves that exact pin through `Config.InitialTrust` during enrollment.
 It consumes `Approvals()` events: `pairing` requests local approval,
 `pairing_display` retains the comparison code until the controller confirms,
-`pairing_complete` removes the completed pairing, and `session` requests a
-separate local session decision. Incoming network events never approve sessions.
+`pairing_complete` removes the completed pairing. The exact one-session request
+bound into a locally approved grant can start automatically; a failed automatic
+start falls back to a visible `session` decision. A locally generated temporary
+assistance password also auto-approves one cross-account pairing for `view` and
+standard keyboard, pointer, text input and text clipboard; file and audio scopes require a visible
+local decision. Revoking the invitation tombstones its local grants before the
+network request. Only the invitation ID and expiry persist in the OS-protected
+store across restart; the temporary password is never stored locally.
+The stable nine-digit access ID supports a single host-approved request or an
+Argon2id fixed password usable by any authenticated account on this server.
+Both paths yield a short-lived, single-pairing invitation and reuse the signed
+cross-account grant/session checks. The host persists a request approval before
+activating it for the controller. Fixed-password pairing checks the current
+profile revision; changing or disabling the password tombstones local grants
+before notifying the server. The Windows tray process registers a configurable
+Ctrl+Alt+Shift+X/Q/F12 emergency shortcut that locally closes the native session
+and disables the host before waiting for network acknowledgement.
+Persistent grants require a separate local administrator check before the host
+enables unattended access or binds a controller. The binding is the signed
+grant's exact endpoint ID and public-key thumbprint. Disabling unattended
+access tombstones every persistent grant locally before any network request,
+stops an active persistent session, and publishes the disabled capability.
+The native engine must independently report unattended support; the current
+production worker reports false, so this policy cannot be enabled yet.
 
 `HostEngine.PrepareSession` must retain its own ephemeral key, DTLS fingerprint
 and nonce. `Start` receives the original ticket, lease, host grant, protected

@@ -158,12 +158,26 @@ func TestRealControlCenterInterop(t *testing.T) {
 	}
 	var session Session
 	rpc("create", nil, &session)
-	request := waitApproval("session")
-	if request.ID != session.ID {
-		t.Fatal("session identity lost")
-	}
-	if e = service.ApproveSession(ctx, session.ID); e != nil {
-		t.Fatal(e)
+	ready := time.NewTimer(5 * time.Second)
+	defer ready.Stop()
+	for {
+		engine.mu.Lock()
+		startedCount := len(engine.started)
+		engine.mu.Unlock()
+		if startedCount != 0 {
+			break
+		}
+		select {
+		case event := <-service.Approvals():
+			if event.Kind == "session" {
+				t.Fatal("one-session grant required a second local approval")
+			}
+		case e := <-runResult:
+			t.Fatalf("host run failed: %v", e)
+		case <-ready.C:
+			t.Fatal("approved one-session grant did not start")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	engine.mu.Lock()
 	started := append([]StartRequest(nil), engine.started...)
@@ -267,6 +281,66 @@ func TestRealControlCenterInterop(t *testing.T) {
 	rpc("state", nil, &state)
 	if state.State != "closed" || state.Slots != 0 {
 		t.Fatalf("close acknowledgment failed: state=%s slots=%d", state.State, state.Slots)
+	}
+	invite, e := service.CreateAssistInvite(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var assist struct {
+		ID        string `json:"id"`
+		RequestID string `json:"request_id"`
+		HostID    string `json:"host_id"`
+		InviteID  string `json:"invite_id"`
+	}
+	rpc("assist", map[string]any{"device_id": invite.DeviceID, "temporary_password": invite.TemporaryPassword}, &assist)
+	if assist.HostID != service.State(ctx).EndpointID || assist.InviteID != invite.ID {
+		t.Fatal("cross-account assistance escaped the redeemed host or invitation")
+	}
+	autoPairDeadline := time.NewTimer(5 * time.Second)
+	defer autoPairDeadline.Stop()
+assistApproval:
+	for {
+		select {
+		case event := <-service.Approvals():
+			if event.ID != assist.ID {
+				continue
+			}
+			if event.Kind != "pairing_display" {
+				t.Fatalf("temporary password required another host approval: %s", event.Kind)
+			}
+			break assistApproval
+		case e := <-runResult:
+			t.Fatalf("host run failed: %v", e)
+		case <-autoPairDeadline.C:
+			t.Fatal("temporary assistance was not approved")
+		}
+	}
+	grant := service.config.Store.snapshot().Grants[assist.ID]
+	if grant.AssistInviteID != invite.ID || grant.OneSessionRequestID != assist.RequestID {
+		t.Fatal("cross-account grant lost its invitation or request binding")
+	}
+	rpc("confirm", nil, &confirmed)
+	rpc("create", nil, &session)
+	waitUntil(func() bool {
+		engine.mu.Lock()
+		defer engine.mu.Unlock()
+		return len(engine.started) == 3
+	})
+	if e = service.RevokeAssistInvite(ctx, invite.ID); e != nil {
+		t.Fatal(e)
+	}
+	if !service.config.Store.snapshot().Grants[assist.ID].Revoked {
+		t.Fatal("invitation revocation did not persist the local grant tombstone")
+	}
+	rpc("state", nil, &state)
+	if state.State != "closing" || state.Slots == 0 {
+		t.Fatal("cross-account revocation did not close the leased session")
+	}
+	engine.events <- EngineEvent{SessionRef: session.SessionRef, Kind: "closed"}
+	waitUntil(func() bool { return service.State(ctx).ActiveSessionID == "" })
+	rpc("state", nil, &state)
+	if state.State != "closed" || state.Slots != 0 {
+		t.Fatal("cross-account session was not released after native close")
 	}
 	stopRun()
 	select {

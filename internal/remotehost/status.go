@@ -7,24 +7,30 @@ import (
 )
 
 type Status struct {
-	Enrolled        bool            `json:"enrolled"`
-	Enabled         bool            `json:"enabled"`
-	Running         bool            `json:"running"`
-	EndpointID      string          `json:"endpoint_id"`
-	OwnerUserID     string          `json:"owner_user_id"`
-	Origin          string          `json:"origin"`
-	Capabilities    Capabilities    `json:"capabilities"`
-	ActiveSessionID string          `json:"active_session_id"`
-	Pending         []ApprovalEvent `json:"pending"`
-	Grants          []LocalGrant    `json:"grants"`
-	ErrorCode       string          `json:"error_code,omitempty"`
-	Files           FileState       `json:"files"`
+	Enrolled          bool            `json:"enrolled"`
+	Enabled           bool            `json:"enabled"`
+	UnattendedEnabled bool            `json:"unattended_enabled"`
+	Running           bool            `json:"running"`
+	EndpointID        string          `json:"endpoint_id"`
+	OwnerUserID       string          `json:"owner_user_id"`
+	Origin            string          `json:"origin"`
+	Capabilities      Capabilities    `json:"capabilities"`
+	ActiveSessionID   string          `json:"active_session_id"`
+	Pending           []ApprovalEvent `json:"pending"`
+	Grants            []LocalGrant    `json:"grants"`
+	Invites           []AssistInvite  `json:"invites"`
+	AccessProfile     AccessProfile   `json:"access_profile"`
+	AccessRequests    []AccessRequest `json:"access_requests"`
+	FixedRevision     int64           `json:"fixed_revision"`
+	EmergencyKey      string          `json:"emergency_key"`
+	ErrorCode         string          `json:"error_code,omitempty"`
+	Files             FileState       `json:"files"`
 }
 
 func (s *Service) State(ctx context.Context) Status {
 	d := s.config.Store.snapshot()
 	caps, e := s.config.Engine.Capabilities(ctx)
-	result := Status{Enrolled: d.EndpointID != "", Enabled: d.Enabled, EndpointID: d.EndpointID, OwnerUserID: d.OwnerUserID, Origin: s.origin, Capabilities: caps, Grants: s.config.Store.Grants(), Pending: []ApprovalEvent{}}
+	result := Status{Enrolled: d.EndpointID != "", Enabled: d.Enabled, UnattendedEnabled: d.UnattendedEnabled, FixedRevision: d.FixedRevision, EmergencyKey: d.EmergencyKey, EndpointID: d.EndpointID, OwnerUserID: d.OwnerUserID, Origin: s.origin, Capabilities: caps, Grants: s.config.Store.Grants(), Pending: []ApprovalEvent{}}
 	if e != nil || !caps.Available {
 		result.ErrorCode = "RD_BACKEND_UNAVAILABLE"
 		result.Capabilities.Available = false
@@ -39,6 +45,9 @@ func (s *Service) State(ctx context.Context) Status {
 	}
 	for _, session := range s.pending {
 		if !sessionApprovalExpiry(session).After(time.Now()) {
+			continue
+		}
+		if s.autoApproving[session.SessionID] == session.ConnectionEpoch {
 			continue
 		}
 		grant, err := s.grantFor(session)

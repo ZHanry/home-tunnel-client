@@ -10,6 +10,7 @@ import (
 	"errors"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type diskState struct {
@@ -20,8 +21,13 @@ type diskState struct {
 	InitialTrust      json.RawMessage       `json:"initial_trust"`
 	Keyset            json.RawMessage       `json:"keyset"`
 	Enabled           bool                  `json:"enabled"`
+	UnattendedEnabled bool                  `json:"unattended_enabled"`
 	CapabilityVersion int64                 `json:"capability_version"`
 	Grants            map[string]LocalGrant `json:"grants"`
+	AssistInvites     map[string]time.Time  `json:"assist_invites,omitempty"`
+	FixedRevision     int64                 `json:"fixed_revision,omitempty"`
+	FixedInvites      map[string]time.Time  `json:"fixed_invites,omitempty"`
+	EmergencyKey      string                `json:"emergency_key,omitempty"`
 }
 
 // Store wraps the existing OS credential protection in a separate remote-host
@@ -63,6 +69,15 @@ func openStore(backend protectedBackend) (*Store, error) {
 	}
 	if store.data.Grants == nil {
 		store.data.Grants = map[string]LocalGrant{}
+	}
+	if store.data.AssistInvites == nil {
+		store.data.AssistInvites = map[string]time.Time{}
+	}
+	if store.data.FixedInvites == nil {
+		store.data.FixedInvites = map[string]time.Time{}
+	}
+	if store.data.EmergencyKey == "" {
+		store.data.EmergencyKey = "X"
 	}
 	if store.data.KeyPKCS8 == "" {
 		key, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -145,6 +160,49 @@ func (s *Store) RevokeGrant(id string) error {
 		d.Grants[id] = g
 		return nil
 	})
+}
+func (s *Store) RevokeAssistGrants(inviteID string) error {
+	return s.update(func(d *diskState) error {
+		delete(d.AssistInvites, inviteID)
+		for id, grant := range d.Grants {
+			if grant.AssistInviteID != inviteID || grant.Revoked {
+				continue
+			}
+			grant.Revoked = true
+			grant.Version++
+			d.Grants[id] = grant
+		}
+		return nil
+	})
+}
+func (s *Store) RevokeFixedGrants() error {
+	return s.update(func(d *diskState) error {
+		for id, grant := range d.Grants {
+			if _, fixed := d.FixedInvites[grant.AssistInviteID]; !fixed || grant.Revoked {
+				continue
+			}
+			grant.Revoked = true
+			grant.Version++
+			d.Grants[id] = grant
+		}
+		for id := range d.FixedInvites {
+			delete(d.AssistInvites, id)
+		}
+		clear(d.FixedInvites)
+		d.FixedRevision = 0
+		return nil
+	})
+}
+func revokePersistentGrants(state *diskState) {
+	state.UnattendedEnabled = false
+	for id, grant := range state.Grants {
+		if grant.Mode != "persistent" || grant.Revoked {
+			continue
+		}
+		grant.Revoked = true
+		grant.Version++
+		state.Grants[id] = grant
+	}
 }
 func (s *Store) Grants() []LocalGrant {
 	d := s.snapshot()

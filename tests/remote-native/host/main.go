@@ -8,9 +8,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -37,8 +41,10 @@ type configuration struct {
 	StorePath        string `json:"store_path"`
 	Worker           string `json:"worker"`
 	SHA256           string `json:"sha256"`
+	CAFile           string `json:"ca_file"`
 	InputTargetPID   uint32 `json:"input_target_pid"`
 	FileTestRoot     string `json:"file_test_root"`
+	WebsiteClipboard bool   `json:"website_clipboard"`
 }
 
 type command struct {
@@ -47,6 +53,7 @@ type command struct {
 	TargetID      string `json:"target_id"`
 	ControllerID  string `json:"controller_id"`
 	ControllerJKT string `json:"controller_jkt"`
+	FixedPassword string `json:"fixed_password"`
 }
 
 var outputMu sync.Mutex
@@ -77,25 +84,37 @@ func run() error {
 		return err
 	}
 	origin, err := url.Parse(initial.Origin)
-	if err != nil || origin.Scheme != "http" || origin.Hostname() != "127.0.0.1" || origin.Port() == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" || !filepath.IsAbs(initial.StorePath) {
+	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Hostname() != "127.0.0.1" || origin.Port() == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" || !filepath.IsAbs(initial.StorePath) {
 		return errors.New("fixture must be isolated IPv4 loopback")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	engine, err := remoteengine.New(ctx, remoteengine.Options{ExecutablePath: initial.Worker, ExpectedSHA256: initial.SHA256, InputTargetProcessID: initial.InputTargetPID})
 	if err != nil {
-		emit(map[string]any{"event": "unavailable", "code": "RD_BACKEND_UNAVAILABLE"})
+		stage := "worker_start_ipc"
+		if strings.Contains(err.Error(), "version/ABI") {
+			stage = "worker_start_version"
+		} else if strings.Contains(err.Error(), "SHA256") || strings.Contains(err.Error(), "digest") {
+			stage = "worker_start_integrity"
+		}
+		emit(map[string]any{"event": "unavailable", "code": "RD_BACKEND_UNAVAILABLE", "stage": stage})
 		return err
 	}
 	defer engine.Shutdown()
 	caps, err := engine.Capabilities(ctx)
 	if err != nil || !caps.Available || caps.Status != "ready" || len(caps.Displays) == 0 {
-		emit(map[string]any{"event": "unavailable", "code": "RD_BACKEND_UNAVAILABLE"})
+		emit(map[string]any{"event": "unavailable", "code": "RD_BACKEND_UNAVAILABLE", "stage": "worker_capabilities"})
 		return remotehost.ErrUnavailable
 	}
 	scopes := []string{"view"}
 	if initial.InputTargetPID != 0 {
 		scopes = append(scopes, "input.keyboard", "input.pointer", "input.text")
+	}
+	if initial.WebsiteClipboard {
+		if initial.InputTargetPID == 0 {
+			return errors.New("website clipboard acceptance requires an isolated input target")
+		}
+		scopes = append(scopes, "clipboard.read", "clipboard.write")
 	}
 	if initial.FileTestRoot != "" {
 		if !filepath.IsAbs(initial.FileTestRoot) || filepath.Clean(initial.FileTestRoot) != filepath.Join(filepath.Dir(initial.StorePath), "file-fixture") {
@@ -121,8 +140,25 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	var tlsConfig *tls.Config
+	var httpClient *http.Client
+	if origin.Scheme == "https" {
+		if initial.CAFile != filepath.Join(filepath.Dir(initial.StorePath), "ca.crt") {
+			return errors.New("isolated test CA path is invalid")
+		}
+		certificate, readErr := os.ReadFile(initial.CAFile)
+		if readErr != nil {
+			return readErr
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(certificate) {
+			return errors.New("isolated test CA is invalid")
+		}
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+		httpClient = &http.Client{Timeout: 12 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+	}
 	service, err := remotehost.New(remotehost.Config{
-		Origin: initial.Origin, Store: store, Engine: engine, AllowInsecureLoopback: true,
+		Origin: initial.Origin, Store: store, Engine: engine, HTTPClient: httpClient, TLSConfig: tlsConfig, AllowInsecureLoopback: origin.Scheme == "http",
 		AccountToken: func(context.Context) (string, error) { return initial.AccountToken, nil },
 		InitialTrust: func(_ context.Context, actual string, keys remotehost.Keyset) error {
 			if actual != initial.Origin || keys.ServerInstanceID != initial.ServerInstanceID || keys.ActiveKid != initial.ActiveKid {
@@ -162,12 +198,66 @@ func run() error {
 		}
 	}()
 	go func() {
-		if service.Run(ctx) != nil && ctx.Err() == nil && !expectedWorkerCrash.Load() {
-			emit(map[string]any{"event": "fatal", "code": "RD_NATIVE_HOST_SIGNAL_FAILED"})
+		if runError := service.Run(ctx); runError != nil && ctx.Err() == nil && !expectedWorkerCrash.Load() {
+			code := "RD_NATIVE_HOST_SIGNAL_FAILED"
+			stage := "signal"
+			if strings.HasPrefix(runError.Error(), "server event ") {
+				stage = strings.TrimPrefix(strings.SplitN(runError.Error(), ":", 2)[0], "server event ")
+				for _, reason := range []string{"peer session unavailable", "peer session not started", "peer signature", "peer payload", "peer binding"} {
+					if strings.Contains(runError.Error(), reason) {
+						stage += "/" + strings.ReplaceAll(reason, " ", "_")
+						break
+					}
+				}
+			} else if strings.HasPrefix(runError.Error(), "engine event: ") {
+				stage = "engine_event"
+			}
+			var apiError *remotehost.APIError
+			switch {
+			case errors.As(runError, &apiError):
+				code = apiError.Code
+			case errors.Is(runError, remotehost.ErrAuthorization):
+				code = "RD_AUTHORIZATION_INVALID"
+			case errors.Is(runError, remotehost.ErrUnavailable):
+				code = "RD_BACKEND_UNAVAILABLE"
+			case errors.Is(runError, remotehost.ErrLocalApproval):
+				code = "RD_LOCAL_APPROVAL_REQUIRED"
+			}
+			emit(map[string]any{"event": "fatal", "code": code, "stage": stage, "session_active": service.State(ctx).ActiveSessionID != ""})
 		}
 	}()
+	runDeadline := time.Now().Add(3 * time.Second)
+	for !service.State(ctx).Running && time.Now().Before(runDeadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !service.State(ctx).Running {
+		return errors.New("isolated host signaling did not start")
+	}
 	state := service.State(ctx)
-	emit(map[string]any{"event": "host", "endpoint_id": state.EndpointID, "capabilities": caps})
+	client := httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 12 * time.Second}
+	}
+	endpointRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, initial.Origin+"/api/v1/rd/endpoints/"+url.PathEscape(state.EndpointID), nil)
+	if err != nil {
+		return err
+	}
+	endpointRequest.Header.Set("Authorization", "Bearer "+initial.AccountToken)
+	endpointResponse, err := client.Do(endpointRequest)
+	if err != nil {
+		return err
+	}
+	defer endpointResponse.Body.Close()
+	if endpointResponse.StatusCode != http.StatusOK {
+		return errors.New("isolated host endpoint lookup failed")
+	}
+	var endpoint struct {
+		JKT string `json:"jkt"`
+	}
+	if err = json.NewDecoder(io.LimitReader(endpointResponse.Body, 16384)).Decode(&endpoint); err != nil || len(endpoint.JKT) != 43 {
+		return errors.New("isolated host endpoint fingerprint is invalid")
+	}
+	emit(map[string]any{"event": "host", "endpoint_id": state.EndpointID, "jkt": endpoint.JKT, "capabilities": caps})
 	var controllerID, controllerJKT string
 	for scanner.Scan() {
 		var request command
@@ -177,6 +267,34 @@ func run() error {
 		var operation error
 		details := map[string]any{}
 		switch request.Action {
+		case "create_access_profile":
+			var profile remotehost.AccessProfile
+			profile, operation = service.AccessProfile(ctx, true)
+			if operation == nil {
+				details["profile"] = profile
+			}
+		case "set_fixed_password":
+			var profile remotehost.AccessProfile
+			profile, operation = service.SetFixedPassword(ctx, request.FixedPassword)
+			if operation == nil {
+				details["profile"] = profile
+			}
+		case "list_access_requests":
+			var requests []remotehost.AccessRequest
+			requests, operation = service.ListAccessRequests(ctx)
+			if operation == nil {
+				details["requests"] = requests
+			}
+		case "approve_access_request":
+			operation = service.DecideAccessRequest(ctx, request.TargetID, true)
+		case "create_invite":
+			var invite remotehost.AssistInvite
+			invite, operation = service.CreateAssistInvite(ctx)
+			if operation == nil {
+				details["invite"] = invite
+			}
+		case "revoke_invite":
+			operation = service.RevokeAssistInvite(ctx, request.TargetID)
 		case "file_state", "file_offer", "file_accept", "file_cancel":
 			if initial.FileTestRoot == "" || controllerID == "" {
 				operation = remotehost.ErrLocalApproval
@@ -254,10 +372,12 @@ func run() error {
 			approvalMu.Lock()
 			approval, exists := approvals[request.TargetID]
 			approvalMu.Unlock()
+			details["mode_matches"] = approval.Mode == "one_session"
+			details["not_expired"] = approval.ExpiresAt.After(time.Now())
 			if !exists || controllerID == "" || approval.ControllerEndpointID != controllerID || approval.ControllerThumbprint != controllerJKT || !sameScopes(approval.Permissions, scopes) || approval.Mode != "one_session" || !approval.ExpiresAt.After(time.Now()) {
 				operation = remotehost.ErrLocalApproval
 			} else if request.Action == "approve_pairing" && approval.Kind == "pairing" {
-				operation = service.ApprovePairing(ctx, approval.ID, scopes, "one_session", time.Now().Add(3*time.Minute))
+				operation = service.ApprovePairing(ctx, approval.ID, approval.Permissions, "one_session", time.Now().Add(3*time.Minute))
 			} else if request.Action == "approve_session" && approval.Kind == "session" {
 				operation = service.ApproveSessionExpected(ctx, approval.ID, approval.ConnectionEpoch, approval.StateVersion)
 			} else {
@@ -274,7 +394,19 @@ func run() error {
 			result[key] = value
 		}
 		if operation != nil {
-			result["code"] = "RD_NATIVE_E2E_ACTION_FAILED"
+			code := "RD_NATIVE_E2E_ACTION_FAILED"
+			var apiError *remotehost.APIError
+			switch {
+			case errors.As(operation, &apiError):
+				code = apiError.Code
+			case errors.Is(operation, remotehost.ErrLocalApproval):
+				code = "RD_LOCAL_APPROVAL_REQUIRED"
+			case errors.Is(operation, remotehost.ErrAuthorization):
+				code = "RD_AUTHORIZATION_INVALID"
+			case errors.Is(operation, remotehost.ErrUnavailable):
+				code = "RD_BACKEND_UNAVAILABLE"
+			}
+			result["code"] = code
 		}
 		emit(result)
 	}
@@ -285,12 +417,20 @@ func sameScopes(actual, expected []string) bool {
 	if len(actual) != len(expected) {
 		return false
 	}
-	for index, scope := range expected {
-		if actual[index] != scope {
+	remaining := make(map[string]bool, len(actual))
+	for _, scope := range actual {
+		if remaining[scope] {
 			return false
 		}
+		remaining[scope] = true
 	}
-	return true
+	for _, scope := range expected {
+		if !remaining[scope] {
+			return false
+		}
+		delete(remaining, scope)
+	}
+	return len(remaining) == 0
 }
 
 var user32 = windows.NewLazySystemDLL("user32.dll")

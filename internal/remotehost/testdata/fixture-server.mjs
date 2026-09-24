@@ -46,15 +46,16 @@ const account = await db.transaction(async client => {
 });
 const keys = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const publicJWK = crypto.publicJwk(keys.publicKey.export({ format: 'jwk' }));
+let signingKey = keys, signingJWK = publicJWK, activeAccount = account;
 const signature = (payload, typ, includeJWK = false) => {
-  const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ, ...(includeJWK ? { jwk: publicJWK } : {}) })).toString('base64url');
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ, ...(includeJWK ? { jwk: signingJWK } : {}) })).toString('base64url');
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${header}.${body}.${sign('sha256', Buffer.from(`${header}.${body}`), { key: keys.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
+  return `${header}.${body}.${sign('sha256', Buffer.from(`${header}.${body}`), { key: signingKey.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
 };
 let controller;
 async function request(path, method = 'GET', body, mode = 'dpop', extra = {}) {
   const headers = { ...extra, 'content-type': 'application/json' };
-  if (mode === 'account') headers.authorization = `Bearer ${account.accessToken}`;
+  if (mode === 'account') headers.authorization = `Bearer ${activeAccount.accessToken}`;
   else if (mode === 'dpop') {
     headers.authorization = `DPoP ${controller.token}`;
     headers.dpop = signature({ htu: `${origin}/api/v1/rd${path}`, htm: method, iat: Math.floor(Date.now()/1000), jti: randomUUID(), ath: crypto.digest(controller.token), nonce: controller.dpop_nonce }, 'dpop+jwt', true);
@@ -66,6 +67,20 @@ async function request(path, method = 'GET', body, mode = 'dpop', extra = {}) {
 }
 const challenge = await request('/enrollment-challenges', 'POST', { endpoint_kind: 'browser', role: 'controller', public_jwk: publicJWK }, 'account');
 controller = await request('/endpoints', 'POST', { challenge_id: challenge.challenge_id, signed_proof: signature(challenge.proof_payload, 'ht-rd-proof+jwt'), name: 'Go integration controller', platform: 'browser' }, 'account');
+const primaryController = controller;
+const guestID = randomUUID();
+const guestAccount = await db.transaction(async client => {
+  await client.query("INSERT INTO users(id,username,display_name,password_hash,password_state,role) VALUES(?,?,?,'fixture','normal','user')", [guestID, 'go-rd-guest', 'Go RD guest']);
+  const session = await issueSession(client, { id: guestID, token_version: 1 }, null);
+  await client.query('UPDATE sessions SET rd_verified_at=home_tunnel_now() WHERE id=?', [session.sessionId]);
+  return session;
+});
+const guestKeys = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const guestJWK = crypto.publicJwk(guestKeys.publicKey.export({ format: 'jwk' }));
+activeAccount = guestAccount; signingKey = guestKeys; signingJWK = guestJWK;
+const guestChallenge = await request('/enrollment-challenges', 'POST', { endpoint_kind: 'browser', role: 'controller', public_jwk: guestJWK }, 'account');
+const guestController = await request('/endpoints', 'POST', { challenge_id: guestChallenge.challenge_id, signed_proof: signature(guestChallenge.proof_payload, 'ht-rd-proof+jwt'), name: 'Go cross-account guest', platform: 'browser' }, 'account');
+activeAccount = account; signingKey = keys; signingJWK = publicJWK; controller = primaryController;
 const socket = new WebSocket(`${origin.replace('http:', 'ws:')}/api/v1/rd/signal`, 'ht.rd.signal.v1');
 const messages = [];
 socket.on('message', raw => messages.push(JSON.parse(raw.toString())));
@@ -93,6 +108,13 @@ async function command(input) {
       hostID = input.host_id; requestID = randomUUID();
       pairing = await request('/pairings', 'POST', { host_endpoint_id: hostID, session_request_id: requestID, permissions: ['view', 'input.pointer'], mode: 'one_session', nonce_controller: randomBytes(32).toString('base64url') });
       return { id: pairing.id, request_id: requestID };
+    }
+    case 'assist': {
+      activeAccount = guestAccount; signingKey = guestKeys; signingJWK = guestJWK; controller = guestController;
+      const target = await request('/assist-invites/redeem', 'POST', { device_id: input.device_id, temporary_password: input.temporary_password });
+      hostID = target.host_endpoint_id; requestID = randomUUID();
+      pairing = await request('/pairings', 'POST', { host_endpoint_id: hostID, assist_invite_id: target.invite_id, session_request_id: requestID, permissions: ['view', 'input.pointer'], mode: 'one_session', nonce_controller: randomBytes(32).toString('base64url') });
+      return { id: pairing.id, request_id: requestID, host_id: hostID, invite_id: target.invite_id };
     }
     case 'confirm': {
       pairing = await request(`/pairings/${pairing.id}`);

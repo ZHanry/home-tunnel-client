@@ -114,6 +114,7 @@ type ApprovalEvent struct {
 }
 type LocalGrant struct {
 	ID                   string    `json:"id"`
+	AssistInviteID       string    `json:"assist_invite_id,omitempty"`
 	ControllerEndpointID string    `json:"controller_endpoint_id"`
 	ControllerJKT        string    `json:"controller_jkt"`
 	Permissions          []string  `json:"permissions"`

@@ -2,14 +2,14 @@
   "component": "client",
   "stage": "public-release",
   "api_major": 1,
-  "contract_ref": "api-v1.2.0",
-  "support_policy": "8.0 public release with explicitly limited remote-desktop platform coverage. Existing tunnels retain server 7.0 compatibility. Remote desktop requires negotiated capabilities and a matching verified worker; unsupported platforms/features remain unavailable. Development evidence is separate from final-package and cross-network acceptance. FRP follows its separate upstream version.",
-  "version": "8.0.0",
+  "contract_ref": "api-v1.3.0",
+  "support_policy": "9.0.0 release. Existing tunnels retain server 7.0 compatibility. Three remote access modes require a matching server and verified worker. Fixed-password access covers only a logged-in Windows desktop; lock screen, login screen, UAC secure desktop and system audio remain unsupported or unverified. FRP follows its separate upstream version.",
+  "version": "9.0.0",
   "minimum_server": "7.0.0",
   "tested_combination": {
-    "server": "8.0.0",
-    "client": "8.0.0",
-    "android": "8.0.0",
-    "agent": "8.0.0"
+    "server": "9.0.0",
+    "client": "9.0.0",
+    "android": "9.0.0",
+    "agent": "9.0.0"
   }
 }

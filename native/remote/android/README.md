@@ -28,11 +28,16 @@ The app's existing JNI NDK remains 27.2.12479018. The final shared-library packa
 must also verify 16 KiB ELF segment alignment and the exact exported C symbols.
 
 The shared controller implements PeerConnection signaling, independent native
-ticket/lease/grant verification, all four data channels, mutual identity proofs,
+ticket/lease/grant verification, five data channels including text clipboard, mutual identity proofs,
 direct-UDP statistics checks, Surface presentation and synchronized input. Lease
 deadlines are enforced on every rendered frame and input operation. It reports
 backend availability only when that implementation is linked. The default app
 security-core build continues to report `RD_MEDIA_UNAVAILABLE`.
+
+The clipboard channel is scoped to the signed session and feature acknowledgement.
+Only foreground Android plain text is synchronized; backgrounding disables both
+directions. Rebuild the exact same-source arm64 and emulator SDKs before claiming
+clipboard support in an installable APK.
 
 Artifact metadata keeps `available:false` and `device_media_accepted:false` until
 physical-device acceptance is recorded; `controller_backend_linked:true` records

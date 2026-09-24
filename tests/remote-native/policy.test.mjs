@@ -36,3 +36,18 @@ for (const [name, code, setup] of [
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 }
+for (const [name, args] of [
+  ['working-tree source requires a separate report directory', ['--server-source', 'working-tree']],
+  ['cross-account file fixtures cannot silently request extra consent', ['--mode', 'cross-account-assist', '--files', 'fixture']],
+  ['fixed-password file fixtures cannot silently request extra consent', ['--mode', 'cross-account-fixed', '--files', 'fixture']],
+  ['approved-request file fixtures cannot silently request extra consent', ['--mode', 'cross-account-request', '--files', 'fixture']],
+  ['unknown assistance modes are rejected', ['--mode', 'unlimited-assist']],
+  ['website acceptance requires a private HTTPS fixture', ['--controller', 'website', '--mode', 'same-account']],
+  ['website acceptance cannot silently request file access', ['--controller', 'website', '--files', 'fixture']],
+]) {
+  test(name, { skip: !supported && 'Windows + Node 24 required for this native acceptance preflight' }, () => {
+    const run = spawnSync(process.execPath, [runner, ...args], { windowsHide: true, timeout: 15000, encoding: 'utf8' });
+    assert.equal(run.status, 2);
+    assert.match(run.stderr, /Invalid acceptance mode or server source/);
+  });
+}

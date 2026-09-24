@@ -29,6 +29,7 @@ type Config struct {
 	// InitialTrust must present and approve the locally verified origin/key pin.
 	// Missing callback fails closed; later changes require the old signed key chain.
 	InitialTrust          func(context.Context, string, Keyset) error
+	LocalAdminCheck       func(context.Context) error
 	AllowInsecureLoopback bool
 }
 type APIError struct {
@@ -46,21 +47,27 @@ type onlineToken struct {
 	Nonce     string    `json:"dpop_nonce"`
 }
 type Service struct {
-	config       Config
-	origin       string
-	http         *http.Client
-	key          *ecdsa.PrivateKey
-	tokenMu      sync.Mutex
-	token        onlineToken
-	mu           sync.Mutex
-	engineMu     sync.Mutex
-	capabilityMu sync.Mutex
-	generation   uint64
-	disabled     bool
-	active       *runningSession
-	pending      map[string]Session
-	approvals    chan ApprovalEvent
-	running      bool
+	config            Config
+	origin            string
+	http              *http.Client
+	key               *ecdsa.PrivateKey
+	tokenMu           sync.Mutex
+	token             onlineToken
+	mu                sync.Mutex
+	engineMu          sync.Mutex
+	capabilityMu      sync.Mutex
+	generation        uint64
+	disabled          bool
+	active            *runningSession
+	pending           map[string]Session
+	autoApproving     map[string]int64
+	autoAttempted     map[string]int64
+	assistInvites     map[string]time.Time
+	assistRevoked     map[string]bool
+	autoPairing       map[string]bool
+	autoPairAttempted map[string]bool
+	approvals         chan ApprovalEvent
+	running           bool
 }
 
 func New(config Config) (*Service, error) {
@@ -98,7 +105,20 @@ func New(config Config) (*Service, error) {
 		client.Timeout = 12 * time.Second
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Service{config: config, origin: origin, http: &client, key: key, disabled: !saved.Enabled, pending: map[string]Session{}, approvals: make(chan ApprovalEvent, 8)}, nil
+	assists := map[string]time.Time{}
+	if saved.Enabled {
+		for id, expiry := range saved.AssistInvites {
+			if expiry.After(time.Now()) {
+				assists[id] = expiry
+			}
+		}
+		for id, expiry := range saved.FixedInvites {
+			if saved.FixedRevision > 0 && expiry.After(time.Now()) {
+				assists[id] = expiry
+			}
+		}
+	}
+	return &Service{config: config, origin: origin, http: &client, key: key, disabled: !saved.Enabled, pending: map[string]Session{}, autoApproving: map[string]int64{}, autoAttempted: map[string]int64{}, assistInvites: assists, assistRevoked: map[string]bool{}, autoPairing: map[string]bool{}, autoPairAttempted: map[string]bool{}, approvals: make(chan ApprovalEvent, 8)}, nil
 }
 func (s *Service) Approvals() <-chan ApprovalEvent { return s.approvals }
 
@@ -331,6 +351,8 @@ func (s *Service) Enroll(ctx context.Context, options Enrollment) error {
 		d.InitialTrust = append([]byte(nil), raw...)
 		d.Keyset = append([]byte(nil), raw...)
 		d.Enabled = false
+		revokePersistentGrants(d)
+		clear(d.AssistInvites)
 		return nil
 	}); e != nil {
 		return e
@@ -362,12 +384,15 @@ func (s *Service) RefreshKeys(ctx context.Context) (bool, error) {
 		d.Keyset = raw
 		if changed {
 			d.Enabled = false
+			revokePersistentGrants(d)
+			clear(d.AssistInvites)
 		}
 		return nil
 	})
 	if changed {
 		s.mu.Lock()
 		s.disabled = true
+		clear(s.assistInvites)
 		s.mu.Unlock()
 		_ = s.Stop(ctx, "RD_RESTORE_INVALIDATED")
 		s.tokenMu.Lock()
@@ -380,12 +405,18 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 	s.mu.Lock()
 	if !enabled {
 		s.disabled = true
+		clear(s.assistInvites)
 	}
 	generation := s.generation
 	s.mu.Unlock()
 	if !enabled {
 		session, present, engineError := s.stopLocal(ctx, "RD_HOST_DISABLED")
-		if e := s.config.Store.update(func(d *diskState) error { d.Enabled = false; return nil }); e != nil {
+		if e := s.config.Store.update(func(d *diskState) error {
+			d.Enabled = false
+			revokePersistentGrants(d)
+			clear(d.AssistInvites)
+			return nil
+		}); e != nil {
 			return errors.Join(engineError, e)
 		}
 		// Native shutdown and the durable disable both precede any HTTP wait.
@@ -415,6 +446,7 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 	if d.EndpointID == "" {
 		return ErrLocalApproval
 	}
+	caps.UnattendedEnabled = caps.UnattendedEnabled && d.UnattendedEnabled
 	wire := map[string]any{"permissions": caps.Permissions, "unattended_enabled": caps.UnattendedEnabled, "displays": caps.Displays, "codecs": caps.Codecs, "status": caps.Status}
 	if !enabled {
 		wire = map[string]any{"permissions": []string{"view"}, "unattended_enabled": false, "displays": []Display{}, "codecs": []string{}, "status": "unavailable"}

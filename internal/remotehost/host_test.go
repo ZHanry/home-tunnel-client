@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,20 +44,21 @@ func testStore(t *testing.T) *Store {
 }
 
 type fakeEngine struct {
-	mu        sync.Mutex
-	available bool
-	events    chan EngineEvent
-	started   []StartRequest
-	signals   []json.RawMessage
-	closed    int
-	proofs    [][]byte
+	mu         sync.Mutex
+	available  bool
+	unattended bool
+	events     chan EngineEvent
+	started    []StartRequest
+	signals    []json.RawMessage
+	closed     int
+	proofs     [][]byte
 }
 
 func (e *fakeEngine) Capabilities(context.Context) (Capabilities, error) {
 	if !e.available {
 		return Capabilities{Status: "unavailable"}, ErrUnavailable
 	}
-	return Capabilities{Available: true, Permissions: []string{"view", "input.pointer"}, Displays: []Display{{ID: "display-1", Name: "Fixture", Width: 1920, Height: 1080}}, Codecs: []string{"H264"}, Status: "ready"}, nil
+	return Capabilities{Available: true, Permissions: []string{"view", "input.pointer"}, UnattendedEnabled: e.unattended, Displays: []Display{{ID: "display-1", Name: "Fixture", Width: 1920, Height: 1080}}, Codecs: []string{"H264"}, Status: "ready"}, nil
 }
 func (e *fakeEngine) PrepareSession(context.Context, SessionRef) (PreparedSession, error) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -292,6 +294,237 @@ func TestAuthorityBindsSingleRequestAndCannotWidenScopes(t *testing.T) {
 	r.Session.Permissions = append(r.Session.Permissions, "input.keyboard")
 	if service.checkAuthority(r) == nil {
 		t.Fatal("scope expansion accepted")
+	}
+}
+func TestApprovePairingSignsTranscriptScopeOrder(t *testing.T) {
+	service, _, _ := authorityFixture(t)
+	state := service.config.Store.snapshot()
+	controller := jwk(&newKey(t).PublicKey)
+	expires := time.Now().UTC().Add(2 * time.Minute).Truncate(time.Millisecond)
+	transcript := transcript{
+		Domain: "ht-rd-pairing-v1", Instance: "11111111-1111-4111-8111-111111111111",
+		PairingID: randomID(), HostID: state.EndpointID, ControllerID: randomID(),
+		HostJKT: jwk(&service.key.PublicKey).Thumbprint(), ControllerJKT: controller.Thumbprint(),
+		ControllerNonce: strings.Repeat("a", 43), Scope: []string{"view", "input.pointer"},
+		Mode: "one_session", RequestID: randomID(), ExpiresAt: expires,
+	}
+	raw, err := json.Marshal(transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
+	var signedScope []string
+	service.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
+		if request.Method == http.MethodGet {
+			return fixtureResponse(pairing{ID: transcript.PairingID, State: "pending", ExpiresAt: expires, Transcript: raw}), nil
+		}
+		var body struct {
+			GrantJWS string `json:"grant_jws"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		claims, err := verifyJWS(body.GrantJWS, jwk(&service.key.PublicKey), "ht-rd-grant+jwt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var grantClaims struct {
+			Scope []string `json:"scope"`
+		}
+		if err := json.Unmarshal(claims, &grantClaims); err != nil {
+			t.Fatal(err)
+		}
+		signedScope = grantClaims.Scope
+		return fixtureResponse(nil), nil
+	})
+	if err := service.ApprovePairing(context.Background(), transcript.PairingID, []string{"input.pointer", "view"}, "one_session", time.Now().Add(10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(signedScope, transcript.Scope) {
+		t.Fatalf("grant scope order %v differs from transcript %v", signedScope, transcript.Scope)
+	}
+	grant := service.config.Store.snapshot().Grants[transcript.PairingID]
+	if !slices.Equal(grant.Permissions, transcript.Scope) {
+		t.Fatalf("local grant scope order %v differs from transcript %v", grant.Permissions, transcript.Scope)
+	}
+}
+func TestAssistPairingRequiresHostAndGuestAccountBinding(t *testing.T) {
+	service, _, _ := authorityFixture(t)
+	state := service.config.Store.snapshot()
+	controller := jwk(&newKey(t).PublicKey)
+	expires := time.Now().UTC().Add(2 * time.Minute).Truncate(time.Millisecond)
+	proof := transcript{
+		Domain: "ht-rd-pairing-v1", Instance: "11111111-1111-4111-8111-111111111111",
+		PairingID: randomID(), HostID: state.EndpointID, ControllerID: randomID(),
+		AssistInviteID: randomID(), HostOwnerID: state.OwnerUserID, ControllerOwnerID: randomID(),
+		HostJKT: jwk(&service.key.PublicKey).Thumbprint(), ControllerJKT: controller.Thumbprint(),
+		ControllerNonce: strings.Repeat("a", 43), Scope: []string{"view"},
+		Mode: "one_session", RequestID: randomID(), ExpiresAt: expires,
+	}
+	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
+	service.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
+		raw, err := json.Marshal(proof)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fixtureResponse(pairing{ID: proof.PairingID, State: "pending", ExpiresAt: expires, Transcript: raw}), nil
+	})
+	if _, _, err := service.loadPairing(context.Background(), proof.PairingID); err != nil {
+		t.Fatal(err)
+	}
+	proof.HostOwnerID = randomID()
+	if _, _, err := service.loadPairing(context.Background(), proof.PairingID); err == nil {
+		t.Fatal("foreign host owner accepted")
+	}
+	proof.HostOwnerID = state.OwnerUserID
+	proof.ControllerOwnerID = state.OwnerUserID
+	if _, _, err := service.loadPairing(context.Background(), proof.PairingID); err == nil {
+		t.Fatal("same-account invitation accepted as cross-account assistance")
+	}
+	proof.ControllerOwnerID = randomID()
+	proof.Mode = "persistent"
+	if _, _, err := service.loadPairing(context.Background(), proof.PairingID); err == nil {
+		t.Fatal("persistent cross-account invitation accepted")
+	}
+}
+func TestAssistInviteAutoApprovalIncludesInputAndClipboardButNotFilesOrAudio(t *testing.T) {
+	service, _, _ := authorityFixture(t)
+	state := service.config.Store.snapshot()
+	expires := time.Now().UTC().Add(time.Minute).Truncate(time.Millisecond)
+	request := transcript{
+		Domain: "ht-rd-pairing-v1", Instance: "11111111-1111-4111-8111-111111111111",
+		PairingID: randomID(), HostID: state.EndpointID, ControllerID: randomID(),
+		AssistInviteID: randomID(), HostOwnerID: state.OwnerUserID, ControllerOwnerID: randomID(),
+		HostJKT: jwk(&service.key.PublicKey).Thumbprint(), ControllerJKT: jwk(&newKey(t).PublicKey).Thumbprint(),
+		ControllerNonce: strings.Repeat("a", 43), Scope: []string{"view", "input.pointer"},
+		Mode: "one_session", RequestID: randomID(), ExpiresAt: expires,
+	}
+	service.assistInvites[request.AssistInviteID] = expires
+	if !canAutoApproveAssist(expires, request, time.Now()) {
+		t.Fatal("locally generated assistance did not authorize standard permissions")
+	}
+	for _, permission := range []string{"clipboard.read", "clipboard.write"} {
+		request.Scope = []string{"view", permission}
+		if !canAutoApproveAssist(expires, request, time.Now()) {
+			t.Fatalf("assistance did not authorize %s", permission)
+		}
+	}
+	for _, permission := range []string{"files.send", "audio.system"} {
+		request.Scope = []string{"view", permission}
+		if canAutoApproveAssist(expires, request, time.Now()) {
+			t.Fatalf("assistance silently authorized %s", permission)
+		}
+	}
+	request.Scope = []string{"view", "input.pointer"}
+	if canAutoApproveAssist(time.Now().Add(-time.Second), request, time.Now()) {
+		t.Fatal("expired assistance auto-approved")
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
+	service.http.Transport = fixtureTransport(func(httpRequest *http.Request) (*http.Response, error) {
+		if httpRequest.Method == http.MethodGet {
+			return fixtureResponse(pairing{ID: request.PairingID, State: "pending", ExpiresAt: expires, Transcript: raw}), nil
+		}
+		return fixtureResponse(nil), nil
+	})
+	event, _ := json.Marshal(map[string]any{"v": 1, "type": "pairing.updated", "payload": pairing{ID: request.PairingID, State: "pending"}})
+	if err := service.handleServer(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case approval := <-service.Approvals():
+		if approval.Kind != "pairing_display" || approval.ID != request.PairingID {
+			t.Fatalf("unexpected assistance approval event: %+v", approval)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("locally generated assistance did not auto-approve")
+	}
+	grant := service.config.Store.snapshot().Grants[request.PairingID]
+	if grant.AssistInviteID != request.AssistInviteID || !slices.Equal(grant.Permissions, request.Scope) {
+		t.Fatal("automatic grant lost its invitation or permissions binding")
+	}
+}
+func TestAssistInviteRevocationTombstonesLocalGrant(t *testing.T) {
+	service, running, _ := authorityFixture(t)
+	inviteID := randomID()
+	if err := service.config.Store.update(func(state *diskState) error {
+		grant := state.Grants[running.Grant.ID]
+		grant.AssistInviteID = inviteID
+		state.Grants[grant.ID] = grant
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
+	service.http.Transport = fixtureTransport(func(*http.Request) (*http.Response, error) { return fixtureResponse(nil), nil })
+	if err := service.RevokeAssistInvite(context.Background(), inviteID); err != nil {
+		t.Fatal(err)
+	}
+	grant := service.config.Store.snapshot().Grants[running.Grant.ID]
+	if !grant.Revoked || grant.Version != 2 || !service.assistRevoked[inviteID] {
+		t.Fatal("revoking assistance did not persist its local grant tombstone")
+	}
+}
+func TestOfflineHostCannotIssueAssistancePassword(t *testing.T) {
+	service, _, _ := authorityFixture(t)
+	service.http.Transport = fixtureTransport(func(*http.Request) (*http.Response, error) {
+		t.Fatal("offline host requested a temporary password")
+		return fixtureResponse(nil), nil
+	})
+	if _, err := service.CreateAssistInvite(context.Background()); !errors.Is(err, ErrLocalApproval) {
+		t.Fatalf("offline invitation was not blocked: %v", err)
+	}
+}
+func TestAssistInvitationSurvivesRestartWithoutPersistingPassword(t *testing.T) {
+	service, _, _ := authorityFixture(t)
+	service.running = true
+	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
+	invite := AssistInvite{ID: randomID(), DeviceID: "123456789", TemporaryPassword: "ABcd2345EFgh", ExpiresAt: time.Now().Add(5 * time.Minute)}
+	service.http.Transport = fixtureTransport(func(*http.Request) (*http.Response, error) { return fixtureResponse(invite), nil })
+	created, err := service.CreateAssistInvite(context.Background())
+	if err != nil || created.ID != invite.ID {
+		t.Fatalf("could not create locally authorized invitation: %v", err)
+	}
+	backend := service.config.Store.backend.(*memoryBackend)
+	if bytes.Contains(backend.data, []byte(invite.TemporaryPassword)) {
+		t.Fatal("temporary password was persisted")
+	}
+	restarted, err := New(service.config)
+	if err != nil || !canAutoApproveAssist(restarted.assistInvites[invite.ID], transcript{AssistInviteID: invite.ID, Mode: "one_session", Scope: []string{"view"}}, time.Now()) {
+		t.Fatal("protected invitation did not survive restart")
+	}
+	if err := service.RevokeAssistInvite(context.Background(), invite.ID); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err = New(service.config)
+	if err != nil || !restarted.assistInvites[invite.ID].IsZero() {
+		t.Fatal("revoked invitation survived restart")
+	}
+}
+func TestSupersededInvitationCannotSurviveHostDisable(t *testing.T) {
+	service, _, _ := authorityFixture(t)
+	service.running = true
+	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
+	invite := AssistInvite{ID: randomID(), DeviceID: "123456789", TemporaryPassword: "ABcd2345EFgh", ExpiresAt: time.Now().Add(5 * time.Minute)}
+	revoked := false
+	service.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
+		if request.Method == http.MethodDelete {
+			revoked = true
+			return fixtureResponse(nil), nil
+		}
+		service.mu.Lock()
+		service.generation++
+		service.mu.Unlock()
+		return fixtureResponse(invite), nil
+	})
+	if _, err := service.CreateAssistInvite(context.Background()); !errors.Is(err, ErrLocalApproval) {
+		t.Fatalf("superseded invitation was accepted: %v", err)
+	}
+	if !revoked || !service.config.Store.snapshot().AssistInvites[invite.ID].IsZero() {
+		t.Fatal("superseded invitation was not revoked without local persistence")
 	}
 }
 func TestPeerSigningIsBoundToNativeNonceAndSignedSDP(t *testing.T) {

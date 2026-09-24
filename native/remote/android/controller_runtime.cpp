@@ -29,9 +29,10 @@ namespace ht::rd::android {
 namespace {
 // JNI only signs with AndroidKeyStore and transports these bounded callbacks.
 // All authorization, protocol, path and media decisions remain in this library.
-enum Event : uint32_t { signal_request = 4, proof_request = 5, direct_path = 6, control_message = 7, first_frame = 8 };
+enum Event : uint32_t { signal_request = 4, proof_request = 5, direct_path = 6, control_message = 7, first_frame = 8, clipboard_message = 9 };
 constexpr uint64_t supported = protocol::PERMISSION_VIEW | protocol::PERMISSION_INPUT_KEYBOARD |
-                               protocol::PERMISSION_INPUT_POINTER | protocol::PERMISSION_INPUT_TEXT;
+                               protocol::PERMISSION_INPUT_POINTER | protocol::PERMISSION_INPUT_TEXT |
+                               protocol::PERMISSION_CLIPBOARD_READ | protocol::PERMISSION_CLIPBOARD_WRITE;
 uint64_t steady_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 int64_t wall_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 bool text(const Json::Value& value, std::string_view expected) { return value.isString() && value.asString() == expected; }
@@ -122,10 +123,10 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     for (const auto& codec : runtime().factory->GetRtpReceiverCapabilities(webrtc::MediaType::VIDEO).codecs)
       if (codec.name == "VP8" || codec.name == "rtx") codecs.push_back(codec);
     if (codecs.empty() || !video.value()->SetCodecPreferences(codecs).ok()) return false;
-    const std::array<std::string, 4> labels{"control", "input", "motion", "feedback"};
+    const std::array<std::string, 5> labels{"control", "input", "motion", "feedback", "clipboard"};
     for (unsigned slot = 0; slot < labels.size(); ++slot) {
-      webrtc::DataChannelInit options; options.ordered = slot < 2;
-      if (slot >= 2) options.maxRetransmits = 0;
+      webrtc::DataChannelInit options; options.ordered = slot < 2 || slot == 4;
+      if (slot == 2 || slot == 3) options.maxRetransmits = 0;
       auto channel = peer_->CreateDataChannelOrError(labels[slot], &options);
       if (!channel.ok()) return false;
       auto observer = std::make_unique<ChannelObserver>(*this, slot);
@@ -209,7 +210,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if (closed_) return false;
     UpdateRendering(); return true;
   }
-  void Pause() { if (!closed_) { paused_ = true; ReleaseInput("background"); renderer_.SetAuthorized(false); Emit(HT_RD_EVENT_PAUSED, {}); } }
+  void Pause() { if (!closed_) { paused_ = true; clipboard_read_ = clipboard_write_ = clipboard_read_requested_ = clipboard_write_requested_ = false; ReleaseInput("background"); renderer_.SetAuthorized(false); Emit(HT_RD_EVENT_PAUSED, {}); } }
   void Close(std::string_view reason) {
     if (closed_ || closing_) return; closing_ = true;
     ReleaseInput("closed"); closed_ = true; renderer_.Close();
@@ -222,7 +223,8 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   bool Submit(std::span<const uint8_t> bytes) {
     if (!Live() || !ready_ || !local_path_ || !remote_path_ || !identity_->authenticated() || paused_ || bytes.size() < 24) return false;
     const auto rule = std::find_if(protocol::MESSAGE_RULES.begin(), protocol::MESSAGE_RULES.end(), [&](const auto& item) { return item.type == bytes[3]; });
-    if (rule == protocol::MESSAGE_RULES.end() || rule->channel > 3) return false;
+    if (rule == protocol::MESSAGE_RULES.end() || rule->channel > 4) return false;
+    if (rule->channel == 4 && (!channels_.contains(4) || channels_.at(4).first->state() != webrtc::DataChannelInterface::kOpen)) return false;
     Frame frame;
     if (parse_frame(bytes, static_cast<Channel>(rule->channel), identity_->epoch(), frame) != FrameError::ok || frame.sequence <= submitted_[rule->channel]) return false;
     submitted_[rule->channel] = frame.sequence;
@@ -243,9 +245,22 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
         if (input_request_.empty() || !text(body["request_id"], input_request_) || !number(body["generation"], input_epoch_) ||
             !body["keys"].isArray() || !body["keys"].empty() || !number(body["buttons"], 0) || !number(body["motion_sequence"], 0) || steady_ms() >= input_deadline_) return false;
         state_sent_ = true;
+      } else if (frame.type == protocol::FEATURE_REQUEST) {
+        if (!body.isObject() || body.size() != 2 || !body["permission"].isString() || !body["enabled"].isBool() ||
+            (body["permission"].asString() != "clipboard.read" && body["permission"].asString() != "clipboard.write")) return false;
+        const auto permission = body["permission"].asString();
+        const auto bit = permission == "clipboard.read" ? protocol::PERMISSION_CLIPBOARD_READ : protocol::PERMISSION_CLIPBOARD_WRITE;
+        if (!(identity_->expected().permission_ceiling & bit)) return false;
+        if (permission == "clipboard.read") { clipboard_read_ = false; clipboard_read_requested_ = body["enabled"].asBool(); }
+        else { clipboard_write_ = false; clipboard_write_requested_ = body["enabled"].asBool(); }
       } else if (frame.type == protocol::RELEASE_ALL || frame.type == protocol::CONTROL_RELEASED) { ReleaseInput("controller_released"); return true; }
       else return false;
       Send(frame.type, body); return !closed_;
+    }
+    if (rule->channel == 4) {
+      const bool allowed = frame.type == protocol::CLIPBOARD_OFFER || frame.type == protocol::CLIPBOARD_CHUNK ? clipboard_write_ : clipboard_read_;
+      if (!allowed) return false;
+      SendBinary(4, frame.type, frame.payload, 0); return !closed_;
     }
     if (!input_enabled_ || !surface_ || frame.input_epoch != input_epoch_) return false;
     uint64_t permission = 0;
@@ -278,12 +293,18 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     }
   }
   void Receive(unsigned slot, const webrtc::DataBuffer& message) {
-    if (!Live() || !message.binary || slot > 3) { Close("RD_PROTOCOL_MISMATCH"); return; }
+    if (!Live() || !message.binary || slot > 4) { Close("RD_PROTOCOL_MISMATCH"); return; }
     Frame frame; const auto bytes = std::span(message.data.cdata<uint8_t>(), message.data.size());
     if (parse_frame(bytes, static_cast<Channel>(slot), identity_->epoch(), frame) != FrameError::ok) { Close("RD_PROTOCOL_MISMATCH"); return; }
     if (frame.sequence <= received_[slot]) return;
-    if (slot < 2 && frame.sequence != received_[slot] + 1) { Close("RD_PROTOCOL_MISMATCH"); return; }
+    if ((slot < 2 || slot == 4) && frame.sequence != received_[slot] + 1) { Close("RD_PROTOCOL_MISMATCH"); return; }
     received_[slot] = frame.sequence;
+    if (slot == 4) {
+      if (!ready_ || !identity_->authenticated() || !local_path_ || !remote_path_) { Close("RD_PEER_IDENTITY_MISMATCH"); return; }
+      const bool allowed = frame.type == protocol::CLIPBOARD_OFFER || frame.type == protocol::CLIPBOARD_CHUNK ? clipboard_read_ : clipboard_write_;
+      if (allowed && !paused_) EmitClipboard(bytes);
+      return;
+    }
     if (frame.type == protocol::TEXT_ACK) {
       if (!identity_->authenticated() || !local_path_ || !remote_path_) { Close("RD_PEER_IDENTITY_MISMATCH"); return; }
       const auto id = auth::base64url(frame.payload.first(16));
@@ -316,6 +337,19 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
       ResetInput(); Control(frame.type, body); return;
     }
     if (!remote_path_) { Close("RD_PATH_REJECTED"); return; }
+    if (frame.type == protocol::FEATURE_STATE) {
+      if (!ready_ || !body.isObject() || !body["permission"].isString() || !body["enabled"].isBool() ||
+          body.size() != (body.isMember("error_code") ? 3u : 2u) ||
+          (body.isMember("error_code") && (!body["error_code"].isString() || body["enabled"].asBool()))) { Close("RD_PROTOCOL_MISMATCH"); return; }
+      const auto permission = body["permission"].asString();
+      if (permission != "clipboard.read" && permission != "clipboard.write") { Close("RD_SCOPE_DENIED"); return; }
+      const auto bit = permission == "clipboard.read" ? protocol::PERMISSION_CLIPBOARD_READ : protocol::PERMISSION_CLIPBOARD_WRITE;
+      if (!(identity_->expected().permission_ceiling & bit)) { Close("RD_SCOPE_DENIED"); return; }
+      if (body["enabled"].asBool() && !(permission == "clipboard.read" ? clipboard_read_requested_ : clipboard_write_requested_)) { Close("RD_STATE_CONFLICT"); return; }
+      if (permission == "clipboard.read") clipboard_read_ = body["enabled"].asBool();
+      else clipboard_write_ = body["enabled"].asBool();
+      Control(frame.type, body); return;
+    }
     if (frame.type == protocol::CAPABILITIES) {
       if (capabilities_ || body["permissions"] != identity_->permissions() || !body["codecs"].isArray() || std::find(body["codecs"].begin(), body["codecs"].end(), Json::Value("VP8")) == body["codecs"].end()) { Close("RD_SCOPE_DENIED"); return; }
       capabilities_ = true; Json::Value ack; ack["capability_hash"] = auth::base64url(auth::digest(PeerIdentity::json(body))); ack["permissions"] = identity_->permissions(); Send(protocol::CAPABILITIES_ACK, ack); return;
@@ -399,6 +433,11 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     const ht_rd_event_v1 event{sizeof(event), HT_RD_ABI_V1, type, 0, ++event_generation_, reinterpret_cast<const uint8_t*>(payload.data()), payload.size()};
     callbacks_.on_event(callbacks_.user_data, &event);
   }
+  void EmitClipboard(std::span<const uint8_t> bytes) {
+    if (!callbacks_.on_event || bytes.size() > protocol::CHANNEL_LIMITS[4]) return;
+    const ht_rd_event_v1 event{sizeof(event), HT_RD_ABI_V1, clipboard_message, 0, ++event_generation_, bytes.data(), bytes.size()};
+    callbacks_.on_event(callbacks_.user_data, &event);
+  }
   void Outgoing(std::string_view type, const Json::Value& payload) { Json::Value body; body["signal_type"] = std::string(type); body["payload"] = payload; Emit(signal_request, body); }
   void Control(uint8_t type, const Json::Value& payload) { Json::Value body; body["type"] = type; body["epoch"] = identity_->epoch(); body["payload"] = payload; Emit(control_message, body); }
   bool ApplyCandidates() {
@@ -466,7 +505,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   SurfaceRenderer renderer_;
   SurfaceLifecycle surface_lifecycle_;
   std::map<unsigned,std::pair<webrtc::scoped_refptr<webrtc::DataChannelInterface>,std::unique_ptr<ChannelObserver>>> channels_;
-  std::array<uint32_t,4> sent_{},received_{},submitted_{};
+  std::array<uint32_t,5> sent_{},received_{},submitted_{};
   std::vector<Json::Value> local_candidates_,remote_candidates_;
   std::set<uint16_t> display_slots_;
   std::set<uint16_t> held_keys_;
@@ -477,7 +516,8 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   std::string proof_request_,input_request_,selected_pair_,local_type_,remote_type_;
   bool closed_=false,closing_=false,paused_=false,surface_=false,offer_signed_=false,remote_pending_=false,remote_description_=false;
   bool hello_sent_=false,ready_=false,local_path_=false,remote_path_=false,path_reported_=false,capabilities_=false;
-  bool input_enabled_=false,state_sent_=false,stats_pending_=false;
+  bool input_enabled_=false,state_sent_=false,stats_pending_=false,clipboard_read_=false,clipboard_write_=false;
+  bool clipboard_read_requested_=false,clipboard_write_requested_=false;
 };
 void ChannelObserver::OnStateChange() { owner_.State(slot_); }
 void ChannelObserver::OnMessage(const webrtc::DataBuffer& message) { owner_.Receive(slot_,message); }

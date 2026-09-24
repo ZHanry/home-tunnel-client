@@ -1,10 +1,8 @@
-# API v1.2.0
+# API v1.3.0
 
-Vendored from `ZHanry/home-tunnel-server`, immutable tag `api-v1.2.0`,
-commit `4319f8d0cf2c6dcad0cc06d322e8a55ac83edf50`. The remote annotated tag was
-resolved to that checked main commit before import. `lock.json` records the
-source revision and every actual SHA-256. Run `python scripts/check-repository.py`
-after changes.
+Vendored from the immutable `ZHanry/home-tunnel-server` tag `api-v1.3.0`.
+`lock.json` records the reviewed source revision and SHA-256 values; run
+`python scripts/check-repository.py` after changes.
 
 `openapi.v1.json` describes REST requests and responses, `api.schema.json` provides
 JSON Schema 2020-12 types, and the unchanged `home-tunnel.v1.json` describes sync

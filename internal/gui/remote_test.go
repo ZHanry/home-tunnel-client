@@ -100,6 +100,11 @@ func TestRemoteErrorsDoNotReflectArbitraryServerContent(t *testing.T) {
 	if safeRemoteCode(remotehost.ErrUnavailable) != "RD_BACKEND_UNAVAILABLE" {
 		t.Fatal("known code lost")
 	}
+	for source, expected := range map[string]string{"MFA_REQUIRED": "RD_MFA_REQUIRED", "MFA_INVALID": "RD_MFA_INVALID"} {
+		if got := safeRemoteCode(&remotehost.APIError{Status: 401, Code: source}); got != expected {
+			t.Fatalf("MFA challenge lost: got %s, want %s", got, expected)
+		}
+	}
 }
 
 func TestRemoteTrustPinChangesWithServerIdentityAndKeyVersion(t *testing.T) {

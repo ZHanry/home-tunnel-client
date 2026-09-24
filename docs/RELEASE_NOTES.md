@@ -1,5 +1,22 @@
 # Home Tunnel 8.0.0
 
+# Home Tunnel Client 9.0.0
+
+The desktop uses sidebar navigation for tunnels and remote desktop, with a
+separate remote-control window. The host supports requests that require local
+approval, a reusable fixed password for the signed-in Windows desktop, and a
+single-use temporary password. Pairing, signed authority, leases and direct UDP
+verification remain required. The managed Agent and GUI identify as 9.0.0;
+upstream FRP retains its independent version.
+
+The release does not add a privileged Windows service. Lock screen, pre-login
+and UAC secure-desktop capture/input are not supported. System audio and full
+clipboard interoperability are unavailable or unverified. Windows executables
+are unsigned unless their attached artifact evidence says otherwise. Consult
+the exact-package native acceptance report before using remote control.
+
+## Previous release: 8.0.0
+
 This is the 8.0.0 public release with the platform limits listed below. The existing
 7.0 API contract and tunnel behavior remain supported; the managed Agent version
 is 8.0.0 and upstream FRP remains 0.70.1.

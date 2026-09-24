@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strconv"
@@ -168,7 +169,12 @@ func (s *Service) Run(ctx context.Context) error {
 					return ErrAuthorization
 				}
 				if e = s.handleServer(ctx, raw); e != nil {
-					return e
+					eventKind := "other"
+					switch header.Type {
+					case "peer.offer", "peer.answer", "peer.candidates", "peer.candidates_done", "session.authorized", "session.state", "session.lease_updated", "pairing.updated":
+						eventKind = header.Type
+					}
+					return fmt.Errorf("server event %s: %w", eventKind, e)
 				}
 			}
 		case event, open := <-s.config.Engine.Events():
@@ -179,7 +185,7 @@ func (s *Service) Run(ctx context.Context) error {
 				return ErrAuthorization
 			}
 			if e = s.handleEngine(ctx, event, send); e != nil {
-				return e
+				return fmt.Errorf("engine event: %w", e)
 			}
 		case <-heartbeat.C:
 			if authenticated {

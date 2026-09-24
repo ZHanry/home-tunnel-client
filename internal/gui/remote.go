@@ -33,6 +33,11 @@ type localRemoteHost struct {
 	token, trustPin, lastError string
 	running                    bool
 	pending                    map[string]remotehost.ApprovalEvent
+	invites                    []remotehost.AssistInvite
+	invitesAt                  time.Time
+	accessProfile              remotehost.AccessProfile
+	accessRequests             []remotehost.AccessRequest
+	accessAt                   time.Time
 }
 
 func remoteIdentity(state model.State) string {
@@ -97,12 +102,19 @@ func (server *Server) localRemote(ctx context.Context) (*localRemoteHost, model.
 			}
 			return nil
 		},
+		LocalAdminCheck: remotehost.RequireElevatedAdmin,
 	})
 	if err != nil {
 		cancel()
 		return nil, state, err
 	}
 	server.remoteHost = host
+	server.mu.Lock()
+	setHotkey := server.setEmergencyHotkey
+	server.mu.Unlock()
+	if setHotkey != nil {
+		_ = setHotkey(host.service.State(ctx).EmergencyKey)
+	}
 	go func() {
 		for {
 			select {
@@ -176,7 +188,31 @@ func (server *Server) stopRemote(disable bool) {
 	host.token = ""
 	host.trustPin = ""
 	clear(host.pending)
+	host.invites = nil
+	host.invitesAt = time.Time{}
 	host.mu.Unlock()
+}
+
+func (server *Server) SetEmergencyHotkey(set func(string) error) {
+	server.mu.Lock()
+	server.setEmergencyHotkey = set
+	server.mu.Unlock()
+}
+
+func (server *Server) EmergencyStopRemote() {
+	server.remoteMu.Lock()
+	host := server.remoteHost
+	server.remoteMu.Unlock()
+	if host == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := host.service.SetEnabled(ctx, false); err != nil {
+		host.mu.Lock()
+		host.lastError = safeRemoteCode(err)
+		host.mu.Unlock()
+	}
 }
 
 func safeRemoteCode(err error) string {
@@ -192,8 +228,16 @@ func safeRemoteCode(err error) string {
 		return true
 	}
 	var apiErr *remotehost.APIError
-	if errors.As(err, &apiErr) && valid(apiErr.Code) {
-		return apiErr.Code
+	if errors.As(err, &apiErr) {
+		switch apiErr.Code {
+		case "MFA_REQUIRED":
+			return "RD_MFA_REQUIRED"
+		case "MFA_INVALID":
+			return "RD_MFA_INVALID"
+		}
+		if valid(apiErr.Code) {
+			return apiErr.Code
+		}
 	}
 	var accountErr *api.Error
 	if errors.As(err, &accountErr) {
@@ -244,6 +288,35 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	status := host.service.State(ctx)
+	host.mu.Lock()
+	status.Invites = append([]remotehost.AssistInvite(nil), host.invites...)
+	refreshInvites := status.Enrolled && status.Enabled && time.Since(host.invitesAt) > 30*time.Second
+	status.AccessProfile = host.accessProfile
+	status.AccessRequests = append([]remotehost.AccessRequest(nil), host.accessRequests...)
+	refreshAccess := status.Enrolled && status.Enabled && time.Since(host.accessAt) > 5*time.Second
+	host.mu.Unlock()
+	if refreshInvites {
+		if invites, listErr := host.service.ListAssistInvites(ctx); listErr == nil {
+			host.mu.Lock()
+			host.invites = invites
+			host.invitesAt = time.Now()
+			status.Invites = append([]remotehost.AssistInvite(nil), invites...)
+			host.mu.Unlock()
+		}
+	}
+	if refreshAccess {
+		profile, profileErr := host.service.AccessProfile(ctx, false)
+		requests, requestErr := host.service.ListAccessRequests(ctx)
+		if profileErr == nil && requestErr == nil {
+			host.mu.Lock()
+			host.accessProfile = profile
+			host.accessRequests = requests
+			host.accessAt = time.Now()
+			status.AccessProfile = profile
+			status.AccessRequests = append([]remotehost.AccessRequest(nil), requests...)
+			host.mu.Unlock()
+		}
+	}
 	for i := range status.Grants {
 		status.Grants[i].GrantJWS = ""
 	}
@@ -304,6 +377,8 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 		Kind            string   `json:"kind"`
 		Mode            string   `json:"mode"`
 		Permissions     []string `json:"permissions"`
+		FixedPassword   string   `json:"fixed_password"`
+		EmergencyKey    string   `json:"emergency_key"`
 		ConnectionEpoch int64    `json:"connection_epoch"`
 		StateVersion    int64    `json:"state_version"`
 	}
@@ -320,6 +395,8 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 	defer cancel()
 	unregister := context.AfterFunc(request.Context(), cancel)
 	defer unregister()
+	var invite *remotehost.AssistInvite
+	var profile *remotehost.AccessProfile
 	// Emergency controls never queue behind enrollment's network requests.
 	if body.Action == "stop" {
 		err = host.service.Stop(ctx, "RD_LOCAL_STOP")
@@ -378,10 +455,18 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 			if err == nil {
 				host.start()
 			}
+		case "enable_unattended":
+			err = host.service.SetUnattendedEnabled(ctx, true)
+		case "disable_unattended":
+			err = host.service.SetUnattendedEnabled(ctx, false)
 		case "approve", "reject":
 			if body.Kind == "pairing" {
 				if body.Action == "approve" {
-					err = host.service.ApprovePairing(ctx, body.ID, body.Permissions, body.Mode, time.Now().Add(10*time.Minute))
+					expires := time.Now().Add(10 * time.Minute)
+					if body.Mode == "persistent" {
+						expires = time.Now().Add(30 * 24 * time.Hour)
+					}
+					err = host.service.ApprovePairing(ctx, body.ID, body.Permissions, body.Mode, expires)
 				} else {
 					err = host.service.RejectPairing(ctx, body.ID)
 				}
@@ -403,12 +488,68 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 			}
 		case "revoke":
 			err = host.service.RevokeGrant(ctx, body.ID)
+		case "create_invite":
+			created, createErr := host.service.CreateAssistInvite(ctx)
+			err = createErr
+			if err == nil {
+				invite = &created
+			}
+		case "revoke_invite":
+			err = host.service.RevokeAssistInvite(ctx, body.ID)
+		case "create_access_profile":
+			created, profileErr := host.service.AccessProfile(ctx, true)
+			err, profile = profileErr, &created
+		case "set_fixed_password":
+			created, profileErr := host.service.SetFixedPassword(ctx, body.FixedPassword)
+			err, profile = profileErr, &created
+		case "disable_fixed_password":
+			err = host.service.DisableFixedPassword(ctx)
+		case "approve_access_request", "reject_access_request":
+			err = host.service.DecideAccessRequest(ctx, body.ID, body.Action == "approve_access_request")
+		case "set_emergency_hotkey":
+			if !remotehost.ValidEmergencyKey(body.EmergencyKey) {
+				err = remotehost.ErrLocalApproval
+				break
+			}
+			server.mu.Lock()
+			setHotkey := server.setEmergencyHotkey
+			server.mu.Unlock()
+			if setHotkey == nil {
+				err = remotehost.ErrUnavailable
+				break
+			}
+			previous := host.service.State(ctx).EmergencyKey
+			if err = setHotkey(body.EmergencyKey); err == nil {
+				err = host.service.SetEmergencyKey(body.EmergencyKey)
+				if err != nil {
+					_ = setHotkey(previous)
+				}
+			}
 		default:
 			err = errors.New("RD_ACTION_INVALID")
 		}
 	}
 	if err != nil {
 		remoteError(writer, err)
+		return
+	}
+	if body.Action == "create_invite" || body.Action == "revoke_invite" || body.Action == "disable" || body.Action == "create_access_profile" || body.Action == "set_fixed_password" || body.Action == "disable_fixed_password" || body.Action == "approve_access_request" || body.Action == "reject_access_request" {
+		host.mu.Lock()
+		host.invitesAt = time.Time{}
+		host.accessAt = time.Time{}
+		if body.Action == "disable" {
+			host.invites = nil
+		}
+		host.mu.Unlock()
+	}
+	if invite != nil {
+		writer.Header().Set("cache-control", "no-store")
+		writeJSON(writer, invite)
+		return
+	}
+	if profile != nil {
+		writer.Header().Set("cache-control", "no-store")
+		writeJSON(writer, profile)
 		return
 	}
 	writeJSON(writer, map[string]bool{"ok": true})

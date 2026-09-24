@@ -96,6 +96,10 @@ func main() {
 	server.SetQuit(stop)
 	host := &desktop.Host{}
 	server.SetShow(host.Show)
+	server.SetOpenRemote(host.OpenRemote)
+	server.SetCloseRemote(host.CloseRemote)
+	host.SetEmergencyStop(server.EmergencyStopRemote)
+	server.SetEmergencyHotkey(host.SetEmergencyHotkey)
 	if state, err := (statepkg.Store{Path: statePath}).Load(); err == nil && state.Enrolled() {
 		server.StartAgent(ctx)
 	}

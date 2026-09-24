@@ -306,12 +306,20 @@ type itemList[T any] struct {
 }
 
 func (client *Client) ListDevices(ctx context.Context) ([]model.Device, error) {
+	return client.listDevices(ctx, "client/devices")
+}
+
+func (client *Client) ListRemoteDevices(ctx context.Context) ([]model.Device, error) {
+	return client.listDevices(ctx, "client/remote-devices")
+}
+
+func (client *Client) listDevices(ctx context.Context, path string) ([]model.Device, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	var items []model.Device
 	for page := 1; page <= 100; page++ {
 		var payload itemList[model.Device]
-		if err := client.authJSON(ctx, http.MethodGet, fmt.Sprintf("client/devices?page=%d&page_size=100", page), nil, &payload); err != nil {
+		if err := client.authJSON(ctx, http.MethodGet, fmt.Sprintf("%s?page=%d&page_size=100", path, page), nil, &payload); err != nil {
 			return nil, err
 		}
 		items = append(items, payload.Items...)

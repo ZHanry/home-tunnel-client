@@ -204,6 +204,31 @@ func TestForeignSessionCloseDoesNotStopActiveHost(t *testing.T) {
 		t.Fatal("another session closed active capture")
 	}
 }
+func TestPeerSignalsWaitForAutomaticSessionStartup(t *testing.T) {
+	service, running := approvalFixture(t)
+	service.active = running
+	message := json.RawMessage(`{"v":1,"type":"peer.offer"}`)
+	if err := service.incomingPeer(context.Background(), message, "peer.offer", running.Session.SessionID, running.Session.ConnectionEpoch, "signed-offer"); err != nil {
+		t.Fatal(err)
+	}
+	message[0] = '['
+	if len(running.PeerQueue) != 1 || running.PeerQueue[0].raw[0] != '{' {
+		t.Fatal("early peer signal was not buffered independently")
+	}
+	running.Started = true
+	running.PeerFlushing = true
+	if err := service.incomingPeer(context.Background(), json.RawMessage(`{}`), "peer.candidates", running.Session.SessionID, running.Session.ConnectionEpoch, "signed-candidates"); err != nil || len(running.PeerQueue) != 2 {
+		t.Fatal("signals arriving during replay must remain ordered", err)
+	}
+	for len(running.PeerQueue) < 32 {
+		if err := service.incomingPeer(context.Background(), json.RawMessage(`{}`), "peer.candidates", running.Session.SessionID, running.Session.ConnectionEpoch, "signed-candidates"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.incomingPeer(context.Background(), json.RawMessage(`{}`), "peer.candidates", running.Session.SessionID, running.Session.ConnectionEpoch, "signed-candidates"); !errors.Is(err, ErrAuthorization) {
+		t.Fatal("unverified peer queue exceeded its bound")
+	}
+}
 func TestVisibleApprovalIsBoundToEpochAndRevision(t *testing.T) {
 	s, r := approvalFixture(t)
 	s.http.Transport = fixtureTransport(func(*http.Request) (*http.Response, error) { return fixtureResponse(r.Session), nil })
@@ -220,6 +245,61 @@ func TestVisibleApprovalIsBoundToEpochAndRevision(t *testing.T) {
 	status := s.State(context.Background())
 	if len(status.Pending) != 1 || status.Pending[0].ControllerThumbprint != r.Grant.ControllerJKT || status.Pending[0].Mode != r.Grant.Mode || status.Pending[0].ConnectionEpoch != r.Session.ConnectionEpoch || status.Pending[0].StateVersion != r.Session.StateVersion {
 		t.Fatal("approval UI lost authenticated context")
+	}
+}
+func TestOneSessionGrantAutoApprovalFallsBackToLocalDecision(t *testing.T) {
+	s, running := approvalFixture(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	s.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
+		if request.Method == http.MethodGet && strings.Contains(request.URL.Path, "/sessions/") {
+			close(entered)
+			<-release
+			return fixtureResponse(map[string]any{"error_code": "RD_NOT_FOUND"}), nil
+		}
+		return fixtureResponse(nil), nil
+	})
+	raw, _ := json.Marshal(map[string]any{"v": 1, "type": "session.request", "session_id": running.Session.SessionID, "connection_epoch": running.Session.ConnectionEpoch, "payload": running.Session})
+	if err := s.handleServer(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("automatic approval did not start")
+	}
+	if len(s.State(context.Background()).Pending) != 0 {
+		t.Fatal("automatic approval appeared as another confirmation")
+	}
+	close(release)
+	select {
+	case event := <-s.Approvals():
+		if event.Kind != "session" || event.ID != running.Session.SessionID {
+			t.Fatalf("unexpected fallback event: %+v", event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed automatic approval did not offer a local fallback")
+	}
+}
+
+func TestAutoApprovalIsLimitedToOriginalOneSessionGrant(t *testing.T) {
+	grant := LocalGrant{Mode: "one_session", OneSessionRequestID: "request", ControllerEndpointID: "controller", Permissions: []string{"view"}, ExpiresAt: time.Now().Add(time.Minute)}
+	session := Session{SessionRef: SessionRef{SessionID: "session"}, SessionRequestID: "request", ControllerEndpointID: "controller", Permissions: []string{"view"}}
+	if !canAutoApprove(grant, session, false) {
+		t.Fatal("locally approved one-session grant was not reusable for its request")
+	}
+	grant.SessionID = "another-session"
+	if canAutoApprove(grant, session, false) {
+		t.Fatal("consumed grant approved another session")
+	}
+	grant.SessionID = session.SessionID
+	grant.Mode = "persistent"
+	if canAutoApprove(grant, session, false) {
+		t.Fatal("persistent grant bypassed explicit unattended setup")
+	}
+	grant.Mode = "one_session"
+	grant.Revoked = true
+	if canAutoApprove(grant, session, false) {
+		t.Fatal("revoked grant approved a session")
 	}
 }
 func TestSTUNURLsForbidRelayCredentialsAndUnboundedPorts(t *testing.T) {

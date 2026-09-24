@@ -79,6 +79,10 @@ void ht_window_quit(void) {
 }
 */
 import "C"
+
+func openNativeRemoteWindow(string) error { return ErrRemoteWindowUnavailable }
+
+func closeNativeRemoteWindow() {}
 import "unsafe"
 
 func createNativeWindow(url string) error {

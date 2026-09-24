@@ -1,16 +1,25 @@
 import { RemoteApi, boundedResponse } from '/modules/remote/http.js';
 import { RemoteSignal } from '/modules/remote/signal.js';
 import { RemoteSession, selectedUdpPair } from '/modules/remote/session.js';
-import { base64url, sha256, signJws } from '/modules/remote/identity.js';
+import { base64url, sha256, signJws, thumbprint } from '/modules/remote/identity.js';
 import { canonicalJson, decodeFrame, encodeFrame, TYPES } from '/modules/remote/protocol.js';
 import { RemoteInput } from '/modules/remote/input.js';
 import { RemoteTransfers } from '/modules/remote/transfer.js';
 
-let api, signal, session, host, pairing, requestID, nonce, input, savedHeartbeat, transfers, pending = [], permissions = ['view'];
+let api, signal, session, host, assistInviteID, pairing, requestID, nonce, input, savedHeartbeat, transfers, pending = [], permissions = ['view'];
 const fileState = { offers: [], progress: [], received: [] };
 const video = document.querySelector('video');
 const state = { phases: [], failures: [], input_releases: [], frames: 0 };
 const fail = error => { state.failures.push(error?.code ?? 'RD_NATIVE_E2E_BROWSER_FAILED'); session?.fail(error); };
+async function acceptCrossAccountTarget(target) {
+  if (!target.invite_id || !target.host_endpoint_id || !target.host_owner_user_id || target.host_owner_user_id === api.userId ||
+      target.host_jkt !== await thumbprint(target.host_public_jwk) || target.capabilities?.status !== 'ready' ||
+      !target.capabilities.displays?.length) throw new Error('RD_PROOF_INVALID');
+  assistInviteID = target.invite_id;
+  host = { id: target.host_endpoint_id, owner_user_id: target.host_owner_user_id, jkt: target.host_jkt,
+    capabilities: target.capabilities, online: true, local_enabled: true };
+  return { host_id: host.id, invite_id: assistInviteID };
+}
 function frame(_time, metadata) {
   state.frames++;
   state.width = metadata.width; state.height = metadata.height;
@@ -63,16 +72,39 @@ window.nativeE2E = {
     host = result.items.find(item => item.id === hostID);
     return !!(host?.online && host.local_enabled && host.capabilities?.status === 'ready');
   },
+  async redeemAssist({ device_id, temporary_password }) {
+    const target = await api.request('/api/v1/rd/assist-invites/redeem', { method: 'POST', body: { device_id, temporary_password } });
+    return acceptCrossAccountTarget(target);
+  },
+  async redeemFixed({ device_id, password }) {
+    const target = await api.request('/api/v1/rd/access/fixed/redeem', { method: 'POST', body: { device_id, password } });
+    return acceptCrossAccountTarget(target);
+  },
+  async createAccessRequest(device_id) {
+    const request = await api.request('/api/v1/rd/access/requests', { method: 'POST', body: { device_id } });
+    return { id: request.id, expires_at: request.expires_at };
+  },
+  async awaitAccessRequest({ id, expires_at }) {
+    while (Date.now() < Date.parse(expires_at)) {
+      const result = await api.request(`/api/v1/rd/access/requests/${id}`);
+      if (result.state === 'approved') return acceptCrossAccountTarget(result.target);
+      if (result.state !== 'pending') throw new Error('RD_ACCESS_REJECTED');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    throw new Error('RD_ACCESS_EXPIRED');
+  },
   async pair() {
     if (!host?.capabilities?.displays?.length) throw new Error('RD_CAPTURE_UNAVAILABLE');
     requestID = crypto.randomUUID(); nonce = base64url(crypto.getRandomValues(new Uint8Array(32)));
-    pairing = await api.request('/api/v1/rd/pairings', { method: 'POST', body: { host_endpoint_id: host.id, session_request_id: requestID, permissions, mode: 'one_session', nonce_controller: nonce } });
+    pairing = await api.request('/api/v1/rd/pairings', { method: 'POST', body: { host_endpoint_id: host.id, session_request_id: requestID, permissions, mode: 'one_session', nonce_controller: nonce,
+      ...(assistInviteID ? { assist_invite_id: assistInviteID } : {}) } });
     return { id: pairing.id, request_id: requestID };
   },
   async confirm(expectedCode) {
     pairing = await api.request(`/api/v1/rd/pairings/${pairing.id}`);
     const proof = pairing.transcript;
-    if (proof.host_endpoint_id !== host.id || proof.host_jkt !== host.jkt || proof.controller_endpoint_id !== api.identity.endpointId || proof.controller_jkt !== api.identity.jkt || proof.nonce_controller !== nonce || proof.server_instance_id !== api.keys.server_instance_id || proof.session_request_id !== requestID || proof.mode !== 'one_session' || canonicalJson(proof.scope) !== canonicalJson(permissions) || !proof.nonce_host) throw new Error('RD_PROOF_INVALID');
+    if (proof.host_endpoint_id !== host.id || proof.host_jkt !== host.jkt || proof.controller_endpoint_id !== api.identity.endpointId || proof.controller_jkt !== api.identity.jkt || proof.nonce_controller !== nonce || proof.server_instance_id !== api.keys.server_instance_id || proof.session_request_id !== requestID || proof.mode !== 'one_session' || canonicalJson(proof.scope) !== canonicalJson(permissions) || !proof.nonce_host ||
+        (assistInviteID ? proof.assist_invite_id !== assistInviteID || proof.host_owner_user_id !== host.owner_user_id || proof.controller_owner_user_id !== api.userId : !!proof.assist_invite_id)) throw new Error('RD_PROOF_INVALID');
     const hash = await sha256(canonicalJson(proof));
     const code = [...hash.subarray(0, 16)].map(n => n.toString(16).padStart(2, '0')).join('').match(/.{4}/g).join('-');
     if (code !== expectedCode || pairing.display_code !== expectedCode) throw new Error('RD_PAIRING_CODE_MISMATCH');
@@ -82,11 +114,15 @@ window.nativeE2E = {
     const snapshot = await api.request('/api/v1/rd/sessions', { method: 'POST', idempotencyKey: requestID, body: { host_endpoint_id: host.id, grant_id: confirmed.grant_id, permissions, display_id: host.capabilities.displays[0].id, protocol: { major: 1, minor: 0 }, quality: 'balanced' } });
     return { session_id: snapshot.session_id };
   },
+  async ticketReady(id) {
+    const snapshot = await api.request(`/api/v1/rd/sessions/${id}`);
+    return !!snapshot.ticket_jws;
+  },
   async start(id) {
     const snapshot = await api.request(`/api/v1/rd/sessions/${id}`);
     if (!snapshot.ticket_jws) throw new Error('RD_LOCAL_APPROVAL_REQUIRED');
     state.frames = 0; state.failures = []; state.phases = []; state.input_releases = [];
-    session = new RemoteSession({ api, signal, session: snapshot, hostThumbprint: host.jkt, video,
+    session = new RemoteSession({ api, signal, session: snapshot, hostThumbprint: host.jkt, hostOwnerUserId: host.owner_user_id ?? api.userId, video,
       onState(phase, error) { state.phases.push(phase); if (error) state.failures.push(error.code ?? 'RD_MEDIA_FAILED'); },
       onReconnectNeeded() { fail(new Error('RD_UNEXPECTED_RECONNECT')); },
       onControl: frame => transfers?.onFrame(frame),
