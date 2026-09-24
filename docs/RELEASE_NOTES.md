@@ -1,5 +1,3 @@
-# Home Tunnel 8.0.0
-
 # Home Tunnel Client 9.0.0
 
 The desktop uses sidebar navigation for tunnels and remote desktop, with a

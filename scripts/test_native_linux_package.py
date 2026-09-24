@@ -184,8 +184,8 @@ class NativeLinuxPackage(unittest.TestCase):
         entry = packaging / "build-linux-remote-candidate.sh"
         shutil.copyfile(PACKAGE.ROOT / "packaging/build-linux-remote-candidate.sh", entry)
         (packaging / "build-release.sh").write_text('[[ "$ARCH" == amd64 && "$REMOTE_HOST_BUILD" == fixture ]]\n', newline="\n")
-        for version, expected in (("8.0.0", 0), ("8.0.0-rc.1", 0), ("8.0.0-rc.22", 0),
-                                  ("8.0.0-rc.0", 2), ("8.0.0-rc.01", 2), ("08.0.0", 2),
+        for version, expected in (("8.0.0", 0), ("9.0.0", 0), ("9.0.0-rc.1", 0), ("9.0.0-rc.22", 0),
+                                  ("9.0.0-rc.0", 2), ("9.0.0-rc.01", 2), ("09.0.0", 2),
                                   ("8.0.0-beta.1", 2), ("8.0.0+build", 2), ("8.0.0\n", 2)):
             result = subprocess.run(["bash", str(entry)], env={**os.environ, "VERSION": version, "REMOTE_HOST_BUILD": "fixture"},
                                     capture_output=True, text=True)
