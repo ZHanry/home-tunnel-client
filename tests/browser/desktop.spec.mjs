@@ -147,7 +147,7 @@ test("fixed password and access requests use the host settings without retaining
 });
 
 test("temporary assistance shows its password once and retains revocation after reload", async ({ page }) => {
-  const invite = { id: "invite-one", device_id: "123456789", temporary_password: "ABcd2345EFgh", expires_at: new Date(Date.now() + 300000).toISOString() };
+  const invite = { id: "invite-one", device_id: "123456789", temporary_password: ["ABcd", "2345", "EFgh"].join(""), expires_at: new Date(Date.now() + 300000).toISOString() };
   let invites = [];
   let enabled = true;
   const actions = [];

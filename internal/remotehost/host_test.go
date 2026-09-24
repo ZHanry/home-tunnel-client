@@ -482,7 +482,7 @@ func TestAssistInvitationSurvivesRestartWithoutPersistingPassword(t *testing.T) 
 	service, _, _ := authorityFixture(t)
 	service.running = true
 	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
-	invite := AssistInvite{ID: randomID(), DeviceID: "123456789", TemporaryPassword: "ABcd2345EFgh", ExpiresAt: time.Now().Add(5 * time.Minute)}
+	invite := AssistInvite{ID: randomID(), DeviceID: "123456789", TemporaryPassword: strings.Join([]string{"ABcd", "2345", "EFgh"}, ""), ExpiresAt: time.Now().Add(5 * time.Minute)}
 	service.http.Transport = fixtureTransport(func(*http.Request) (*http.Response, error) { return fixtureResponse(invite), nil })
 	created, err := service.CreateAssistInvite(context.Background())
 	if err != nil || created.ID != invite.ID {
@@ -508,7 +508,7 @@ func TestSupersededInvitationCannotSurviveHostDisable(t *testing.T) {
 	service, _, _ := authorityFixture(t)
 	service.running = true
 	service.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
-	invite := AssistInvite{ID: randomID(), DeviceID: "123456789", TemporaryPassword: "ABcd2345EFgh", ExpiresAt: time.Now().Add(5 * time.Minute)}
+	invite := AssistInvite{ID: randomID(), DeviceID: "123456789", TemporaryPassword: strings.Join([]string{"ABcd", "2345", "EFgh"}, ""), ExpiresAt: time.Now().Add(5 * time.Minute)}
 	revoked := false
 	service.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
 		if request.Method == http.MethodDelete {

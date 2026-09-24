@@ -86,12 +86,3 @@ func (host *Host) SetEmergencyHotkey(key string) error {
 	host.mu.Unlock()
 	return nil
 }
-
-func (host *Host) emergencyHotkey() string {
-	host.mu.Lock()
-	defer host.mu.Unlock()
-	if host.emergencyKey == "" {
-		return "X"
-	}
-	return host.emergencyKey
-}

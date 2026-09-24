@@ -47,6 +47,15 @@ var (
 
 func setEmergencyHost(host *Host) { emergencyHost = host }
 
+func (host *Host) emergencyHotkey() string {
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if host.emergencyKey == "" {
+		return "X"
+	}
+	return host.emergencyKey
+}
+
 func emergencyVirtualKey(key string) uintptr {
 	if key == "F12" {
 		return 0x7B

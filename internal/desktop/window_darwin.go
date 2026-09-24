@@ -79,11 +79,11 @@ void ht_window_quit(void) {
 }
 */
 import "C"
+import "unsafe"
 
 func openNativeRemoteWindow(string) error { return ErrRemoteWindowUnavailable }
 
 func closeNativeRemoteWindow() {}
-import "unsafe"
 
 func createNativeWindow(url string) error {
 	cstr := C.CString(url)
