@@ -1,5 +1,6 @@
 #pragma once
 #include "../src/protocol.hpp"
+#include "file_storage.hpp"
 #include "json/value.h"
 #include <filesystem>
 #include <functional>
@@ -10,39 +11,6 @@
 #include <vector>
 
 namespace ht::rd {
-// These handles are capabilities created only from a local OS picker result.
-// A peer-provided filename is display metadata, never a path to open.
-class FileSource {
- public:
-  virtual ~FileSource() = default;
-  virtual uint64_t size() const = 0;
-  virtual std::string name() const = 0;
-  virtual bool read(uint64_t offset, std::span<uint8_t> output) = 0;
-  virtual bool unchanged() const = 0;
-};
-class FileDestination {
- public:
-  virtual ~FileDestination() = default;
-  // Success includes flushing the write; callers must not ACK a failed write.
-  virtual bool write(uint64_t offset, std::span<const uint8_t> bytes) = 0;
-  // Atomically publishes without replacing an existing name; collisions get a
-  // new local basename. Returns the actual local path, never sent to the peer.
-  virtual bool commit(std::filesystem::path& actual_path) = 0;
-  // Removes only this object's uncommitted temporary file. Never removes a
-  // committed destination, including cancellation after a successful commit.
-  virtual void abort() noexcept = 0;
-};
-class FileAccess {
- public:
-  virtual ~FileAccess() = default;
-  virtual std::unique_ptr<FileSource> open_source(const std::filesystem::path&,
-                                                  std::string& error) = 0;
-  virtual std::unique_ptr<FileDestination> create_destination(
-      const std::filesystem::path&, uint64_t size, std::string& error) = 0;
-};
-std::unique_ptr<FileAccess> system_file_access();
-bool file_name_allowed(std::string_view name);
-
 // One authenticated host session/connection epoch, called on one serialized
 // worker. The owner must enforce current lease, peer proof and selected UDP
 // path before receive/tick/local operations. Callbacks must not reenter.

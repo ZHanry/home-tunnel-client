@@ -522,8 +522,10 @@ class FileTransfer::Impl {
       ack["id"] = id;
       ack["sha256"] = digest;
       // UI only needs the safe basename; never include the local absolute path.
-      const auto name = actual.filename().u8string();
-      item.name.assign(name.begin(), name.end());
+      if (!actual.empty()) {
+        const auto name = actual.filename().u8string();
+        item.name.assign(name.begin(), name.end());
+      }
       emit(item, "complete");
       remember(id);
       items.erase(found);

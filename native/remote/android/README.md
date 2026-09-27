@@ -37,7 +37,7 @@ The app's existing JNI NDK remains 27.2.12479018. The final shared-library packa
 must also verify 16 KiB ELF segment alignment and the exact exported C symbols.
 
 The shared controller implements PeerConnection signaling, independent native
-ticket/lease/grant verification, five data channels including text clipboard, mutual identity proofs,
+ticket/lease/grant verification, six data channels including text clipboard and files, mutual identity proofs,
 direct-UDP statistics checks, Surface presentation and synchronized input. Lease
 deadlines are enforced on every rendered frame and input operation. It reports
 backend availability only when that implementation is linked. The default app
@@ -61,6 +61,33 @@ The new source must pass the pinned GN build before SDK import. Compiling the
 standalone API26 AAudio file is not evidence that the complete engine decodes or
 plays sound. The Android app's JNI/UI consumer must import this ABI and handle
 its asynchronous state before exposing the sound control.
+
+File transfer uses the same ordered `file` data channel, chunk/flow-control,
+SHA-256, timeout and cancellation implementation as the desktop host. It never
+uses signaling for file contents. ABI 1 adds `ht_rd_set_files_enabled` (direction
+1 sends from Android, 2 receives on Android), `ht_rd_files_offer`,
+`ht_rd_files_accept`, and `ht_rd_files_cancel`. Enable requests are asynchronous:
+wait for the matching `FEATURE_STATE` before offering or accepting files.
+
+`ht_rd_files_offer` duplicates 1–64 caller-selected readable, seekable regular
+file descriptors before returning. Each source has its display name in UTF-8;
+paths and reserved names are rejected. The caller retains and closes its own
+descriptors. Sources that change while being read fail integrity checks.
+For SAF providers that expose pipes, the app must make a bounded private copy
+before offering it. The native core never opens an app-provided path.
+
+`ht_rd_files_accept` receives into an empty, app-owned, private (0600) regular
+staging descriptor, never a user's existing document. The descriptor is
+duplicated; incomplete/cancelled output is truncated on cleanup. Event
+`HT_RD_EVENT_FILE` (10) carries `event`, `id`, `name`, `size`, `offset`,
+`outgoing`, and optional `error_code`/`may_be_saved`. A local offer failure can
+contain only `event`, `outgoing`, and `error_code`. Only a verified incoming
+`complete` event authorizes the app to copy staging into a user-selected SAF
+destination. Native completion means private staging is complete; the app must
+separately report export success/failure and delete staging on all exits.
+Backgrounding cancels file transfers and revokes both directions. Surface
+recreation can preserve the session after its first foreground frame; grants,
+mutual identity and a verified direct UDP path remain mandatory.
 
 Artifact metadata keeps `available:false` and `device_media_accepted:false` until
 acceptance for that ABI is recorded; `controller_backend_linked:true` and

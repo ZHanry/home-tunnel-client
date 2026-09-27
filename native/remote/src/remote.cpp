@@ -28,12 +28,15 @@ std::shared_ptr<Session> find(ht_rd_handle handle) {
 template<class T> bool compatible(const T* value) {
     return value && value->size == sizeof(T) && value->abi_version == HT_RD_ABI_V1;
 }
-ht_rd_result unavailable(ht_rd_handle handle, const uint8_t* bytes, size_t length, size_t maximum) {
-    if (!bytes || length == 0 || length > maximum) return HT_RD_INVALID_ARGUMENT;
+ht_rd_result backend_status(ht_rd_handle handle) {
     const auto session = find(handle);
     if (!session) return HT_RD_INVALID_HANDLE;
     const std::lock_guard lock(session->mutex);
     return session->closed ? HT_RD_STATE_CONFLICT : HT_RD_BACKEND_UNAVAILABLE;
+}
+ht_rd_result unavailable(ht_rd_handle handle, const uint8_t* bytes, size_t length, size_t maximum) {
+    if (!bytes || length == 0 || length > maximum) return HT_RD_INVALID_ARGUMENT;
+    return backend_status(handle);
 }
 ht_rd_result notify(ht_rd_handle handle, uint32_t reason, bool close) {
     const auto session = find(handle);
@@ -112,10 +115,27 @@ ht_rd_result ht_rd_pause(ht_rd_handle handle, uint32_t reason) { return notify(h
 ht_rd_result ht_rd_close(ht_rd_handle handle, uint32_t reason) { return notify(handle, reason, true); }
 ht_rd_result ht_rd_set_system_audio(ht_rd_handle handle, uint32_t enabled) {
     if (enabled > 1) return HT_RD_INVALID_ARGUMENT;
-    const auto session = find(handle);
-    if (!session) return HT_RD_INVALID_HANDLE;
-    const std::lock_guard lock(session->mutex);
-    return session->closed ? HT_RD_STATE_CONFLICT : HT_RD_BACKEND_UNAVAILABLE;
+    return backend_status(handle);
+}
+ht_rd_result ht_rd_set_files_enabled(ht_rd_handle handle, uint32_t direction, uint32_t enabled) {
+    if ((direction != 1 && direction != 2) || enabled > 1) return HT_RD_INVALID_ARGUMENT;
+    return backend_status(handle);
+}
+ht_rd_result ht_rd_files_offer(ht_rd_handle handle, const ht_rd_file_source_v1* sources, size_t count) {
+    if (!sources || !count || count > 64) return HT_RD_INVALID_ARGUMENT;
+    for (size_t n=0; n<count; ++n) {
+        if (!compatible(&sources[n])) return HT_RD_ABI_MISMATCH;
+        if (sources[n].reserved || sources[n].descriptor < 0 || !sources[n].name || !sources[n].name_length || sources[n].name_length > 1020) return HT_RD_INVALID_ARGUMENT;
+    }
+    return backend_status(handle);
+}
+ht_rd_result ht_rd_files_accept(ht_rd_handle handle, const uint8_t* id, size_t length, int32_t descriptor) {
+    if (!id || length != 36 || descriptor < 0) return HT_RD_INVALID_ARGUMENT;
+    return backend_status(handle);
+}
+ht_rd_result ht_rd_files_cancel(ht_rd_handle handle, const uint8_t* id, size_t length) {
+    if (!id || length != 36) return HT_RD_INVALID_ARGUMENT;
+    return backend_status(handle);
 }
 void ht_rd_release(ht_rd_handle handle) {
     std::shared_ptr<Session> session;

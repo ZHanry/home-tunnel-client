@@ -512,6 +512,7 @@ def main():
     exported = run([nm, "--dynamic", "--defined-only", controller], source, env, True)
     symbols = {line.split()[-1].split("@")[0] for line in exported.splitlines() if line.strip()}
     expected = {"ht_rd_abi_version", "ht_rd_create", "ht_rd_get_capabilities", "ht_rd_start", "ht_rd_on_signal", "ht_rd_submit_input", "ht_rd_set_system_audio", "ht_rd_set_surface", "ht_rd_pause", "ht_rd_close", "ht_rd_release"}
+    expected.update({"ht_rd_set_files_enabled", "ht_rd_files_offer", "ht_rd_files_accept", "ht_rd_files_cancel"})
     if symbols - {"HT_REMOTE_ANDROID_1"} != expected:
         raise SystemExit("Controller exported symbols differ from the reviewed C ABI")
     shutil.copyfile(controller, library_dir / controller.name)

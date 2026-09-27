@@ -2,6 +2,8 @@
 #include "surface_renderer.hpp"
 #include "surface_lifecycle.hpp"
 #include "audio_device.hpp"
+#include "file_access.hpp"
+#include "../webrtc/file_transfer.hpp"
 #include "../include/home_tunnel/remote.h"
 #include "../webrtc/sdp_policy.hpp"
 #include "../webrtc/no_audio_device.hpp"
@@ -33,7 +35,8 @@ namespace {
 enum Event : uint32_t { signal_request = 4, proof_request = 5, direct_path = 6, control_message = 7, first_frame = 8, clipboard_message = 9 };
 constexpr uint64_t supported = protocol::PERMISSION_VIEW | protocol::PERMISSION_INPUT_KEYBOARD |
                                protocol::PERMISSION_INPUT_POINTER | protocol::PERMISSION_INPUT_TEXT |
-                               protocol::PERMISSION_CLIPBOARD_READ | protocol::PERMISSION_CLIPBOARD_WRITE | protocol::PERMISSION_AUDIO_SYSTEM;
+                               protocol::PERMISSION_CLIPBOARD_READ | protocol::PERMISSION_CLIPBOARD_WRITE | protocol::PERMISSION_AUDIO_SYSTEM |
+                               protocol::PERMISSION_FILES_SEND | protocol::PERMISSION_FILES_RECEIVE;
 uint64_t steady_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 int64_t wall_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 bool text(const Json::Value& value, std::string_view expected) { return value.isString() && value.asString() == expected; }
@@ -141,9 +144,9 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
         if(codec.name=="opus" || codec.name=="OPUS")opus.push_back(codec);
       if(!audio.ok() || opus.empty() || !audio.value()->SetCodecPreferences(opus).ok())return false;
     }
-    const std::array<std::string, 5> labels{"control", "input", "motion", "feedback", "clipboard"};
+    const std::array<std::string, 6> labels{"control", "input", "motion", "feedback", "clipboard", "file"};
     for (unsigned slot = 0; slot < labels.size(); ++slot) {
-      webrtc::DataChannelInit options; options.ordered = slot < 2 || slot == 4;
+      webrtc::DataChannelInit options; options.ordered = slot < 2 || slot >= 4;
       if (slot == 2 || slot == 3) options.maxRetransmits = 0;
       auto channel = peer_->CreateDataChannelOrError(labels[slot], &options);
       if (!channel.ok()) return false;
@@ -151,6 +154,10 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
       channel.value()->RegisterObserver(observer.get());
       channels_.emplace(slot, std::make_pair(channel.MoveValue(), std::move(observer)));
     }
+    files_=std::make_unique<FileTransfer>(file_access_,
+      [this](uint8_t type,std::span<const uint8_t> payload){SendBinary(5,type,payload,0);return !closed_;},
+      [this]{const auto channel=channels_.find(5);return !closed_ && channel!=channels_.end() && channel->second.first->state()==webrtc::DataChannelInterface::kOpen && channel->second.first->buffered_amount()<65536;},
+      [this](const Json::Value& body){Emit(HT_RD_EVENT_FILE,body);},[this]{return FilesCurrent();});
     started_ = steady_ms();
     const auto weak = weak_from_this();
     peer_->CreateOffer(webrtc::make_ref_counted<CreateDescription>([weak](auto description) {
@@ -229,6 +236,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     UpdateRendering(); return true;
   }
   bool SystemAudio(bool enabled){
+    if(enabled && Live() && !paused_ && audio_enabled_ && audio_device_ && !audio_device_->failed())return true;
     audio_requested_=audio_enabled_=false;
     if(audio_track_)audio_track_->set_enabled(false);
     if(audio_device_)audio_device_->enable(false);
@@ -237,19 +245,57 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     audio_requested_=enabled;
     Json::Value body;body["permission"]="audio.system";body["enabled"]=enabled;Send(protocol::FEATURE_REQUEST,body);return !closed_;
   }
-  void Pause() { if (!closed_) { SystemAudio(false);paused_ = true; clipboard_read_ = clipboard_write_ = clipboard_read_requested_ = clipboard_write_requested_ = false; ReleaseInput("background"); renderer_.SetAuthorized(false); Emit(HT_RD_EVENT_PAUSED, {}); } }
+  bool SetFiles(uint32_t direction,bool enabled){
+    const auto permission=direction==1?"files.send":"files.receive";
+    const auto bit=direction==1?protocol::PERMISSION_FILES_SEND:protocol::PERMISSION_FILES_RECEIVE;
+    auto& requested=direction==1?files_send_requested_:files_receive_requested_;
+    const auto native_direction=direction==1?"files.receive":"files.send";
+    if(enabled && requested && files_ && FilesCurrent() && files_->enabled(native_direction))return true;
+    if(!enabled){
+      requested=false;
+      if(files_ && FilesCurrent()){FileCall guard(*this);files_->enable(native_direction,false,steady_ms());}
+    }
+    if(!Live() || !identity_ || !(identity_->expected().permission_ceiling&bit) || !files_ || !FilesCurrent())return !enabled;
+    requested=enabled;Json::Value body;body["permission"]=permission;body["enabled"]=enabled;Send(protocol::FEATURE_REQUEST,body);return !closed_;
+  }
+  bool OfferFiles(const ht_rd_file_source_v1* sources,size_t count){
+    if(!FilesCurrent() || !files_ || !files_->enabled("files.receive"))return false;
+    FileCall guard(*this);std::vector<std::filesystem::path> tokens;
+    for(size_t n=0;n<count;++n){
+      const auto& source=sources[n];
+      const auto token=file_access_.source(source.descriptor,std::string_view(reinterpret_cast<const char*>(source.name),source.name_length));
+      if(token.empty()){file_access_.clear();return false;}tokens.push_back(token);
+    }
+    const bool ok=files_->offer_sources(tokens,steady_ms());file_access_.clear();return ok && !closed_;
+  }
+  bool AcceptFile(std::string_view id,int descriptor){
+    if(!FilesCurrent() || !files_ || !files_->enabled("files.send"))return false;
+    FileCall guard(*this);const auto token=file_access_.destination(descriptor);if(token.empty())return false;
+    const bool ok=files_->approve_destination(id,token,steady_ms());file_access_.clear();
+    if(!closed_)files_->tick(steady_ms());return ok && !closed_;
+  }
+  bool CancelFile(std::string_view id){
+    if(!FilesCurrent() || !files_)return false;
+    FileCall guard(*this);const bool ok=files_->cancel(id,steady_ms());if(!closed_)files_->tick(steady_ms());return ok && !closed_;
+  }
+  void Pause() { if (!closed_) { SystemAudio(false);SetFiles(1,false);SetFiles(2,false);paused_ = true; clipboard_read_ = clipboard_write_ = clipboard_read_requested_ = clipboard_write_requested_ = false; ReleaseInput("background"); renderer_.SetAuthorized(false); Emit(HT_RD_EVENT_PAUSED, {}); } }
   void Close(std::string_view reason) {
     if (closed_ || closing_) return; closing_ = true;
-    ReleaseInput("closed"); closed_ = true; renderer_.Close();
+    ReleaseInput("closed"); closed_ = true;close_reason_=reason;
     audio_requested_=audio_enabled_=false;
     if(audio_track_)audio_track_->set_enabled(false);
     if(audio_device_)audio_device_->enable(false);
+    if(!file_depth_)FinishClose();
+  }
+  void FinishClose(){
+    if(close_finished_)return;close_finished_=true;
+    if(files_){files_->close();files_.reset();}file_access_.clear();renderer_.Close();
     audio_track_=nullptr;
     if (track_) track_->RemoveSink(&renderer_); track_ = nullptr;
     for (auto& [slot, channel] : channels_) { channel.first->UnregisterObserver(); channel.first->Close(); }
     channels_.clear(); if (peer_) peer_->Close(); peer_ = nullptr;
     factory_=nullptr;audio_device_=nullptr;
-    Json::Value body; body["error_code"] = std::string(reason); Emit(HT_RD_EVENT_CLOSED, body);
+    Json::Value body; body["error_code"] = close_reason_; Emit(HT_RD_EVENT_CLOSED, body);
   }
   void Destroy() { Close("RD_LOCAL_CLOSE"); callbacks_ = {}; }
   bool Submit(std::span<const uint8_t> bytes) {
@@ -325,12 +371,19 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     }
   }
   void Receive(unsigned slot, const webrtc::DataBuffer& message) {
-    if (!Live() || !message.binary || slot > 4) { Close("RD_PROTOCOL_MISMATCH"); return; }
+    if (!Live() || !message.binary || slot > 5) { Close("RD_PROTOCOL_MISMATCH"); return; }
     Frame frame; const auto bytes = std::span(message.data.cdata<uint8_t>(), message.data.size());
     if (parse_frame(bytes, static_cast<Channel>(slot), identity_->epoch(), frame) != FrameError::ok) { Close("RD_PROTOCOL_MISMATCH"); return; }
     if (frame.sequence <= received_[slot]) return;
-    if ((slot < 2 || slot == 4) && frame.sequence != received_[slot] + 1) { Close("RD_PROTOCOL_MISMATCH"); return; }
+    if ((slot < 2 || slot >= 4) && frame.sequence != received_[slot] + 1) { Close("RD_PROTOCOL_MISMATCH"); return; }
     received_[slot] = frame.sequence;
+    if(slot==5){
+      if(paused_)return;
+      if(!FilesCurrent() || !files_){Close("RD_SCOPE_DENIED");return;}
+      FileCall guard(*this);
+      if(!files_->receive(frame.type,frame.payload,steady_ms()))Close("RD_FILE_INVALID");
+      if(!closed_)files_->tick(steady_ms());return;
+    }
     if (slot == 4) {
       if (!ready_ || !identity_->authenticated() || !local_path_ || !remote_path_) { Close("RD_PEER_IDENTITY_MISMATCH"); return; }
       const bool allowed = frame.type == protocol::CLIPBOARD_OFFER || frame.type == protocol::CLIPBOARD_CHUNK ? clipboard_read_ : clipboard_write_;
@@ -374,6 +427,18 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
           body.size() != (body.isMember("error_code") ? 3u : 2u) ||
           (body.isMember("error_code") && (!body["error_code"].isString() || body["enabled"].asBool()))) { Close("RD_PROTOCOL_MISMATCH"); return; }
       const auto permission = body["permission"].asString();
+      if(permission=="files.send" || permission=="files.receive"){
+        const bool sending=permission=="files.send";
+        const auto bit=sending?protocol::PERMISSION_FILES_SEND:protocol::PERMISSION_FILES_RECEIVE;
+        const bool enabled=body["enabled"].asBool();
+        if(!(identity_->expected().permission_ceiling&bit) || !files_ ||
+            (enabled && (!(sending?files_send_requested_:files_receive_requested_) || !FilesCurrent()))){Close("RD_SCOPE_DENIED");return;}
+        FileCall guard(*this);
+        if(FilesCurrent() && !files_->enable(sending?"files.receive":"files.send",enabled,steady_ms())){
+          body["enabled"]=false;body["error_code"]="RD_FEATURE_UNAVAILABLE";
+        }
+        Control(frame.type,body);return;
+      }
       if(permission=="audio.system"){
         if(!wants_audio_ || !audio_device_ || !audio_track_ || (body["enabled"].asBool() && (!audio_requested_ || paused_ || !surface_))) {Close("RD_SCOPE_DENIED");return;}
         audio_track_->set_enabled(body["enabled"].asBool());
@@ -467,6 +532,13 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     track_->AddOrUpdateSink(&renderer_, webrtc::VideoSinkWants{}); UpdateRendering();
   }
  private:
+  struct FileCall {
+    Controller& owner;
+    explicit FileCall(Controller& value):owner(value){++owner.file_depth_;}
+    ~FileCall(){if(!--owner.file_depth_ && owner.closed_)owner.FinishClose();}
+  };
+  bool FilesCurrent()const{return !closed_ && !paused_ && ready_ && local_path_ && remote_path_ &&
+    ever_presented_ && identity_ && identity_->authenticated() && steady_ms()<deadline_;}
   bool Live() { if (closed_ || !identity_) return false; if (steady_ms() >= deadline_) { Close("RD_LEASE_EXPIRED"); return false; } return true; }
   bool Lease(const VerifiedLease& lease) {
     const auto wall = wall_ms(); const auto duration = std::min(lease.expires_at_unix_ms - wall, lease.expires_at_unix_ms - lease.issued_at_unix_ms);
@@ -520,6 +592,8 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   }
   void Tick() {
     if (!Live()) return;
+    if(files_ && FilesCurrent()){FileCall guard(*this);files_->tick(steady_ms());}
+    if(closed_)return;
     if(audio_enabled_ && audio_device_){
       if(audio_device_->failed()){
         SystemAudio(false);Json::Value body;body["permission"]="audio.system";body["enabled"]=false;body["error_code"]="RD_FEATURE_UNAVAILABLE";Control(protocol::FEATURE_STATE,body);
@@ -544,6 +618,7 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if (!input_enabled_ && !input_request_.empty() && steady_ms() >= input_deadline_) { ReleaseInput("request_timeout"); Json::Value body; body["reason"]="request_timeout"; Control(protocol::CONTROL_RELEASED,body); }
     const auto presentation = renderer_.presentation();
     if (!paused_ && surface_lifecycle_.Presented(presentation.generation, presentation.frames)) {
+      ever_presented_=true;
       Json::Value body; body["epoch"]=identity_->epoch(); body["frames_presented"]=Json::UInt64(presentation.frames);
       body["surface_generation"]=Json::UInt64(surface_lifecycle_.generation()); Emit(first_frame,body);
     }
@@ -558,8 +633,13 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
   webrtc::scoped_refptr<webrtc::VideoTrackInterface> track_;
   SurfaceRenderer renderer_;
   SurfaceLifecycle surface_lifecycle_;
+  DescriptorAccess file_access_;
+  std::unique_ptr<FileTransfer> files_;
+  unsigned file_depth_=0;
+  bool close_finished_=false,ever_presented_=false,files_send_requested_=false,files_receive_requested_=false;
+  std::string close_reason_;
   std::map<unsigned,std::pair<webrtc::scoped_refptr<webrtc::DataChannelInterface>,std::unique_ptr<ChannelObserver>>> channels_;
-  std::array<uint32_t,5> sent_{},received_{},submitted_{};
+  std::array<uint32_t,6> sent_{},received_{},submitted_{};
   std::vector<Json::Value> local_candidates_,remote_candidates_;
   std::set<uint16_t> display_slots_;
   std::set<uint16_t> held_keys_;
@@ -637,6 +717,34 @@ ht_rd_result ht_rd_set_system_audio(ht_rd_handle handle,uint32_t enabled) {
   if(enabled>1)return HT_RD_INVALID_ARGUMENT;
   const auto owner=find(handle);if(!owner)return HT_RD_INVALID_HANDLE;
   return runtime().signaling->BlockingCall([&]{return owner->SystemAudio(enabled!=0);})?HT_RD_OK:HT_RD_PERMISSION_DENIED;
+}
+ht_rd_result ht_rd_set_files_enabled(ht_rd_handle handle,uint32_t direction,uint32_t enabled){
+  if((direction!=1 && direction!=2) || enabled>1)return HT_RD_INVALID_ARGUMENT;
+  const auto owner=find(handle);if(!owner)return HT_RD_INVALID_HANDLE;
+  return runtime().signaling->BlockingCall([&]{return owner->SetFiles(direction,enabled!=0);})?HT_RD_OK:HT_RD_PERMISSION_DENIED;
+}
+ht_rd_result ht_rd_files_offer(ht_rd_handle handle,const ht_rd_file_source_v1* sources,size_t count){
+  if(!sources || !count || count>ht::rd::protocol::BATCH_FILES)return HT_RD_INVALID_ARGUMENT;
+  for(size_t n=0;n<count;++n){
+    if(!compatible(&sources[n]))return HT_RD_ABI_MISMATCH;
+    if(sources[n].reserved || sources[n].descriptor<0 || !sources[n].name || !sources[n].name_length || sources[n].name_length>1020)return HT_RD_INVALID_ARGUMENT;
+  }
+  const auto owner=find(handle);if(!owner)return HT_RD_INVALID_HANDLE;
+  return runtime().signaling->BlockingCall([&]{return owner->OfferFiles(sources,count);})?HT_RD_OK:HT_RD_PERMISSION_DENIED;
+}
+ht_rd_result ht_rd_files_accept(ht_rd_handle handle,const uint8_t* id,size_t length,int32_t descriptor){
+  if(!id || length!=36 || descriptor<0)return HT_RD_INVALID_ARGUMENT;
+  const std::string_view value(reinterpret_cast<const char*>(id),length);std::array<uint8_t,16> uuid{};
+  if(!ht::rd::PeerIdentity::uuid(value,uuid))return HT_RD_INVALID_ARGUMENT;
+  const auto owner=find(handle);if(!owner)return HT_RD_INVALID_HANDLE;
+  return runtime().signaling->BlockingCall([&]{return owner->AcceptFile(value,descriptor);})?HT_RD_OK:HT_RD_PERMISSION_DENIED;
+}
+ht_rd_result ht_rd_files_cancel(ht_rd_handle handle,const uint8_t* id,size_t length){
+  if(!id || length!=36)return HT_RD_INVALID_ARGUMENT;
+  const std::string_view value(reinterpret_cast<const char*>(id),length);std::array<uint8_t,16> uuid{};
+  if(!ht::rd::PeerIdentity::uuid(value,uuid))return HT_RD_INVALID_ARGUMENT;
+  const auto owner=find(handle);if(!owner)return HT_RD_INVALID_HANDLE;
+  return runtime().signaling->BlockingCall([&]{return owner->CancelFile(value);})?HT_RD_OK:HT_RD_PERMISSION_DENIED;
 }
 ht_rd_result ht_rd_close(ht_rd_handle handle,uint32_t) { const auto owner=find(handle); if (!owner) return HT_RD_INVALID_HANDLE; runtime().signaling->BlockingCall([&] { owner->Close("RD_LOCAL_CLOSE"); }); return HT_RD_OK; }
 void ht_rd_release(ht_rd_handle handle) {

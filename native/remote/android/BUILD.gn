@@ -35,6 +35,10 @@ rtc_source_set("controller_objects") {
     "controller_identity.cpp",
     "controller_runtime.cpp",
     "audio_output.cpp",
+    "file_access.cpp",
+    "../webrtc/file_transfer.cpp",
+    "../webrtc/file_names.cpp",
+    "../webrtc/file_transfer_storage.cpp",
     "surface_lifecycle.hpp",
   ]
   defines = [

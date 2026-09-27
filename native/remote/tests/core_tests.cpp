@@ -209,6 +209,15 @@ void abi_contract() {
     CHECK(ht_rd_start(handle,nullptr,1)==HT_RD_INVALID_ARGUMENT);
     CHECK(ht_rd_set_system_audio(handle,1)==HT_RD_BACKEND_UNAVAILABLE);
     CHECK(ht_rd_set_system_audio(handle,2)==HT_RD_INVALID_ARGUMENT);
+    CHECK(ht_rd_set_files_enabled(handle,1,1)==HT_RD_BACKEND_UNAVAILABLE);
+    CHECK(ht_rd_set_files_enabled(handle,3,1)==HT_RD_INVALID_ARGUMENT);
+    const std::array<uint8_t,1> filename{'x'};
+    ht_rd_file_source_v1 file{sizeof(file),HT_RD_ABI_V1,0,0,filename.data(),filename.size()};
+    CHECK(ht_rd_files_offer(handle,&file,1)==HT_RD_BACKEND_UNAVAILABLE);
+    CHECK(ht_rd_files_offer(handle,&file,65)==HT_RD_INVALID_ARGUMENT);
+    file.descriptor=-1;CHECK(ht_rd_files_offer(handle,&file,1)==HT_RD_INVALID_ARGUMENT);
+    CHECK(ht_rd_files_accept(handle,nullptr,36,1)==HT_RD_INVALID_ARGUMENT);
+    CHECK(ht_rd_files_cancel(handle,filename.data(),1)==HT_RD_INVALID_ARGUMENT);
     CHECK(ht_rd_close(handle,0)==HT_RD_OK);CHECK(ht_rd_close(handle,0)==HT_RD_OK);
     CHECK(ht_rd_set_system_audio(handle,0)==HT_RD_STATE_CONFLICT);
     CHECK(ht_rd_submit_input(handle,fake.data(),fake.size())==HT_RD_STATE_CONFLICT);

@@ -43,7 +43,8 @@ typedef enum ht_rd_result {
 typedef enum ht_rd_event_type {
     HT_RD_EVENT_CLOSED = 1,
     HT_RD_EVENT_PAUSED = 2,
-    HT_RD_EVENT_ERROR = 3
+    HT_RD_EVENT_ERROR = 3,
+    HT_RD_EVENT_FILE = 10 /* Local transfer JSON: id/name/size/offset/outgoing/event/error_code. */
 } ht_rd_event_type;
 
 typedef struct ht_rd_config_v1 {
@@ -93,6 +94,15 @@ typedef struct ht_rd_capabilities_v1 {
     uint64_t permissions;
 } ht_rd_capabilities_v1;
 
+typedef struct ht_rd_file_source_v1 {
+    uint32_t size;
+    uint32_t abi_version;
+    int32_t descriptor; /* Borrowed seekable descriptor from the local OS picker. */
+    uint32_t reserved;
+    const uint8_t* name; /* UTF-8 display basename only. */
+    size_t name_length;
+} ht_rd_file_source_v1;
+
 HT_RD_API uint32_t ht_rd_abi_version(void);
 HT_RD_API ht_rd_result ht_rd_create(const ht_rd_config_v1*, const ht_rd_callbacks_v1*, ht_rd_handle*);
 /* Ticket/proof verification is performed in the native implementation, never by a caller bool. */
@@ -103,6 +113,18 @@ HT_RD_API ht_rd_result ht_rd_submit_input(ht_rd_handle, const uint8_t* message, 
  * requests the granted host feature. Actual state arrives as FEATURE_STATE
  * through the control event. Does not capture or return microphone audio. */
 HT_RD_API ht_rd_result ht_rd_set_system_audio(ht_rd_handle, uint32_t enabled);
+/* Direction 1 sends to the host; 2 receives from it. Actual feature state is
+ * asynchronous. File bytes use only the independently verified UDP/SCTP peer. */
+HT_RD_API ht_rd_result ht_rd_set_files_enabled(ht_rd_handle, uint32_t direction, uint32_t enabled);
+/* Descriptors are duplicated on success; the caller always retains its own
+ * descriptors. Pipe/non-seekable providers must first be spooled locally. */
+HT_RD_API ht_rd_result ht_rd_files_offer(ht_rd_handle, const ht_rd_file_source_v1*, size_t count);
+/* Receive ONLY into a new, empty, app-owned private staging file. On a verified
+ * complete event the caller copies it to its SAF-selected destination. Until
+ * then it must never publish the contents. Error/cancel clears native partial
+ * data; the caller owns deleting its staging file after any terminal event. */
+HT_RD_API ht_rd_result ht_rd_files_accept(ht_rd_handle, const uint8_t* id, size_t id_length, int32_t staging_descriptor);
+HT_RD_API ht_rd_result ht_rd_files_cancel(ht_rd_handle, const uint8_t* id, size_t id_length);
 /* On success the implementation retains the platform surface; the caller keeps its own ref. */
 HT_RD_API ht_rd_result ht_rd_set_surface(ht_rd_handle, const ht_rd_surface_v1*);
 HT_RD_API ht_rd_result ht_rd_get_capabilities(ht_rd_handle, ht_rd_capabilities_v1*);

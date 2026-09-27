@@ -39,4 +39,12 @@ try {
     $record.executable = Join-Path $output 'home_tunnel_remote_host.exe'
     [IO.File]::WriteAllText((Join-Path $output 'remote-host-build.json'), ($record | ConvertTo-Json -Depth 12) + [char]10, [Text.UTF8Encoding]::new($false))
     Write-Output "REMOTE_HOST_BUILD=$(Join-Path $output 'remote-host-build.json')"
-} finally { Pop-Location }
+} finally {
+    # Preserve diagnostics even when compilation, native tests or packaging
+    # fail. Uploading only the final executables loses the actual compiler error.
+    $buildLog = Join-Path $cache 'checkout/src/out/home_tunnel/remote-build.log'
+    if (Test-Path -LiteralPath $buildLog -PathType Leaf) {
+        Copy-Item -LiteralPath $buildLog -Destination (Join-Path $output 'remote-build.log') -Force
+    }
+    Pop-Location
+}
