@@ -8,6 +8,7 @@
 #include "crypto.hpp"
 #include "../generated/test_vectors.hpp"
 #include "../android/surface_lifecycle.hpp"
+#include "../android/audio_buffer_policy.hpp"
 #if defined(_WIN32)
 #include "platform/windows_input.hpp"
 #endif
@@ -283,6 +284,20 @@ void signature_verification() {
 }
 }
 void audio_packets() {
+    const auto fast=android::audio_buffer_policy(192,1920);
+    CHECK(fast.requested_frames==960 && fast.write_timeout_ns==20000000 && fast.accepts(960));
+    // Actual API35 AAudio probe: a 1920 request produced 4360 capacity and
+    // 2180-frame bursts. The old hard 1920 limit disabled valid system audio.
+    const auto shared=android::audio_buffer_policy(2180,4360);
+    CHECK(shared.requested_frames==4360 && shared.accepts(4360));
+    CHECK(shared.write_timeout_ns>=90000000 && shared.write_timeout_ns<100000000);
+    CHECK(!shared.accepts(-1) && !shared.accepts(0) && !shared.accepts(4361));
+    CHECK(!android::audio_buffer_policy(0,1920).requested_frames);
+    CHECK(!android::audio_buffer_policy(2180,1920).requested_frames);
+    CHECK(!android::audio_buffer_policy(4801,19200).requested_frames);
+    const auto slow=android::audio_buffer_policy(4800,19200);
+    CHECK(slow.requested_frames==9600 && slow.maximum_frames==9600 && slow.write_timeout_ns==200000000);
+    CHECK(!slow.accepts(9601));
     MediaDeadline first_session,second_session;
     CHECK(!first_session.alive(0));CHECK(!first_session.renew(10));
     first_session.begin(1000);second_session.begin(1000);

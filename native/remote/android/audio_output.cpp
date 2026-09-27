@@ -1,4 +1,5 @@
 #include "audio_output.hpp"
+#include "audio_buffer_policy.hpp"
 #include <aaudio/AAudio.h>
 #include <array>
 #include <chrono>
@@ -11,6 +12,7 @@ namespace {
 uint64_t now_ms(){return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());}
 struct Output {
   AAudioStream* stream=nullptr;
+  int64_t write_timeout_ns=20000000;
   ~Output(){if(stream){AAudioStream_requestStop(stream);AAudioStream_close(stream);}}
   bool open(){
     AAudioStreamBuilder* builder=nullptr;
@@ -26,8 +28,10 @@ struct Output {
     AAudioStreamBuilder_delete(builder);
     if(result!=AAUDIO_OK || !stream || AAudioStream_getSampleRate(stream)!=48000 ||
        AAudioStream_getChannelCount(stream)!=2 || AAudioStream_getFormat(stream)!=AAUDIO_FORMAT_PCM_I16)return false;
-    const auto frames=AAudioStream_setBufferSizeInFrames(stream,960);
-    return frames>0 && frames<=1920;
+    const auto policy=audio_buffer_policy(AAudioStream_getFramesPerBurst(stream),AAudioStream_getBufferCapacityInFrames(stream));
+    if(!policy.requested_frames)return false;
+    write_timeout_ns=policy.write_timeout_ns;
+    return policy.accepts(AAudioStream_setBufferSizeInFrames(stream,policy.requested_frames));
   }
 };
 }
@@ -51,7 +55,7 @@ bool AudioOutput::start(Pull pull){
         // A bounded blocking write paces 10 ms frames and cannot accumulate
         // an unbounded app queue. Expiry/mute closes and flushes this stream.
         const auto remaining=std::span(samples).subspan(written*2);
-        const auto count=AAudioStream_write(output.stream,remaining.data(),static_cast<int32_t>(remaining.size()/2),20000000);
+        const auto count=AAudioStream_write(output.stream,remaining.data(),static_cast<int32_t>(remaining.size()/2),output.write_timeout_ns);
         if(count<=0){failed_=true;return;}
         written+=static_cast<size_t>(count);
       }
