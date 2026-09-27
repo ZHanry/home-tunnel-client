@@ -144,8 +144,8 @@ body.workspace-active .app-header { display: none; }
 .remote-host-identity svg { width: 15px; height: 15px; }
 .remote-assist-card { grid-column: 1 / -1; }
 .remote-assist-card p { color: var(--muted); font-size: 12px; }
-.remote-assist-secret { display: grid; gap: 7px; margin: 16px 0; padding: 16px; border: 1px solid #b8b6ee; border-radius: 10px; background: #f0efff; }
-.remote-assist-secret p { margin: 0; color: var(--text); font-family: ui-monospace, monospace; font-size: 15px; overflow-wrap: anywhere; }
+.remote-assist-secret { display: grid; gap: 7px; margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--secondary); color: var(--secondary-fg); }
+.remote-assist-secret p { margin: 0; color: inherit; font-family: ui-monospace, monospace; font-size: 15px; overflow-wrap: anywhere; }
 .remote-assist-secret button { justify-self: start; }
 .remote-assist-invite { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .remote-assist-invite span { overflow-wrap: anywhere; }
