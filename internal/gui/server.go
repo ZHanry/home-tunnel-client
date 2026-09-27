@@ -107,6 +107,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/state", server.state)
 	mux.HandleFunc("/local/login", server.login)
 	mux.HandleFunc("/local/connections", server.connections)
+	mux.HandleFunc("/local/connection-check", server.connectionCheck)
 	mux.HandleFunc("/local/devices", server.devices)
 	mux.HandleFunc("/local/connections/", server.connectionItem)
 	mux.HandleFunc("/local/logout", server.logout)

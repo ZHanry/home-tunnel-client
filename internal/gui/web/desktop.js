@@ -128,6 +128,32 @@
         download: "Download to Downloads and verify SHA-256", openRelease: "Open Release", downloading: "Downloading…"
       }
     };
+    Object.assign(strings["zh-CN"], {
+      wizardService: "设备与服务", wizardTarget: "本地目标", wizardAccess: "访问方式", wizardPublish: "检查并发布",
+      serviceTemplate: "服务模板", typeHttps: "Web · 本地 HTTPS", checkTarget: "检查本地目标", ackTargetCheck: "我已了解检查结果，发布后会验证实际访问。",
+      publicWebHelp: "公网使用服务器配置的 HTTPS 域名；本地 HTTP/HTTPS 在上一步选择。", reviewService: "核对服务配置", publishHelp: "发布后等待设备同步配置，再从外部网络验证访问。",
+      connectionCreated: "连接已创建", publish: "发布服务", nextStep: "下一步", previousStep: "上一步", targetNotChecked: "先检查本地目标再继续。",
+      TARGET_TCP_READY: "本地 TCP 端口可连接。应用登录与公网访问仍需验证。", TARGET_HTTP_READY: "本地 Web 服务已响应。应用登录与公网访问仍需验证。",
+      TARGET_HTTP_UNHEALTHY: "本地 Web 服务返回服务器错误，请检查应用；可确认后继续配置。", TARGET_UNREACHABLE: "本地端口不可达，请启动服务并检查地址、端口与防火墙。",
+      TARGET_HTTP_FAILED: "本地 Web 请求失败，请核对协议并检查服务。", TARGET_TLS_FAILED: "本地 HTTPS 证书或 TLS 握手无效，请修复后重试。",
+      TARGET_INVALID: "本地主机或端口无效。请只填写主机，不要包含网址、路径或账号。", UDP_MANUAL_CHECK: "UDP 无法通过打开端口证明可达。发布后须从外部网络使用目标应用验证。",
+      awaitingSync: "等待设备同步，请稍后刷新。", serviceReady: "设备已应用配置。请从外部网络验证访问。", servicePaused: "连接已暂停，启用后等待设备应用配置。",
+      noAddressYet: "服务器尚未返回访问地址，请刷新重试。", NASDefaultName: "NAS", homeassistantDefaultName: "Home Assistant", immichDefaultName: "Immich", jellyfinDefaultName: "Jellyfin",
+      serviceError: "配置未应用，请检查设备状态和目标服务。", wizardStepsLabel: "发布步骤"
+    });
+    Object.assign(strings.en, {
+      wizardService: "Device and service", wizardTarget: "Local target", wizardAccess: "Public access", wizardPublish: "Review and publish",
+      serviceTemplate: "Service template", typeHttps: "Web · Local HTTPS", checkTarget: "Check local target", ackTargetCheck: "I understand this result and will verify access after publishing.",
+      publicWebHelp: "Public access uses the server's HTTPS domain. Choose the local HTTP/HTTPS scheme in the previous step.", reviewService: "Review service settings", publishHelp: "Wait for this device to apply the published configuration, then verify access from an external network.",
+      connectionCreated: "Connection created", publish: "Publish service", nextStep: "Next", previousStep: "Back", targetNotChecked: "Check the local target before continuing.",
+      TARGET_TCP_READY: "The local TCP port accepts connections. Application sign-in and public access still need verification.", TARGET_HTTP_READY: "The local Web service responded. Application sign-in and public access still need verification.",
+      TARGET_HTTP_UNHEALTHY: "The local Web service returned a server error. Check the application or acknowledge this result to continue.", TARGET_UNREACHABLE: "The local port is unreachable. Start the service and check its address, port and firewall.",
+      TARGET_HTTP_FAILED: "The local Web request failed. Check the scheme and service.", TARGET_TLS_FAILED: "The local HTTPS certificate or TLS handshake is invalid. Fix it and retry.",
+      TARGET_INVALID: "Enter a valid host and port, without a URL, path or credentials.", UDP_MANUAL_CHECK: "Opening a UDP socket cannot prove reachability. After publishing, test with the target application from an external network.",
+      awaitingSync: "Waiting for this device to apply the configuration. Refresh shortly.", serviceReady: "This device has applied the configuration. Verify access from an external network.", servicePaused: "This connection is paused. Enable it and wait for this device to apply the configuration.",
+      noAddressYet: "The server has not returned an access address yet. Refresh to retry.", NASDefaultName: "NAS", homeassistantDefaultName: "Home Assistant", immichDefaultName: "Immich", jellyfinDefaultName: "Jellyfin",
+      serviceError: "The configuration was not applied. Check the device and local service.", wizardStepsLabel: "Publishing steps"
+    });
     const $ = (id) => document.getElementById(id);
     const visualStyles = document.createElement("link");
     visualStyles.rel = "stylesheet";
@@ -500,7 +526,7 @@
       applyLocale(); applyTheme(document.documentElement.dataset.themePreference); renderServices(); renderAccountDevices();
       void refreshRemoteHost();
       if (!$("update-page").classList.contains("hidden")) void checkUpdates();
-      if (!$("editor").classList.contains("hidden")) applyProtocol();
+      if (!$("editor").classList.contains("hidden")) { applyProtocol(); if (wizardActive) renderWizard(false); }
     };
     $("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     $("server").value = localStorage.getItem("ht_server") || "";
@@ -698,9 +724,99 @@
     let serverStale = false;
     const protocols = {
       http: { transport: "http", port: 8080 }, tcp: { transport: "tcp", port: 8080 },
+      https: { transport: "http", port: 443, scheme: "https" }, nas: { transport: "http", port: 5000, name: "NASDefaultName" },
+      homeassistant: { transport: "http", port: 8123, name: "homeassistantDefaultName" }, immich: { transport: "http", port: 2283, name: "immichDefaultName" },
+      jellyfin: { transport: "http", port: 8096, name: "jellyfinDefaultName" },
       udp: { transport: "udp", port: 51820 }, rtsp: { transport: "tcp", port: 554, app: "rtsp" },
       ssh: { transport: "tcp", port: 22, app: "ssh" }, rdp: { transport: "tcp", port: 3389, app: "rdp" }
     };
+    let wizardActive = false, wizardStep = 0, targetCheck = null, targetRevision = 0, targetAbort = null, createdConnection = null, suggestedName = "";
+    const wizardPanels = ["wizard-service", "wizard-target", "wizard-access", "wizard-review"];
+    function targetPayload() {
+      return { proxy_type: protocols[$("protocol").value].transport, local_host: $("host").value.trim(), local_port: Number($("port").value), local_scheme: $("scheme").value };
+    }
+    function invalidateTarget() {
+      targetRevision++; targetAbort?.abort(); targetAbort = null; targetCheck = null;
+      $("target-result").textContent = ""; $("target-result").removeAttribute("data-status");
+      $("target-ack").checked = false; $("target-ack-row").classList.add("hidden");
+      if (wizardActive) renderWizard(false);
+    }
+    function targetMayProceed() {
+      return targetCheck && (targetCheck.status === "pass" || ["manual", "warning"].includes(targetCheck.status) && $("target-ack").checked);
+    }
+    function validateWizardPanel(index) {
+      const invalid = [...$(wizardPanels[index]).querySelectorAll("input,select")].find(field => !field.disabled && !field.checkValidity());
+      if (!invalid) return true;
+      wizardStep = index; renderWizard(false); invalid.reportValidity(); invalid.focus(); return false;
+    }
+    function renderWizard(focus = true) {
+      $("wizard-steps").classList.toggle("hidden", !wizardActive);
+      $("wizard-steps").setAttribute("aria-label", t("wizardStepsLabel"));
+      $("editor-fields").classList.toggle("wizard-active", wizardActive);
+      $("wizard-device").classList.toggle("hidden", !wizardActive);
+      $("wizard-device").textContent = t("thisComputer") + " · " + ($("machine-name").textContent || t("unnamedComputer"));
+      $("wizard-probe").classList.toggle("hidden", !wizardActive);
+      wizardPanels.forEach((id, index) => $(id).classList.toggle("hidden", wizardActive ? index !== wizardStep : index === 3));
+      [...$("wizard-steps").children].forEach((node, index) => { if (index === wizardStep) node.setAttribute("aria-current", "step"); else node.removeAttribute("aria-current"); });
+      $("wizard-back").classList.toggle("hidden", !wizardActive || wizardStep === 0 || Boolean(createdConnection));
+      $("wizard-next").classList.toggle("hidden", !wizardActive || wizardStep === 3);
+      $("wizard-next").disabled = Boolean(creationBlock(protocols[$("protocol").value])) || wizardStep === 1 && !targetMayProceed();
+      $("save").classList.toggle("hidden", wizardActive && (wizardStep !== 3 || Boolean(createdConnection)));
+      $("save").textContent = t(wizardActive ? "publish" : "save");
+      $("cancel").textContent = t(createdConnection ? "backServices" : "cancel");
+      $("wizard-result").classList.toggle("hidden", !createdConnection);
+      if (targetCheck) $("target-result").textContent = t(targetCheck.code);
+      if (wizardActive && wizardStep === 3) {
+        const target = targetPayload();
+        const rows = [[t("name"), $("name").value], [t("serviceTemplate"), $("protocol").selectedOptions[0].textContent],
+          [t("host"), target.local_host], [t("port"), String(target.local_port)], [t("scheme"), target.proxy_type === "http" ? target.local_scheme.toUpperCase() : target.proxy_type.toUpperCase()],
+          [t("wizardAccess"), target.proxy_type === "http" ? $("subdomain").value : t("rawPortNote")]];
+        $("wizard-summary").replaceChildren(...rows.flatMap(([label, value]) => { const term = document.createElement("dt"), detail = document.createElement("dd"); term.textContent = label; detail.textContent = value; return [term, detail]; }));
+        if (createdConnection) renderCreatedConnection();
+      }
+      if (focus && wizardActive) {
+        const destination = wizardStep === 3 ? $("save") : $(wizardPanels[wizardStep]).querySelector("input:not([disabled]),select:not([disabled]),button:not([disabled])");
+        destination?.focus();
+      }
+    }
+    async function checkWizardTarget() {
+      if (!validateWizardPanel(1)) return;
+      invalidateTarget(); const revision = targetRevision, signature = JSON.stringify(targetPayload());
+      targetAbort = new AbortController(); const signal = targetAbort.signal;
+      await runAction($("target-check"), async () => {
+        let result;
+        try { result = await api("/local/connection-check", { method: "POST", body: signature, signal }); }
+        catch (error) { if (revision !== targetRevision || signal.aborted) return; throw error; }
+        if (revision !== targetRevision || signature !== JSON.stringify(targetPayload()) || !wizardActive) return;
+        if (!["pass", "fail", "warning", "manual"].includes(result.status) || !Object.hasOwn(strings.en, result.code)) throw new Error(t("failed"));
+        targetCheck = result; $("target-result").textContent = t(result.code); $("target-result").dataset.status = result.status;
+        $("target-ack-row").classList.toggle("hidden", !["manual", "warning"].includes(result.status)); renderWizard(false);
+      }, "target-result");
+    }
+    function nextWizardStep() {
+      if (!validateWizardPanel(wizardStep) || creationBlock(protocols[$("protocol").value])) return;
+      if (wizardStep === 1 && !targetMayProceed()) { $("target-result").textContent = t("targetNotChecked"); return; }
+      if (wizardStep < 3) { wizardStep++; renderWizard(); }
+    }
+    function renderCreatedConnection() {
+      const item = createdConnection, address = item.access_url || item.public_url || item.public_endpoint || "";
+      $("wizard-address").value = address; $("wizard-copy").disabled = !address;
+      const applied = item.state === "Online" && Number(item.applied_version) >= Number(item.version) && Number(item.version) > 0;
+      $("wizard-result-state").textContent = t(item.enabled === false ? "servicePaused" : item.last_error_code ? "serviceError" : applied ? "serviceReady" : "awaitingSync") + (address ? "" : " " + t("noAddressYet"));
+    }
+    $("target-check").onclick = () => void checkWizardTarget();
+    $("target-ack").onchange = () => renderWizard(false);
+    for (const id of ["host", "port", "scheme"]) $(id).addEventListener("input", invalidateTarget);
+    $("wizard-next").onclick = nextWizardStep;
+    $("wizard-back").onclick = () => { if (wizardStep > 0 && !createdConnection) { wizardStep--; renderWizard(); } };
+    $("wizard-copy").onclick = () => runAction($("wizard-copy"), async () => { await navigator.clipboard.writeText($("wizard-address").value); $("wizard-result-state").textContent = t("copied"); }, "edit-error");
+    $("wizard-refresh").onclick = () => runAction($("wizard-refresh"), async () => {
+      const id = createdConnection?.id, result = await api("/local/connections");
+      if (!id || createdConnection?.id !== id || !wizardActive) return;
+      const item = result.items?.find(connection => connection.id === id);
+      if (item) createdConnection = item;
+      renderCreatedConnection();
+    }, "edit-error");
     function creationBlock(preset) {
       if (preset.transport === "http" || $("edit-id").value) return "";
       if (serverStale) return t("rawUnavailableOffline");
@@ -720,7 +836,9 @@
       $("scheme").disabled = raw;
       if (useDefaults && !$("edit-id").value) {
         $("port").value = preset.port;
-        if (!$("name").value && preset.app) $("name").value = t(preset.app + "DefaultName");
+        $("scheme").value = preset.scheme || "http";
+        if (!$("name").value || $("name").value === suggestedName) { suggestedName = preset.name ? t(preset.name) : preset.app ? t(preset.app + "DefaultName") : ""; $("name").value = suggestedName; }
+        invalidateTarget();
       }
       const blocked = creationBlock(preset);
       const details = [blocked || (raw ? t("rawPortNote") : "")];
@@ -730,6 +848,8 @@
       $("transport-note").textContent = details.filter(Boolean).join("\n");
       $("transport-note").classList.toggle("unavailable", Boolean(blocked));
       $("save").disabled = Boolean(blocked);
+      $("wizard-raw-access").classList.toggle("hidden", !raw);
+      if (wizardActive) renderWizard(false);
     }
     $("protocol").onchange = () => applyProtocol(true);
     let editBaseline = null;
@@ -747,6 +867,7 @@
     $("show-password").onclick = () => { const showing = $("password").type === "password"; $("password").type = showing ? "text" : "password"; $("show-password").textContent = t(showing ? "hidePassword" : "showPassword"); };
 
     function resetEditor() {
+      wizardActive = true; wizardStep = 0; createdConnection = null; suggestedName = ""; invalidateTarget();
       editBaseline = null; editVersion = null;
       $("protocol").value = "http"; $("protocol").disabled = false;
       $("edit-id").value = "";
@@ -761,8 +882,10 @@
       $("suggestions").replaceChildren();
       $("edit-error").textContent = "";
       applyProtocol();
+      renderWizard(false);
     }
     function fillEditor(item) {
+      wizardActive = false; createdConnection = null; invalidateTarget();
       editBaseline = { ...item }; editVersion = item.version;
       $("edit-id").value = item.id;
       $("editor-title").textContent = t("editTitle") + (item.name || "");
@@ -777,6 +900,7 @@
       applyProtocol();
       $("edit-error").textContent = "";
       $("subdomain").dispatchEvent(new Event("input"));
+      renderWizard(false);
     }
     async function quitApp() {
       if (!confirm(t("confirmQuit"))) return;
@@ -1004,11 +1128,11 @@
     };
     $("quit-login").onclick = () => runAction($("quit-login"), quitApp, "login-error");
     $("quit-home").onclick = () => runAction($("quit-home"), quitApp, "settings-error");
-    $("add").onclick = () => { ++navigationRevision; resetEditor(); $("home").classList.add("hidden"); $("editor").classList.remove("hidden"); selectNavigation("tunnels"); };
+    $("add").onclick = () => { ++navigationRevision; resetEditor(); $("home").classList.add("hidden"); $("editor").classList.remove("hidden"); selectNavigation("tunnels"); renderWizard(); };
     $("cancel").onclick = () => runAction($("cancel"), () => showHome());
     let availabilityRequest = 0, availabilityTimer;
     $("subdomain").addEventListener("input", () => {
-      if ($("protocol").value !== "http") return;
+      if (protocols[$("protocol").value]?.transport !== "http") return;
       const requestId = ++availabilityRequest;
       clearTimeout(availabilityTimer);
       availabilityTimer = setTimeout(async () => {
@@ -1032,13 +1156,17 @@
     });
     $("editor-form").onsubmit = async (event) => {
       event.preventDefault();
+      if (wizardActive && wizardStep < 3) { nextWizardStep(); return; }
+      if (wizardActive && createdConnection) return;
+      if (wizardActive && (![0, 1, 2].every(validateWizardPanel) || !targetMayProceed())) return;
       const selected = protocols[$("protocol").value] || protocols.http;
       const blocked = creationBlock(selected);
       if (blocked) { $("edit-error").textContent = blocked; return; }
       if (!$("editor-form").reportValidity()) return;
       await runAction($("save"), async () => {
       $("edit-error").textContent = "";
-      const payload = { name: $("name").value, subdomain: $("subdomain").value, local_host: $("host").value, local_port: Number($("port").value), local_scheme: $("scheme").value, enabled: $("enabled").checked };
+      const currentNavigation = navigationRevision;
+      const payload = { name: $("name").value, subdomain: $("subdomain").value, local_host: $("host").value.trim(), local_port: Number($("port").value), local_scheme: $("scheme").value, enabled: $("enabled").checked };
       try {
         const id = $("edit-id").value;
         if (id) {
@@ -1050,10 +1178,17 @@
           payload.proxy_type = selected.transport;
           if (selected.app) payload.application_protocol = selected.app;
           if (selected.transport !== "http") { delete payload.subdomain; payload.local_scheme = "http"; }
-          await api("/local/connections", { method: "POST", body: JSON.stringify(payload) });
+          const revision = navigationRevision;
+          $("wizard-back").disabled = true; $("cancel").disabled = true;
+          try {
+            const result = await api("/local/connections", { method: "POST", body: JSON.stringify(payload) });
+            if (revision !== navigationRevision) return;
+            if (wizardActive) { createdConnection = result; renderWizard(false); $("wizard-result-state").scrollIntoView({ block: "nearest" }); return; }
+          } finally { $("wizard-back").disabled = false; $("cancel").disabled = false; }
         }
         await showHome();
       } catch (error) {
+        if (currentNavigation !== navigationRevision) return;
         $("edit-error").textContent = error.message;
         if (error.code === "VERSION_CONFLICT" || /VERSION_CONFLICT/.test(error.message)) {
           $("edit-error").textContent = t("conflict");

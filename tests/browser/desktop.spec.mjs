@@ -364,6 +364,7 @@ test("device tags use a version and retain the draft on conflict", async ({page}
 
 test("RTSP preset creates TCP with an automatic port and no required web subdomain", async ({page}) => {
   await services(page,{supported:true,tcp:{enabled:true,can_create:true},udp:{enabled:true,can_create:true}});
+  await page.route("**/local/connection-check", route => route.fulfill({json:{status:"pass",code:"TARGET_TCP_READY"}}));
   await page.route("**/local/connections", route => route.fulfill({json:{id:"camera"}}));
   await page.locator("#add").click();
   await page.locator("#protocol").selectOption("rtsp");
@@ -371,6 +372,13 @@ test("RTSP preset creates TCP with an automatic port and no required web subdoma
   await expect(page.locator("#port")).toHaveValue("554");
   await expect(page.locator("#web-address")).not.toBeVisible();
   await expect(page.locator("#transport-note")).toContainText("RTSP over TCP");
+  await page.locator("#wizard-next").click();
+  await expect(page.locator("#wizard-next")).toBeDisabled();
+  await page.locator("#target-check").click();
+  await expect(page.locator("#target-result")).toContainText("本地 TCP 端口可连接");
+  await page.locator("#wizard-next").click();
+  await expect(page.locator("#wizard-raw-access")).toContainText("服务端自动分配");
+  await page.locator("#wizard-next").click();
   const request=page.waitForRequest(r=>r.method()==="POST"&&r.url().endsWith("/local/connections"));
   await page.locator("#save").click();
   const body=(await request).postDataJSON();
@@ -381,15 +389,114 @@ test("RTSP preset creates TCP with an automatic port and no required web subdoma
 test("old servers explain the upgrade and retain HTTP creation", async ({page}) => {
   await services(page,undefined);
   await page.locator("#add").click();await page.locator("#protocol").selectOption("tcp");
-  await expect(page.locator("#transport-note")).toContainText("升级服务端至 7.0.0");await expect(page.locator("#save")).toBeDisabled();
-  await page.locator("#protocol").selectOption("http");await expect(page.locator("#save")).toBeEnabled();await expect(page.locator("#subdomain")).toBeVisible();
+  await expect(page.locator("#transport-note")).toContainText("升级服务端至 7.0.0");await expect(page.locator("#wizard-next")).toBeDisabled();
+  await page.locator("#protocol").selectOption("http");await expect(page.locator("#wizard-next")).toBeEnabled();
+  await page.locator("#name").fill("Web service"); await page.locator("#wizard-next").click();
+  await expect(page.locator("#wizard-target")).toBeVisible();
 });
 
 test("transport deployment and user permission failures are explained separately", async ({page}) => {
   await services(page,{supported:true,tcp:{enabled:true,can_create:false},udp:{enabled:false,can_create:false}});
   await page.locator("#add").click();await page.locator("#protocol").selectOption("ssh");
-  await expect(page.locator("#port")).toHaveValue("22");await expect(page.locator("#transport-note")).toContainText("尚未允许普通用户");await expect(page.locator("#save")).toBeDisabled();
+  await expect(page.locator("#port")).toHaveValue("22");await expect(page.locator("#transport-note")).toContainText("尚未允许普通用户");await expect(page.locator("#wizard-next")).toBeDisabled();
   await page.locator("#protocol").selectOption("udp");await expect(page.locator("#transport-note")).toContainText("未开放此传输类型");
+});
+
+test("service templates supply local defaults while preserving the user's service name", async ({ page }) => {
+  await services(page, { supported: true, tcp: { enabled: true, can_create: true }, udp: { enabled: true, can_create: true } });
+  await page.locator("#add").click();
+  for (const [template, port, scheme] of [["nas", 5000, "http"], ["homeassistant", 8123, "http"], ["immich", 2283, "http"], ["jellyfin", 8096, "http"], ["https", 443, "https"], ["ssh", 22, "http"], ["rdp", 3389, "http"], ["rtsp", 554, "http"], ["udp", 51820, "http"]]) {
+    await page.locator("#protocol").selectOption(template);
+    await expect(page.locator("#port")).toHaveValue(String(port));
+    await expect(page.locator("#scheme")).toHaveValue(scheme);
+  }
+  await page.locator("#name").fill("My private service");
+  await page.locator("#protocol").selectOption("nas");
+  await page.locator("#sidebar-locale").click();
+  await expect(page.locator("#name")).toHaveValue("My private service");
+  await page.locator("#wizard-next").click();
+  await expect(page.locator("#host")).toHaveValue("127.0.0.1");
+  await expect(page.locator("#wizard-next")).toBeDisabled();
+});
+
+test("publishing waits for a checked target and shows the actual address and synchronization state", async ({ page }) => {
+  await services(page, undefined);
+  const probes = [], writes = [];
+  const connection = { id: "created-service", name: "Photos", proxy_type: "http", public_url: "https://photos.example.test", enabled: true, version: 3, applied_version: 2, state: "Online" };
+  await page.route("**/local/connection-check", route => { probes.push(route.request().postDataJSON()); return route.fulfill({ json: { status: "pass", code: "TARGET_HTTP_READY" } }); });
+  await page.route("**/local/connections", route => {
+    if (route.request().method() === "POST") { writes.push(route.request().postDataJSON()); return route.fulfill({ json: connection }); }
+    return route.fulfill({ json: { items: [{ ...connection, applied_version: 3 }] } });
+  });
+  await page.locator("#add").click();
+  await page.locator("#protocol").selectOption("immich");
+  await page.locator("#name").fill("Photos");
+  await page.locator("#name").press("Enter");
+  await expect(page.locator("#wizard-target")).toBeVisible();
+  expect(writes).toHaveLength(0);
+  await page.locator("#target-check").click();
+  await expect(page.locator("#wizard-next")).toBeEnabled();
+  expect(probes[0]).toEqual({ proxy_type: "http", local_host: "127.0.0.1", local_port: 2283, local_scheme: "http" });
+  await page.locator("#wizard-next").click();
+  await page.locator("#subdomain").fill("photos");
+  await page.locator("#wizard-next").click();
+  await expect(page.locator("#wizard-summary")).toContainText("2283");
+  expect(writes).toHaveLength(0);
+  await page.locator("#save").click();
+  await expect(page.locator("#wizard-address")).toHaveValue(connection.public_url);
+  await expect(page.locator("#wizard-result-state")).toContainText("等待设备同步");
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).not.toHaveProperty("remote_port");
+  await page.locator("#wizard-refresh").click();
+  await expect(page.locator("#wizard-result-state")).toContainText("设备已应用配置");
+  await expect(page.locator("#save")).toBeHidden();
+});
+
+test("UDP requires explicit acknowledgement and a changed target discards stale probe results", async ({ page }) => {
+  await services(page, { supported: true, udp: { enabled: true, can_create: true } });
+  let release, pending = false;
+  await page.route("**/local/connection-check", async route => {
+    pending = true;
+    await new Promise(resolve => { release = resolve; });
+    await route.fulfill({ json: { status: "manual", code: "UDP_MANUAL_CHECK" } }).catch(() => {});
+  });
+  await page.locator("#add").click(); await page.locator("#protocol").selectOption("udp");
+  await page.locator("#name").fill("Private UDP"); await page.locator("#wizard-next").click();
+  await page.locator("#target-check").click();
+  await expect.poll(() => pending).toBe(true);
+  await page.locator("#host").fill("192.168.1.3"); release();
+  await expect(page.locator("#target-check")).toBeEnabled();
+  await expect(page.locator("#target-result")).toBeEmpty();
+  await expect(page.locator("#wizard-next")).toBeDisabled();
+  await page.unroute("**/local/connection-check");
+  await page.route("**/local/connection-check", route => route.fulfill({ json: { status: "manual", code: "UDP_MANUAL_CHECK" } }));
+  await page.locator("#target-check").click();
+  await expect(page.locator("#target-result")).toContainText("无法通过打开端口证明可达");
+  await expect(page.locator("#wizard-next")).toBeDisabled();
+  await page.locator("#target-ack").check();
+  await expect(page.locator("#wizard-next")).toBeEnabled();
+  await page.locator("#port").fill("51821");
+  await expect(page.locator("#wizard-next")).toBeDisabled();
+});
+
+test("an unreachable target offers a retry and a publish error retains the complete draft", async ({ page }) => {
+  await services(page, undefined);
+  let targetReady = false;
+  await page.route("**/local/connection-check", route => route.fulfill({ json: { status: targetReady ? "pass" : "fail", code: targetReady ? "TARGET_HTTP_READY" : "TARGET_UNREACHABLE" } }));
+  await page.route("**/local/connections", route => route.fulfill({ status: 503, json: { message: "Service temporarily unavailable" } }));
+  await page.locator("#add").click(); await page.locator("#protocol").selectOption("jellyfin");
+  await page.locator("#wizard-next").click(); await page.locator("#target-check").click();
+  await expect(page.locator("#target-result")).toContainText("本地端口不可达");
+  await expect(page.locator("#wizard-next")).toBeDisabled();
+  targetReady = true; await page.locator("#target-check").click();
+  await page.locator("#wizard-next").click(); await page.locator("#subdomain").fill("movies");
+  await page.locator("#wizard-next").click(); await page.locator("#save").click();
+  await expect(page.locator("#edit-error")).toContainText("Service temporarily unavailable");
+  await expect(page.locator("#wizard-summary")).toContainText("Jellyfin");
+  await expect(page.locator("#wizard-summary")).toContainText("movies");
+  await expect(page.locator("#wizard-summary")).toContainText("8096");
+  await expect(page.locator("#wizard-result")).toBeHidden();
+  await expect(page.locator("#save")).toBeEnabled();
 });
 
 test("an existing RTSP connection keeps its URI and remains editable after self-service is disabled", async ({page}) => {

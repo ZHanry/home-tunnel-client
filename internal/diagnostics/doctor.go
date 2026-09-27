@@ -4,10 +4,12 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -29,6 +31,7 @@ import (
 type Check struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
+	Code      string `json:"code,omitempty"`
 	Message   string `json:"message"`
 	LatencyMS int64  `json:"latency_ms"`
 }
@@ -54,7 +57,7 @@ type Options struct {
 func Run(ctx context.Context, options Options) Report {
 	report := Report{Version: model.Version, OS: runtime.GOOS, Architecture: runtime.GOARCH, CreatedAt: time.Now().UTC(), CredentialStorage: state.CredentialProtection(), Checks: []Check{}}
 	add := func(name, status, message string, start time.Time) {
-		report.Checks = append(report.Checks, Check{name, status, message, time.Since(start).Milliseconds()})
+		report.Checks = append(report.Checks, Check{Name: name, Status: status, Message: message, LatencyMS: time.Since(start).Milliseconds()})
 	}
 	started := time.Now()
 	local, err := (state.Store{Path: options.StatePath}).Load()
@@ -181,17 +184,25 @@ func Run(ctx context.Context, options Options) Report {
 	return report
 }
 
+// ProbeTarget checks one user-selected local service without publishing it.
+// UDP requires an application-specific external check and never reports pass.
+func ProbeTarget(ctx context.Context, target model.Connection) Check {
+	return probeLocal(ctx, 0, target)
+}
+
 func probeLocal(ctx context.Context, index int, target model.Connection) (result Check) {
 	started := time.Now()
 	result = Check{Name: fmt.Sprintf("local_target_%d", index+1)}
 	defer func() { result.LatencyMS = time.Since(started).Milliseconds() }()
 	if target.ProxyType == "udp" {
 		result.Status = "manual"
+		result.Code = "UDP_MANUAL_CHECK"
 		result.Message = "UDP requires an application-level probe from an external network; a socket open is not proof of reachability."
 		return result
 	}
 	if target.LocalPort < 1 || target.LocalPort > 65535 || target.LocalHost == "" {
 		result.Status = "fail"
+		result.Code = "TARGET_INVALID"
 		result.Message = "Local target host or port is invalid."
 		return result
 	}
@@ -202,22 +213,26 @@ func probeLocal(ctx context.Context, index int, target model.Connection) (result
 	connection, err := dialer.DialContext(probeCtx, "tcp", address)
 	if err != nil {
 		result.Status = "fail"
+		result.Code = "TARGET_UNREACHABLE"
 		result.Message = "Local target port is unreachable. Start the application and verify its listening address."
 		return result
 	}
 	connection.Close()
 	result.Status = "pass"
+	result.Code = "TARGET_TCP_READY"
 	result.Message = "Local TCP target accepts connections. Verify application authentication separately."
 	if target.ProxyType == "http" || target.ProxyType == "" {
 		scheme := target.LocalScheme
 		if scheme != "http" && scheme != "https" {
 			result.Status = "fail"
+			result.Code = "TARGET_INVALID"
 			result.Message = "Local HTTP scheme is invalid."
 			return result
 		}
 		request, reqErr := http.NewRequestWithContext(probeCtx, http.MethodHead, (&url.URL{Scheme: scheme, Host: address, Path: "/"}).String(), nil)
 		if reqErr != nil {
 			result.Status = "fail"
+			result.Code = "TARGET_INVALID"
 			result.Message = "Local HTTP target is invalid."
 			return result
 		}
@@ -227,13 +242,21 @@ func probeLocal(ctx context.Context, index int, target model.Connection) (result
 		response, httpErr := client.Do(request)
 		if httpErr != nil {
 			result.Status = "fail"
+			result.Code = "TARGET_HTTP_FAILED"
+			var certificateError *tls.CertificateVerificationError
+			var recordError tls.RecordHeaderError
+			if errors.As(httpErr, &certificateError) || errors.As(httpErr, &recordError) {
+				result.Code = "TARGET_TLS_FAILED"
+			}
 			result.Message = "Local HTTP request failed; verify scheme and certificate trust."
 			return result
 		}
 		response.Body.Close()
+		result.Code = "TARGET_HTTP_READY"
 		result.Message = fmt.Sprintf("Local HTTP target replied with status %d; no credentials were supplied.", response.StatusCode)
 		if response.StatusCode >= 500 {
 			result.Status = "warning"
+			result.Code = "TARGET_HTTP_UNHEALTHY"
 		}
 	}
 	result.LatencyMS = time.Since(started).Milliseconds()
