@@ -2,3 +2,10 @@
 # These are content digests verified by check-repository.py, not credentials.
 08ab2b794e08b913eaa6cc47219a6bdd1092e301:contracts/lock.json:generic-api-key:8
 08ab2b794e08b913eaa6cc47219a6bdd1092e301:contracts/lock.json:generic-api-key:9
+# Historical fake one-time passwords returned only by fixtureTransport and
+# Playwright route.fulfill. These three reviewed locations never authenticated
+# to a real server; current tests construct the same synthetic fixture value.
+# Keep commit/path/rule/line fingerprints so production and new tests stay scanned.
+093010bf27a408bc74a0d20185f49fc874796446:internal/remotehost/host_test.go:generic-api-key:485
+093010bf27a408bc74a0d20185f49fc874796446:internal/remotehost/host_test.go:generic-api-key:511
+093010bf27a408bc74a0d20185f49fc874796446:tests/browser/desktop.spec.mjs:generic-api-key:150
