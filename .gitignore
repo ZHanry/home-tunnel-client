@@ -87,6 +87,7 @@ tests/frpc-https.toml
 /home-tunnel-setup
 /package-scan/
 /release/
+/candidate-download/
 
 # Release workflow staging
 release/

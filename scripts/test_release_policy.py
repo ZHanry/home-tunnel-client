@@ -322,14 +322,10 @@ class ReleasePolicyTests(unittest.TestCase):
             with patch.object(module, 'run'), self.assertRaisesRegex(SystemExit, 'verification_stage'):
                 module.verify(directory, module.TAG)
 
-    def test_native_report_cannot_select_another_build_or_workflow(self):
-        source = {'head_sha': module.SHA, 'event': 'push', 'conclusion': 'success',
-                  'path': '.github/workflows/release.yml', 'repository': {'full_name': module.REPO}}
-        for key, value in (('head_sha', 'other'), ('event', 'pull_request'), ('conclusion', 'failure'), ('path', 'other.yml')):
-            with self.subTest(key=key), patch.dict(os.environ, {'NATIVE_BUILD_RUN_ID': '123', 'NATIVE_ACCEPTANCE_JSON': '{}'}), \
-                    patch.object(module, 'api', return_value={**source, key: value}), \
-                    self.assertRaisesRegex(SystemExit, 'exact tag commit'):
-                module.import_native_acceptance()
+    def test_inline_acceptance_cannot_bypass_reviewed_receipts(self):
+        with patch.object(module, 'api') as query, self.assertRaisesRegex(SystemExit, 'Inline acceptance was removed'):
+            module.import_native_acceptance()
+        query.assert_not_called()
 
     def test_failed_partial_stale_and_wrong_revision_scans_block_publication(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -343,6 +339,27 @@ class ReleasePolicyTests(unittest.TestCase):
                     if kind == "wrong revision": scan['repository_revision'] = 'another-build'
                     (directory/'windows-defender-scan.json').write_text(json.dumps(scan))
                     with self.assertRaises(SystemExit): module.verify_windows_evidence(directory, "6.0.1", "revision")
+
+    def test_long_soak_preserves_build_scan_and_requires_a_fresh_separate_rescan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            scan = self.windows_fixture(directory)
+            built = datetime.now(timezone.utc) - timedelta(days=3)
+            scan['scanned_at'] = built.isoformat()
+            scan['signature_updated_at'] = built.isoformat()
+            original = json.dumps(scan).encode()
+            (directory / 'windows-defender-scan.json').write_bytes(original)
+            module.verify_windows_evidence(directory, '6.0.1', 'revision', validation_time=built)
+            with self.assertRaisesRegex(SystemExit, 'stale'):
+                module.verify_windows_evidence(directory, '6.0.1', 'revision')
+            write_scan = dict(scan, scanned_at=datetime.now(timezone.utc).isoformat(),
+                              signature_updated_at=datetime.now(timezone.utc).isoformat())
+            (directory / 'windows-final-defender-scan.json').write_text(json.dumps(write_scan))
+            module.verify_windows_evidence(directory, '6.0.1', 'revision', scan_name='windows-final-defender-scan.json')
+            self.assertEqual((directory / 'windows-defender-scan.json').read_bytes(), original)
+            (directory / 'HomeTunnel-Setup-6.0.1-x64.exe').write_bytes(b'changed after soak')
+            with self.assertRaisesRegex(SystemExit, 'differ from the scanned'):
+                module.verify_windows_evidence(directory, '6.0.1', 'revision', scan_name='windows-final-defender-scan.json')
 
     def test_first_project_version_is_allowed_as_a_test_build(self):
         self.assertEqual(module.validate_release_tag("v0.1.0-rc.1", "0.1.0-rc.1", "internal-testing"), ("0.1.0", "1"))

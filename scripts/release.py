@@ -86,7 +86,53 @@ def check_frozen_contract():
     raise SystemExit("Frozen contract tag could not be resolved to the locked server commit")
 
 
+def candidate_metadata():
+    """Build before tagging; refuse an unpinned or changed workflow checkout."""
+    from client_release_candidate import CALLER, REPOSITORY, package_names
+    requested = os.environ.get("CANDIDATE_REVISION", "")
+    ref = os.environ.get("GITHUB_REF", "")
+    if (REPO != REPOSITORY or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch" or
+            not re.fullmatch(r"[0-9a-f]{40}", requested) or requested != SHA or
+            not re.fullmatch(r"refs/heads/[^\s]+", ref) or
+            os.environ.get("GITHUB_WORKFLOW_REF") != f"{REPO}/{CALLER}@{ref}" or
+            run("git", "rev-parse", "HEAD", capture=True).strip() != SHA or
+            run("git", "status", "--porcelain", capture=True).strip()):
+        raise SystemExit("Candidate requires the exact clean branch SHA and the registered dispatch workflow")
+    package_names(local_version())
+    run(sys.executable, "scripts/check-repository.py")
+    run(sys.executable, "scripts/sync-remote-contracts.py", "--check")
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        output.write(f"version={local_version()}\n")
+
+
+def seal_candidate():
+    from datetime import datetime, timezone
+    from client_release_candidate import CALLER, SIGNER, MANIFEST, digest, package_names, verify_candidate
+    if (not os.environ.get("GITHUB_REF", "").startswith("refs/heads/") or
+            run("git", "rev-parse", "HEAD", capture=True).strip() != SHA or
+            run("git", "status", "--porcelain", capture=True).strip()):
+        raise SystemExit("Candidate sealing requires the clean untagged build source")
+    directory = ROOT / "release"
+    if (directory / MANIFEST).exists():
+        raise SystemExit("Candidate inventory already exists; never replace it")
+    required_assets(directory, for_publication=False)
+    files = {p.name: {"bytes": p.stat().st_size, "sha256": digest(p)} for p in directory.iterdir() if p.is_file()}
+    candidate = {"schema_version": 1, "repository": REPO, "revision": SHA, "version": local_version(),
+        "verification_stage": "candidate", "tag_published": False, "acceptance_complete": False, "source_modified": False,
+        "created_at": datetime.now(timezone.utc).isoformat(), "files": files,
+        "packages": {name: files[name] for name in package_names(local_version())},
+        "server": json.loads((ROOT / "tests/remote-native/server-lock.json").read_text()),
+        "build": {"repository": REPO, "caller_workflow": CALLER, "signer_workflow": SIGNER,
+                  "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                  "source_ref": os.environ["GITHUB_REF"]}}
+    verify_candidate(candidate, directory, SHA, local_version())
+    with (directory / MANIFEST).open("x", encoding="utf-8") as output:
+        output.write(json.dumps(candidate, indent=2) + "\n")
+
+
 def metadata():
+    if os.environ.get("GITHUB_REF") != f"refs/tags/{TAG}" or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+        raise SystemExit("Publication requires an explicit dispatch at the accepted version tag")
     version, candidate = validate_release_tag(TAG, local_version(), PROJECT.get("stage"))
     check_frozen_contract()
     run("python3", "scripts/check-repository.py")
@@ -117,7 +163,9 @@ def required_assets(directory, *, for_publication=True):
                      f"HomeTunnel-Remote-SDK-{version}-windows-x64.zip", "remote-sdk-provenance.json"]
         expected += android_controller_sdk_assets(version)
         if for_publication:
-            expected.append("windows-remote-native-acceptance.json")
+            expected += ["windows-remote-native-acceptance.json", "windows-final-defender-scan.json",
+                         "client-candidate.json", "client-candidate.json.sigstore.json", "client-acceptance.json",
+                         "client-candidate-download.json", "client-acceptance-origin.json"]
     elif COMPONENT == "android":
         expected = [f"HomeTunnel-Android-{version}-arm64-v8a.apk", f"HomeTunnel-Android-{version}.aab", "android-release-evidence.json"]
     else:
@@ -134,7 +182,29 @@ def required_assets(directory, *, for_publication=True):
         # A tunnel-only tarball or a test-mode worker must never become the x64 RC.
         run(sys.executable, str(ROOT / "scripts/package-native-linux.py"), "--verify-archive",
             str(directory / f"home-tunnel-linux-{version}-amd64.tar.gz"), "--version", version, "--revision", SHA)
-        verify_windows_evidence(directory, version, SHA)
+        if for_publication:
+            from client_release_candidate import MANIFEST, ACCEPTANCE, digest, read_json, timestamp, verify_candidate, verify_acceptance
+            candidate = verify_candidate(read_json(directory / MANIFEST), directory, SHA, version)
+            verify_acceptance(read_json(directory / ACCEPTANCE), directory, candidate, digest(directory / MANIFEST))
+            server = json.loads((ROOT / "tests/remote-native/server-lock.json").read_text())
+            if candidate["server"] != server:
+                raise SystemExit("Candidate and release lock different server sources")
+            downloaded = read_json(directory / "client-candidate-download.json")
+            origin = read_json(directory / "client-acceptance-origin.json")
+            if (downloaded.get("source_revision") != SHA or downloaded.get("candidate_sha256") != digest(directory / MANIFEST) or
+                    downloaded.get("signatures_verified") is not True or downloaded.get("run_attestations_verified") is not True or
+                    not re.fullmatch(r"[0-9a-f]{40}", str(downloaded.get("acceptance_revision", ""))) or
+                    origin.get("revision") != downloaded["acceptance_revision"] or origin.get("repository") != "ZHanry/home-tunnel" or
+                    origin.get("manifest_sha256") != digest(directory / ACCEPTANCE)):
+                raise SystemExit("Verified candidate download or reviewed acceptance origin is missing")
+            # A 24-hour soak must not invalidate the immutable build-time scan.
+            verify_windows_evidence(directory, version, SHA, validation_time=timestamp(candidate["created_at"]))
+            verify_windows_evidence(directory, version, SHA, scan_name="windows-final-defender-scan.json")
+            final_scan = read_json(directory / "windows-final-defender-scan.json")
+            if timestamp(final_scan["scanned_at"]) < timestamp(candidate["created_at"]):
+                raise SystemExit("Final Windows rescan must follow candidate creation")
+        else:
+            verify_windows_evidence(directory, version, SHA)
         verify_remote_sdk(directory, version, SHA)
         for abi in ("arm64-v8a", "x86_64"):
             run(sys.executable, str(ROOT / "scripts/package-remote-android-sdk.py"), "--verify", "--abi", abi, "--output", str(directory), "--version", version, "--revision", SHA)
@@ -160,18 +230,18 @@ def validate_windows_archive(bundle):
         seen.add(normalized)
 
 
-def verify_windows_evidence(directory, version, revision):
+def verify_windows_evidence(directory, version, revision, *, validation_time=None, scan_name="windows-defender-scan.json"):
     """Bind real antivirus and installer checks to the exact bytes being published."""
     from datetime import datetime, timedelta, timezone
     import zipfile
-    scan = json.loads((directory / "windows-defender-scan.json").read_text(encoding="utf-8"))
+    scan = json.loads((directory / scan_name).read_text(encoding="utf-8"))
     install = json.loads((directory / "windows-installer-smoke.json").read_text(encoding="utf-8"))
     for report in (scan, install):
         if report.get("status") != "passed" or report.get("version") != version or report.get("repository_revision") != revision:
             raise SystemExit("Windows release evidence is missing, failed or belongs to another build")
     if scan.get("engine") != "Microsoft Defender" or not scan.get("signature_version") or not scan.get("engine_version"):
         raise SystemExit("Windows antivirus engine identity is missing")
-    now = datetime.now(timezone.utc)
+    now = validation_time or datetime.now(timezone.utc)
     scanned = datetime.fromisoformat(scan["scanned_at"].replace("Z", "+00:00"))
     updated = datetime.fromisoformat(scan["signature_updated_at"].replace("Z", "+00:00"))
     if scanned.tzinfo is None or updated.tzinfo is None or not now - timedelta(days=1) <= scanned <= now + timedelta(minutes=5) or not scanned - timedelta(days=2) <= updated <= scanned + timedelta(minutes=5):
@@ -402,32 +472,8 @@ def verify(directory, rc_tag):
 
 
 def import_native_acceptance():
-    """Bind a maintainer's real-device report to an existing immutable build run."""
-    run_id = os.environ.get('NATIVE_BUILD_RUN_ID', '')
-    raw = os.environ.get('NATIVE_ACCEPTANCE_JSON', '')
-    if not re.fullmatch(r'[1-9][0-9]{0,19}', run_id) or len(raw.encode('utf-8')) > 60000:
-        raise SystemExit('Expected a build run ID and bounded native acceptance JSON')
-    source = api(f'repos/{REPO}/actions/runs/{run_id}')
-    if (source.get('head_sha') != SHA or source.get('event') != 'push' or source.get('conclusion') != 'success' or
-            source.get('path') != '.github/workflows/release.yml' or source.get('repository', {}).get('full_name') != REPO):
-        raise SystemExit('Native acceptance must use the successful release build of this exact tag commit')
-    directory = ROOT / 'release'
-    verify_sealed_files(directory)
-    manifest = json.loads((directory / 'release-manifest.json').read_text(encoding="utf-8"))
-    expected = {'component': COMPONENT, 'version': local_version(), 'repository': REPO, 'revision': SHA,
-                'rc_tag': TAG, 'verification_stage': 'prepared'}
-    if any(manifest.get(key) != value for key, value in expected.items()):
-        raise SystemExit('Downloaded build artifacts do not belong to this prepared release')
-    report = json.loads(raw)
-    path = directory / 'windows-remote-native-acceptance.json'
-    if path.exists():
-        raise SystemExit('Prepared builds must not contain preapproved native acceptance')
-    path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
-    try:
-        required_assets(directory)
-    except BaseException:
-        path.unlink()
-        raise
+    raise SystemExit("Inline acceptance was removed; import the pinned candidate and reviewed hub receipts")
+
 
 def android_controller_sdk_assets(version):
     """Sealed client assets for both production Android controller ABIs."""
@@ -490,7 +536,8 @@ def publish(stable=False):
 if __name__=='__main__':
     action=sys.argv[1]
     if action=='metadata': metadata()
-    elif action=='prepare': seal(for_publication=False)
+    elif action=='candidate-metadata': candidate_metadata()
+    elif action in ('prepare', 'candidate-seal'): seal_candidate()
     elif action=='import-native-acceptance': import_native_acceptance()
     elif action=='seal': seal()
     elif action=='rc': publish()
