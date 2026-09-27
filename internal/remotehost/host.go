@@ -111,12 +111,12 @@ func subset(have, want []string) bool {
 	return seen["view"]
 }
 func sameScopes(a, b []string) bool { return len(a) == len(b) && subset(a, b) }
-func canAutoApprove(grant LocalGrant, session Session, unattendedEnabled bool) bool {
+func canAutoApprove(grant LocalGrant, session Session, unattendedEnabled bool, boundID, boundJKT string) bool {
 	if grant.Revoked || !grant.ExpiresAt.After(time.Now()) || !subset(grant.Permissions, session.Permissions) || grant.ControllerEndpointID != session.ControllerEndpointID {
 		return false
 	}
 	if grant.Mode == "persistent" {
-		return unattendedEnabled && grant.AssistInviteID == ""
+		return unattendedEnabled && grant.AssistInviteID == "" && boundID != "" && grant.ControllerEndpointID == boundID && grant.ControllerJKT == boundJKT && len(boundJKT) == 43
 	}
 	return grant.Mode == "one_session" && grant.OneSessionRequestID == session.SessionRequestID &&
 		(grant.SessionID == "" || grant.SessionID == session.SessionID)
@@ -190,7 +190,7 @@ func (s *Service) ApprovePairing(ctx context.Context, id string, selected []stri
 		return ErrLocalApproval
 	}
 	if mode == "persistent" {
-		if !d.UnattendedEnabled || s.config.LocalAdminCheck == nil || s.config.LocalAdminCheck(ctx) != nil {
+		if !d.UnattendedEnabled || s.config.LocalAdminCheck == nil || s.config.LocalAdminCheck(ctx) != nil || t.ControllerID != d.UnattendedControllerID || t.ControllerJKT != d.UnattendedControllerJKT {
 			return ErrLocalApproval
 		}
 	}
@@ -703,9 +703,9 @@ func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 			}
 		}
 		event := ApprovalEvent{Kind: "session", ID: session.SessionID, ConnectionEpoch: session.ConnectionEpoch, StateVersion: session.StateVersion, ControllerEndpointID: grant.ControllerEndpointID, ControllerThumbprint: grant.ControllerJKT, Permissions: append([]string(nil), session.Permissions...), Mode: grant.Mode, ExpiresAt: sessionApprovalExpiry(session)}
-		unattendedEnabled := s.config.Store.snapshot().UnattendedEnabled
+		snapshot := s.config.Store.snapshot()
 		s.mu.Lock()
-		auto := canAutoApprove(grant, session, unattendedEnabled) && s.autoAttempted[session.SessionID] != session.ConnectionEpoch && s.active == nil
+		auto := canAutoApprove(grant, session, snapshot.UnattendedEnabled, snapshot.UnattendedControllerID, snapshot.UnattendedControllerJKT) && s.autoAttempted[session.SessionID] != session.ConnectionEpoch && s.active == nil
 		if auto {
 			s.autoAttempted[session.SessionID] = session.ConnectionEpoch
 			s.autoApproving[session.SessionID] = session.ConnectionEpoch

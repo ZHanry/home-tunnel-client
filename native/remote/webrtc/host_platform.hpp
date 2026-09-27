@@ -21,7 +21,7 @@ inline constexpr uint64_t HOST_PERMISSIONS=protocol::PERMISSION_VIEW|protocol::P
 using HostInputSink=X11InputSink;
 inline constexpr uint64_t HOST_PERMISSIONS=protocol::PERMISSION_VIEW|protocol::PERMISSION_INPUT_KEYBOARD|protocol::PERMISSION_INPUT_POINTER;
 #endif
-struct HostScreen {webrtc::DesktopCapturer::SourceId id;webrtc::DesktopRect rect;std::wstring device_key;std::string name;};
+struct HostScreen {webrtc::DesktopCapturer::SourceId id;webrtc::DesktopRect rect;std::wstring device_key;std::string name;int dpi_x=0,dpi_y=0,scale_percent=0,origin_x=0,origin_y=0,slot=0;};
 std::vector<HostScreen> host_displays();
 bool host_screen_current(const HostScreen& screen);
 bool host_prepare_process();

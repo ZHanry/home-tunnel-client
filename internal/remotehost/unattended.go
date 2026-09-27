@@ -5,6 +5,23 @@ import (
 	"net/url"
 )
 
+func (s *Service) SetUnattendedController(ctx context.Context, id, jkt string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !validBindingID(id) || len(jkt) != 43 {
+		return ErrLocalApproval
+	}
+	return s.config.Store.update(func(state *diskState) error {
+		if state.UnattendedEnabled && (state.UnattendedControllerID != id || state.UnattendedControllerJKT != jkt) {
+			return ErrLocalApproval
+		}
+		state.UnattendedControllerID = id
+		state.UnattendedControllerJKT = jkt
+		return nil
+	})
+}
+
 func (s *Service) SetUnattendedEnabled(ctx context.Context, enabled bool) error {
 	if enabled {
 		if s.config.LocalAdminCheck == nil || s.config.LocalAdminCheck(ctx) != nil {
@@ -13,6 +30,8 @@ func (s *Service) SetUnattendedEnabled(ctx context.Context, enabled bool) error 
 	} else {
 		if err := s.config.Store.update(func(state *diskState) error {
 			revokePersistentGrants(state)
+			state.UnattendedControllerID = ""
+			state.UnattendedControllerJKT = ""
 			return nil
 		}); err != nil {
 			return err
@@ -42,6 +61,9 @@ func (s *Service) SetUnattendedEnabled(ctx context.Context, enabled bool) error 
 	if enabled && (err != nil || !caps.Available || caps.Status != "ready" || !caps.UnattendedEnabled) {
 		return ErrUnavailable
 	}
+	if enabled && (!validBindingID(d.UnattendedControllerID) || len(d.UnattendedControllerJKT) != 43) {
+		return ErrLocalApproval
+	}
 	if err != nil || !caps.Available {
 		caps = Capabilities{Permissions: []string{"view"}, Status: "unavailable"}
 	}
@@ -50,7 +72,7 @@ func (s *Service) SetUnattendedEnabled(ctx context.Context, enabled bool) error 
 		"endpoint_id":        d.EndpointID,
 		"local_enabled":      true,
 		"capability_version": d.CapabilityVersion + 1,
-		"capabilities":       map[string]any{"permissions": caps.Permissions, "unattended_enabled": caps.UnattendedEnabled, "displays": caps.Displays, "codecs": caps.Codecs, "status": caps.Status},
+		"capabilities":       wireCapabilities(caps, true, s.discovered.Load()),
 	}
 	proof, err := signJWS(s.key, "ht-rd-capabilities+jwt", payload, false)
 	if err != nil {

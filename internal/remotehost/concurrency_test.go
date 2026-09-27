@@ -284,21 +284,21 @@ func TestOneSessionGrantAutoApprovalFallsBackToLocalDecision(t *testing.T) {
 func TestAutoApprovalIsLimitedToOriginalOneSessionGrant(t *testing.T) {
 	grant := LocalGrant{Mode: "one_session", OneSessionRequestID: "request", ControllerEndpointID: "controller", Permissions: []string{"view"}, ExpiresAt: time.Now().Add(time.Minute)}
 	session := Session{SessionRef: SessionRef{SessionID: "session"}, SessionRequestID: "request", ControllerEndpointID: "controller", Permissions: []string{"view"}}
-	if !canAutoApprove(grant, session, false) {
+	if !canAutoApprove(grant, session, false, "", "") {
 		t.Fatal("locally approved one-session grant was not reusable for its request")
 	}
 	grant.SessionID = "another-session"
-	if canAutoApprove(grant, session, false) {
+	if canAutoApprove(grant, session, false, "", "") {
 		t.Fatal("consumed grant approved another session")
 	}
 	grant.SessionID = session.SessionID
 	grant.Mode = "persistent"
-	if canAutoApprove(grant, session, false) {
+	if canAutoApprove(grant, session, false, "", "") {
 		t.Fatal("persistent grant bypassed explicit unattended setup")
 	}
 	grant.Mode = "one_session"
 	grant.Revoked = true
-	if canAutoApprove(grant, session, false) {
+	if canAutoApprove(grant, session, false, "", "") {
 		t.Fatal("revoked grant approved a session")
 	}
 }

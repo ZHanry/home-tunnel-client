@@ -38,23 +38,25 @@ type Options struct {
 }
 
 type Server struct {
-	options            Options
-	parent             context.Context
-	mu                 sync.Mutex
-	cancel             context.CancelFunc
-	done               chan struct{}
-	running            bool
-	quit               func()
-	show               func()
-	openRemote         func(string) error
-	closeRemote        func()
-	remoteMu           sync.Mutex
-	remoteHost         *localRemoteHost
-	remoteBlocked      bool
-	setEmergencyHotkey func(string) error
-	accountMu          sync.Mutex
-	accountGeneration  uint64
-	accountCancel      context.CancelFunc
+	options             Options
+	parent              context.Context
+	mu                  sync.Mutex
+	cancel              context.CancelFunc
+	done                chan struct{}
+	running             bool
+	quit                func()
+	show                func()
+	openRemote          func(string) error
+	closeRemote         func()
+	remoteMu            sync.Mutex
+	remoteHost          *localRemoteHost
+	remoteBlocked       bool
+	setEmergencyHotkey  func(string) error
+	serviceActions      sync.Mutex
+	serviceEmergencyKey string
+	accountMu           sync.Mutex
+	accountGeneration   uint64
+	accountCancel       context.CancelFunc
 }
 
 func New(options Options) *Server {

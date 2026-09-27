@@ -15,18 +15,32 @@ var ErrAuthorization = errors.New("RD_AUTHORIZATION_INVALID")
 var ErrLocalApproval = errors.New("RD_LOCAL_APPROVAL_REQUIRED")
 
 type Display struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	Slot         int    `json:"slot,omitempty"`
+	WidthPx      int    `json:"width_px,omitempty"`
+	HeightPx     int    `json:"height_px,omitempty"`
+	DpiX         int    `json:"dpi_x,omitempty"`
+	DpiY         int    `json:"dpi_y,omitempty"`
+	ScalePercent int    `json:"scale_percent,omitempty"`
+	OriginX      int    `json:"origin_x,omitempty"`
+	OriginY      int    `json:"origin_y,omitempty"`
+}
+type NativeCapability struct {
+	Schema   int               `json:"schema"`
+	Reporter string            `json:"reporter"`
+	Backends map[string]string `json:"backends"`
 }
 type Capabilities struct {
-	Available         bool      `json:"available"`
-	Permissions       []string  `json:"permissions"`
-	UnattendedEnabled bool      `json:"unattended_enabled"`
-	Displays          []Display `json:"displays"`
-	Codecs            []string  `json:"codecs"`
-	Status            string    `json:"status"`
+	Available         bool              `json:"available"`
+	Permissions       []string          `json:"permissions"`
+	UnattendedEnabled bool              `json:"unattended_enabled"`
+	Displays          []Display         `json:"displays"`
+	Codecs            []string          `json:"codecs"`
+	Status            string            `json:"status"`
+	Native            *NativeCapability `json:"native,omitempty"`
 }
 type SessionRef struct {
 	SessionID       string `json:"session_id"`

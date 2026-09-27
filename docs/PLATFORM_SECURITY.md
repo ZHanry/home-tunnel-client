@@ -1,6 +1,6 @@
 # Credentials, diagnostics and publisher signatures
 
-Home Tunnel 7.0.0 stores the device credential using **Windows DPAPI** for the
+Home Tunnel stores the device credential using **Windows DPAPI** for the
 current OS account or **macOS Keychain**. Existing plaintext state migrates when
 saved successfully. Losing the OS key or switching OS users can require device
 re-enrollment. A credential-store failure does not silently downgrade encryption.
@@ -21,10 +21,40 @@ topology. Inspect a bundle before voluntarily sharing it. Diagnostics do not
 upload anything. Android provides a redacted management-side diagnostic report;
 it cannot probe the home host as if it were the Agent.
 
+## Windows service host
+
+The optional Windows service is installed only when an administrator chooses
+that unchecked task. Installation does not enable unattended access. Enabling
+access uses a local UAC helper and binds one controller endpoint and public-key
+thumbprint. Portable and per-user installs retain the ordinary desktop host.
+
+The service owns one durable endpoint and a hash-pinned native worker in the
+active console session. Management pipes verify the installed peer image, PID,
+user SID, session and elevation. The worker verifies its pipe server against
+SCM. A two-second service delegation enables the backend; secure desktop access
+also requires local opt-in and the controller identity independently verified by
+the native ticket/lease/grant handshake. Discovery alone grants no remote access.
+
+The protected machine store uses DPAPI **under LocalSystem**, without
+`CRYPTPROTECT_LOCAL_MACHINE`. It contains the endpoint key, server trust and
+revocation state, not account passwords or login tokens. Endpoint handoff disables
+the tray owner first; retries do not replace newer service grants or tombstones.
+Emergency disable cancels the worker and persists local revocation without
+waiting for the network.
+
+File access impersonates the signed-in endpoint owner's exact logon token;
+handles cannot cross identities or logon sessions. Clipboard requires that user
+context and the ordinary desktop. The input-release guard survives a worker
+crash solely to release recorded held input. System audio remains unavailable.
+
+These are implemented controls, not a claim of final runtime acceptance. Full
+native builds and installed Windows VM tests of lock, sign-in, UAC, session
+switches, upgrade and restart must pass before the 10.0.0 release.
+
 ## Current signing state
 
 **No Windows Authenticode or Apple Developer ID identity is currently configured.**
-7.0.0 Windows/macOS packages are explicitly marked unsigned in
+Windows/macOS packages without configured publisher identities are marked unsigned in
 `platform-signing.json`. Platform installation prompts may remain. SHA-256,
 Sigstore provenance, antivirus scanning and installer tests do not replace an OS
 publisher certificate. Do not disable OS signature verification to hide prompts.

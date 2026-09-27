@@ -17,7 +17,7 @@ VersionInfoVersion={#AppNumericVersion}
 AppPublisher=Home Tunnel
 AppPublisherURL=https://github.com/ZHanry/home-tunnel-client
 AppSupportURL=https://github.com/ZHanry/home-tunnel-client/issues
-DefaultDirName={localappdata}\Home Tunnel
+DefaultDirName={code:DefaultInstallDir}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 LicenseFile={#SourceDir}\LICENSE.txt
@@ -27,6 +27,7 @@ SetupIconFile={#SourceDir}\HomeTunnel.ico
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\home-tunnel-gui.exe
@@ -42,9 +43,11 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "service"; Description: "安装系统服务（无人值守保持关闭） / Install the system service (unattended access stays off)"; GroupDescription: "Windows service"; Flags: unchecked; Check: IsAdminInstallMode
 
 [Files]
 Source: "{#SourceDir}\home-tunnel-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\home-tunnel-service.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\home-tunnel-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\home_tunnel_remote_host.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\remote-host-provenance.json"; DestDir: "{app}"; Flags: ignoreversion
@@ -71,7 +74,12 @@ Name: "{group}\Uninstall Home Tunnel"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Home Tunnel"; Filename: "{app}\home-tunnel-gui.exe"; IconFilename: "{app}\HomeTunnel.ico"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\home-tunnel-service.exe"; Parameters: "install"; Tasks: service; Flags: runhidden waituntilterminated; StatusMsg: "Installing Home Tunnel service"
+Filename: "{app}\home-tunnel-service.exe"; Parameters: "start"; Tasks: service; Flags: runhidden waituntilterminated; StatusMsg: "Starting Home Tunnel service"
 Filename: "{app}\home-tunnel-gui.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{app}\home-tunnel-service.exe"; Parameters: "uninstall"; Flags: runhidden waituntilterminated skipifdoesntexist
 
 [Code]
 function OpenUpgradeTarget(FileName: String; DesiredAccess, ShareMode: LongWord;
@@ -100,12 +108,27 @@ begin
     CloseUpgradeTarget(Handle);
 end;
 
+function DefaultInstallDir(Param: String): String;
+begin
+  if IsAdminInstallMode then
+    Result := ExpandConstant('{autopf}\Home Tunnel')
+  else
+    Result := ExpandConstant('{localappdata}\Home Tunnel');
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+  ServiceExe: String;
 begin
   Result := '';
+  ServiceExe := ExpandConstant('{app}\home-tunnel-service.exe');
+  if FileExists(ServiceExe) then
+    Exec(ServiceExe, 'stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if not UpgradeTargetAvailable('home-tunnel-gui.exe') or
      not UpgradeTargetAvailable('home-tunnel-agent.exe') or
-     not UpgradeTargetAvailable('home_tunnel_remote_host.exe') then
+     not UpgradeTargetAvailable('home_tunnel_remote_host.exe') or
+     not UpgradeTargetAvailable('home-tunnel-service.exe') then
   begin
     if ActiveLanguage = 'chinesesimplified' then
       Result := '请先在 Home Tunnel 界面或托盘选择“退出程序”，等待远程会话结束、按键释放和后台进程退出，然后重试。关闭窗口只会隐藏到托盘。若仍无法继续，请检查安装目录写入权限。'

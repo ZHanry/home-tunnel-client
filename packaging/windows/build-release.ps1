@@ -61,6 +61,14 @@ Copy-Item -LiteralPath $nativeSources -Destination (Join-Path $OutputDir 'remote
 $agentSha = (Get-FileHash -LiteralPath $agent -Algorithm SHA256).Hash.ToLowerInvariant()
 $nativeSha = (Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash.ToLowerInvariant()
 & (Join-Path $PSScriptRoot 'build-gui.ps1') -Version $Version -OutputDir $OutputDir -WindRes $WindRes -AgentVersion $agentVersion -ExpectedAgentSHA256 $agentSha -ExpectedRemoteHostSHA256 $nativeSha
+& (Join-Path $PSScriptRoot 'sign-release.ps1') -Files @($gui)
+$service = Join-Path $OutputDir "home-tunnel-service.exe"
+$guiSha = (Get-FileHash -LiteralPath (Join-Path $OutputDir 'home-tunnel-gui.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+Push-Location $workspace
+go build -trimpath -ldflags "-s -w -buildid= -X main.expectedRemoteHostSHA256=$nativeSha -X main.expectedGUISHA256=$guiSha" -o $service ./cmd/home-tunnel-service
+if ($LASTEXITCODE -ne 0) { throw "service host build failed" }
+Pop-Location
+& (Join-Path $PSScriptRoot 'sign-release.ps1') -Files @($service)
 $nativeEvidence = [ordered]@{
     schema_version = 1
     version = $Version
@@ -76,7 +84,6 @@ $nativeEvidence = [ordered]@{
 [IO.File]::WriteAllText((Join-Path $OutputDir 'remote-host-provenance.json'), ($nativeEvidence | ConvertTo-Json -Depth 8) + [char]10, [Text.UTF8Encoding]::new($false))
 $publicNativeBuild = $nativeRecord | Select-Object -Property * -ExcludeProperty executable
 [IO.File]::WriteAllText((Join-Path $OutputDir 'remote-host-build.json'), ($publicNativeBuild | ConvertTo-Json -Depth 12) + [char]10, [Text.UTF8Encoding]::new($false))
-& (Join-Path $PSScriptRoot 'sign-release.ps1') -Files @($gui)
 $icon = Join-Path $workspace "agent\assets\HomeTunnel.ico"
 Copy-Item -LiteralPath $icon -Destination (Join-Path $OutputDir "HomeTunnel.ico") -Force
 if ($agentVersion -ne $Version) { throw 'Client and first-party Agent versions must match' }
@@ -86,7 +93,7 @@ $signingEvidence = [ordered]@{
     version = $Version
     platform = 'windows'
     mode = $(if ($env:WINDOWS_SIGNING_PFX_BASE64) { 'authenticode-sha256-timestamped' } else { 'unsigned-no-certificate-configured' })
-    files = @(@($agent, $gui, $native) | ForEach-Object { [ordered]@{
+    files = @(@($agent, $gui, $native, $service) | ForEach-Object { [ordered]@{
         name = [IO.Path]::GetFileName($_)
         sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
         signature_status = [string](Get-AuthenticodeSignature -LiteralPath $_).Status
@@ -119,14 +126,14 @@ $signingEvidence = [ordered]@{
     version = $Version
     platform = 'windows'
     mode = $(if ($env:WINDOWS_SIGNING_PFX_BASE64) { 'authenticode-sha256-timestamped' } else { 'unsigned-no-certificate-configured' })
-    files = @(@($agent, $gui, $native, $setup) | ForEach-Object { [ordered]@{
+    files = @(@($agent, $gui, $native, $service, $setup) | ForEach-Object { [ordered]@{
         name = [IO.Path]::GetFileName($_)
         sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
         signature_status = [string](Get-AuthenticodeSignature -LiteralPath $_).Status
     } })
 }
 [IO.File]::WriteAllText((Join-Path $OutputDir 'windows-platform-signing.json'), ($signingEvidence | ConvertTo-Json -Depth 5) + [char]10, [Text.UTF8Encoding]::new($false))
-$packageFiles = @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe', 'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', 'HomeTunnel.ico', 'LICENSE', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'README.en.md', 'docs', 'contracts', 'packaging') | ForEach-Object { Join-Path $OutputDir $_ }
+$packageFiles = @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home-tunnel-service.exe', 'home_tunnel_remote_host.exe', 'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', 'HomeTunnel.ico', 'LICENSE', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'README.en.md', 'docs', 'contracts', 'packaging') | ForEach-Object { Join-Path $OutputDir $_ }
 Compress-Archive -LiteralPath $packageFiles -DestinationPath $zip -Force
 $zipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$zip.sha256", "$zipSha  $zipName" + [char]10, [Text.UTF8Encoding]::new($false))

@@ -25,6 +25,15 @@ type Status struct {
 	EmergencyKey      string          `json:"emergency_key"`
 	ErrorCode         string          `json:"error_code,omitempty"`
 	Files             FileState       `json:"files"`
+	Service           ServiceSurface  `json:"service"`
+}
+
+type ServiceSurface struct {
+	Installed         bool   `json:"installed"`
+	Running           bool   `json:"running"`
+	UnattendedEnabled bool   `json:"unattended_enabled"`
+	SecureDesktop     string `json:"secure_desktop"`
+	Detail            string `json:"detail"`
 }
 
 func (s *Service) State(ctx context.Context) Status {

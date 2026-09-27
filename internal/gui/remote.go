@@ -19,6 +19,7 @@ import (
 	"github.com/ZHanry/home-tunnel-client/internal/remote"
 	"github.com/ZHanry/home-tunnel-client/internal/remotehost"
 	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
+	"github.com/ZHanry/home-tunnel-client/internal/windowshost"
 )
 
 // A manager belongs to one device and origin. Cancellation invalidates pending
@@ -154,7 +155,19 @@ func (host *localRemoteHost) start() {
 	host.running = true
 	host.lastError = ""
 	host.mu.Unlock()
+	release, owned, ownerErr := windowshost.AcquireOwner(host.key)
+	if ownerErr != nil || owned {
+		if release != nil {
+			release()
+		}
+		host.mu.Lock()
+		host.running = false
+		host.lastError = "RD_BACKEND_UNAVAILABLE"
+		host.mu.Unlock()
+		return
+	}
 	go func() {
+		defer release()
 		err := host.service.Run(host.ctx)
 		host.mu.Lock()
 		defer host.mu.Unlock()
@@ -167,6 +180,13 @@ func (host *localRemoteHost) start() {
 
 // Stop local input/media before potentially slow tunnel or server logout.
 func (server *Server) stopRemote(disable bool) {
+	if disable {
+		ctx, done := context.WithTimeout(context.Background(), 2*time.Second)
+		if state, err := (statepkg.Store{Path: server.options.StatePath}).Load(); err == nil && state.Enrolled() {
+			_, _ = windowshost.Control(ctx, windowshost.ControlRequest{Operation: "disable", Origin: state.Profile.PublicBaseURL, DeviceID: state.DeviceID})
+		}
+		done()
+	}
 	server.remoteMu.Lock()
 	server.remoteBlocked = true
 	host := server.remoteHost
@@ -196,10 +216,14 @@ func (server *Server) stopRemote(disable bool) {
 func (server *Server) SetEmergencyHotkey(set func(string) error) {
 	server.mu.Lock()
 	server.setEmergencyHotkey = set
+	server.serviceEmergencyKey = ""
 	server.mu.Unlock()
 }
 
 func (server *Server) EmergencyStopRemote() {
+	serviceCtx, serviceDone := context.WithTimeout(context.Background(), 2*time.Second)
+	_, _ = windowshost.Control(serviceCtx, windowshost.ControlRequest{Operation: "emergency_stop"})
+	serviceDone()
 	server.remoteMu.Lock()
 	host := server.remoteHost
 	server.remoteMu.Unlock()
@@ -282,8 +306,18 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 3*time.Second)
 	defer cancel()
-	host, _, err := server.localRemote(ctx)
+	if response, managed := server.serviceRemoteState(ctx); managed {
+		writeJSON(writer, response)
+		return
+	}
+	host, saved, err := server.localRemote(ctx)
 	if err != nil {
+		if errors.Is(err, remotehost.ErrServiceManaged) {
+			if pending, pendingErr := server.pendingServiceState(ctx, saved); pendingErr == nil {
+				writeJSON(writer, pending)
+				return
+			}
+		}
 		writeJSON(writer, map[string]any{"enrolled": false, "enabled": false, "running": false, "capabilities": remote.Unavailable(safeRemoteCode(err)), "error_code": safeRemoteCode(err), "pending": []any{}, "grants": []any{}})
 		return
 	}
@@ -338,6 +372,8 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 		}
 	}
 	host.mu.Unlock()
+	surface := windowshost.Inspect(ctx)
+	status.Service = remotehost.ServiceSurface{Installed: surface.Installed, Running: surface.Running, UnattendedEnabled: surface.UnattendedEnabled, SecureDesktop: surface.SecureDesktop, Detail: surface.Detail}
 	writeJSON(writer, status)
 }
 
@@ -367,23 +403,22 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
-	var body struct {
-		Action          string   `json:"action"`
-		Username        string   `json:"username"`
-		Password        string   `json:"password"`
-		MFACode         string   `json:"mfa_code"`
-		TrustPin        string   `json:"trust_pin"`
-		ID              string   `json:"id"`
-		Kind            string   `json:"kind"`
-		Mode            string   `json:"mode"`
-		Permissions     []string `json:"permissions"`
-		FixedPassword   string   `json:"fixed_password"`
-		EmergencyKey    string   `json:"emergency_key"`
-		ConnectionEpoch int64    `json:"connection_epoch"`
-		StateVersion    int64    `json:"state_version"`
-	}
+	var body windowshost.RemoteAction
+
 	if err := readJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, "Invalid remote action")
+		return
+	}
+	if body.Action == "enable_unattended" {
+		err := server.enableServiceRemote(request.Context(), body)
+		if err != nil {
+			remoteError(writer, err)
+		} else {
+			writeJSON(writer, map[string]bool{"ok": true})
+		}
+		return
+	}
+	if server.serviceRemoteAction(writer, request, body) {
 		return
 	}
 	host, state, err := server.localRemote(request.Context())
@@ -455,8 +490,6 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 			if err == nil {
 				host.start()
 			}
-		case "enable_unattended":
-			err = host.service.SetUnattendedEnabled(ctx, true)
 		case "disable_unattended":
 			err = host.service.SetUnattendedEnabled(ctx, false)
 		case "approve", "reject":

@@ -27,7 +27,8 @@ func (s *Service) serverSTUN(ctx context.Context) ([]string, error) {
 		return nil, ErrAuthorization
 	}
 	var capabilities struct {
-		Remote struct {
+		Features []string `json:"features"`
+		Remote   struct {
 			Enabled  bool `json:"enabled"`
 			Protocol struct {
 				Major int `json:"major"`
@@ -49,6 +50,11 @@ func (s *Service) serverSTUN(ctx context.Context) ([]string, error) {
 	for _, value := range c.STUNURLs {
 		if !validSTUN(value) {
 			return nil, ErrAuthorization
+		}
+	}
+	for _, feature := range capabilities.Features {
+		if feature == "rd_discovered_capabilities" {
+			s.discovered.Store(true)
 		}
 	}
 	return append([]string{}, c.STUNURLs...), nil

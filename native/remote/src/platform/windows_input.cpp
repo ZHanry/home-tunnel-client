@@ -1,5 +1,7 @@
 #if defined(_WIN32)
 #include "windows_input.hpp"
+#include "windows_user.hpp"
+#include "service_pipe_windows.hpp"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -9,6 +11,7 @@
 #include <windows.h>
 #include <array>
 #include <charconv>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <vector>
@@ -20,6 +23,7 @@ constexpr uint32_t ledger_magic=0x48545247;
 struct alignas(8) InputLedger {
     uint32_t magic=ledger_magic;
     DWORD owner_pid=0;
+    DWORD service_session=0;
     volatile LONG active=1;
     volatile LONG stop=0;
     alignas(8) volatile LONG64 heartbeat=0;
@@ -77,7 +81,23 @@ bool pointer_event(int64_t x,int64_t y,INPUT& event){
 }
 bool release_ledger(InputLedger& ledger){
     bool empty=true;
-    const bool ordinary=WindowsInputSink::ordinary_desktop();
+    bool ordinary=WindowsInputSink::injection_allowed();
+    if(ledger.service_session){
+        // Revocation/expiry must not revoke the ability to release our own
+        // previously injected keys. This path emits only ledger-owned UP
+        // events; it cannot start capture, inject text, or press a key.
+        DWORD session=0;
+        ordinary=is_local_system() && ProcessIdToSessionId(GetCurrentProcessId(),&session) &&
+                 session==ledger.service_session;
+        if(ordinary){
+            struct CleanupDesktop {HDESK value=nullptr;~CleanupDesktop(){if(value)CloseDesktop(value);}};
+            static thread_local CleanupDesktop held;
+            HDESK desktop=OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS|DESKTOP_WRITEOBJECTS);
+            ordinary=desktop && SetThreadDesktop(desktop);
+            if(ordinary){if(held.value)CloseDesktop(held.value);held.value=desktop;}
+            else if(desktop)CloseDesktop(desktop);
+        }
+    }
     for(uint16_t usage=0;usage<ledger.keys.size();++usage){
         if(!ledger.keys[usage])continue;
         auto event=key_event(usage,false);
@@ -116,6 +136,8 @@ struct WindowsInputSink::ReleaseGuard {
         ledger=static_cast<InputLedger*>(MapViewOfFile(mapping,FILE_MAP_ALL_ACCESS,0,0,sizeof(InputLedger)));
         if(!ledger)return false;
         new(ledger) InputLedger();ledger->owner_pid=GetCurrentProcessId();ledger->heartbeat=monotonic_ms();
+        if(service_transport_verified() && WindowsInputSink::service_backend_available())
+            ProcessIdToSessionId(GetCurrentProcessId(),&ledger->service_session);
         std::array<wchar_t,32768> filename{};const DWORD length=GetModuleFileNameW(nullptr,filename.data(),static_cast<DWORD>(filename.size()));
         if(!length || length>=filename.size())return false;
         std::wstring command=L"\""+std::wstring(filename.data(),length)+L"\" --input-release-guard=";
@@ -240,12 +262,167 @@ bool WindowsInputSink::ordinary_desktop() {
     CloseDesktop(desktop);
     return read && _wcsicmp(name.data(),L"Default")==0;
 }
+DesktopClass WindowsInputSink::current_desktop() {
+    HDESK desktop=OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS);
+    if(!desktop) return DesktopClass::denied;
+    std::array<wchar_t,64> name{};
+    DWORD needed=0;
+    const bool read=GetUserObjectInformationW(desktop,UOI_NAME,name.data(),static_cast<DWORD>((name.size()-1)*sizeof(wchar_t)),&needed)!=FALSE;
+    CloseDesktop(desktop);
+    if(!read || name[0]==L'\0') return DesktopClass::denied;
+    if(_wcsicmp(name.data(),L"Default")==0) return DesktopClass::ordinary;
+    if(_wcsicmp(name.data(),L"Screen-saver")==0 || _wcsicmp(name.data(),L"Disconnect")==0) return DesktopClass::denied;
+    for(const wchar_t unit:name){
+        if(unit==L'\0') break;
+        if(unit<32 || unit==L'\\' || unit==L'/') return DesktopClass::denied;
+    }
+    return DesktopClass::secure;
+}
+uint8_t adopted_grant_bytes[kDesktopGrantBytes]{};
+bool adopted_grant_ready=false;
+std::mutex desktop_grant_mutex;
+bool service_policy_enabled=false;
+std::string service_bound_id,service_bound_jkt,service_verified_id,service_verified_jkt;
+bool packaged_worker_image() {
+    wchar_t module_path[32768]{};
+    const auto length=GetModuleFileNameW(nullptr,module_path,32767);
+    if(!length || length>=32767) return false;
+    HANDLE file=CreateFileW(module_path,FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE) return false;
+    wchar_t final_path[32768]{};
+    const auto final_length=GetFinalPathNameByHandleW(file,final_path,32767,FILE_NAME_NORMALIZED);
+    CloseHandle(file);
+    if(!final_length || final_length>=32767) return false;
+    std::wstring normalized=final_path;
+    constexpr std::wstring_view prefix=L"\\\\?\\";
+    if(normalized.starts_with(prefix)) normalized.erase(0,prefix.size());
+    wchar_t program_files[MAX_PATH]{};
+    if(!ExpandEnvironmentStringsW(L"%ProgramW6432%",program_files,MAX_PATH)) return false;
+    std::wstring expected=program_files;
+    if(!expected.empty() && expected.back()==L'\\') expected.pop_back();
+    expected+=L"\\Home Tunnel\\home_tunnel_remote_host.exe";
+    return _wcsicmp(normalized.c_str(),expected.c_str())==0;
+}
+DWORD process_session_id() {
+    HANDLE token=nullptr;
+    if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token)) return 0;
+    DWORD session=0,size=sizeof(session);
+    const bool read=GetTokenInformation(token,TokenSessionId,&session,size,&size)!=FALSE;
+    CloseHandle(token);
+    return read?session:0;
+}
+bool WindowsInputSink::adopt_desktop_grant(void* mapping) {
+    if(!is_local_system()) return false;
+    std::lock_guard lock(desktop_grant_mutex);
+    adopted_grant_ready=false;
+    if(!mapping) return true;
+    auto* view=MapViewOfFile(static_cast<HANDLE>(mapping),FILE_MAP_READ,0,0,kDesktopGrantBytes);
+    if(!view) return false;
+    std::memcpy(adopted_grant_bytes,view,kDesktopGrantBytes);
+    UnmapViewOfFile(view);
+    adopted_grant_ready=parse_desktop_grant(adopted_grant_bytes,kDesktopGrantBytes).well_formed;
+    return adopted_grant_ready;
+}
+bool WindowsInputSink::renew_service_desktop(uint32_t session,uint64_t expires,bool enabled,
+                                           std::string_view controller,std::string_view thumbprint) {
+    if(!service_transport_verified() || !is_local_system() ||
+       session==0 || session!=process_session_id() || session!=WTSGetActiveConsoleSessionId())return false;
+    FILETIME time{};GetSystemTimeAsFileTime(&time);
+    ULARGE_INTEGER stamp{};stamp.LowPart=time.dwLowDateTime;stamp.HighPart=time.dwHighDateTime;
+    const auto now=stamp.QuadPart/10000ULL-11644473600000ULL;
+    if(expires<=now || expires-now>2500 || controller.size()>128 || thumbprint.size()>43 ||
+       (enabled && (controller.empty() || thumbprint.size()!=43)))return false;
+    std::lock_guard lock(desktop_grant_mutex);
+    std::memset(adopted_grant_bytes,0,kDesktopGrantBytes);
+    const uint32_t header[]={kDesktopGrantMagic,kDesktopGrantVersion,session};
+    std::memcpy(adopted_grant_bytes,header,sizeof(header));
+    std::memcpy(adopted_grant_bytes+12,&expires,sizeof(expires));
+    adopted_grant_ready=true;
+    service_policy_enabled=enabled;
+    service_bound_id=controller;service_bound_jkt=thumbprint;
+    return true;
+}
+bool valid_service_delegation_locked() {
+    const auto session=process_session_id();
+    if(!adopted_grant_ready || session==0 || !is_local_system() || !packaged_worker_image()) return false;
+    const auto grant=parse_desktop_grant(adopted_grant_bytes,kDesktopGrantBytes);
+    const auto console=WTSGetActiveConsoleSessionId();
+    FILETIME file_time{};GetSystemTimeAsFileTime(&file_time);
+    ULARGE_INTEGER stamp{};stamp.LowPart=file_time.dwLowDateTime;stamp.HighPart=file_time.dwHighDateTime;
+    const uint64_t unix_ms=stamp.QuadPart/10000ULL-11644473600000ULL;
+    return session==console && desktop_grant_accepts(grant,session,unix_ms);
+}
+bool WindowsInputSink::service_backend_available(){
+    std::lock_guard lock(desktop_grant_mutex);
+    return valid_service_delegation_locked();
+}
+bool WindowsInputSink::service_grant_authorized(){
+    std::lock_guard lock(desktop_grant_mutex);
+    return valid_service_delegation_locked() &&
+        service_scope_matches(service_policy_enabled,service_bound_id,service_bound_jkt,
+                              service_verified_id,service_verified_jkt);
+}
+void WindowsInputSink::service_session(std::string_view controller,std::string_view thumbprint){
+    std::lock_guard lock(desktop_grant_mutex);
+    service_verified_id=controller;service_verified_jkt=thumbprint;
+}
+bool WindowsInputSink::injection_allowed() {
+    const auto identity=process_identity();
+    if(!identity.valid) return false;
+    const bool authorized=service_grant_authorized();
+    if(identity.system && !service_backend_available()) return false;
+    return capture_allowed(current_desktop(),authorized);
+}
+bool WindowsInputSink::user_broker_allowed() {
+    return clipboard_allowed(current_desktop(),user_context_available());
+}
+bool WindowsInputSink::adopt_service_user_token(void* token) {
+    const auto console=WTSGetActiveConsoleSessionId();
+    return adopt_user_token(static_cast<HANDLE>(token),console);
+}
+bool attach_authorized_desktop() {
+    if(!WindowsInputSink::injection_allowed()) return false;
+    HDESK desktop=OpenInputDesktop(0,FALSE,DESKTOP_READOBJECTS|DESKTOP_WRITEOBJECTS|DESKTOP_CREATEWINDOW|DESKTOP_SWITCHDESKTOP);
+    if(!desktop) return false;
+    // SetThreadDesktop is thread-scoped; sharing this handle across callback
+    // threads could close the desktop still in use by another thread.
+    struct DesktopHandle { HDESK value=nullptr; ~DesktopHandle(){if(value)CloseDesktop(value);} };
+    static thread_local DesktopHandle held;
+    const bool switched=SetThreadDesktop(desktop)!=FALSE;
+    if(!switched){CloseDesktop(desktop);return false;}
+    if(held.value) CloseDesktop(held.value);
+    held.value=desktop;
+    return true;
+}
+bool WindowsInputSink::prepare_injection() {
+    const auto next=current_desktop();
+    if(desktop_initialized_ && next!=desktop_){
+        if(guard_ && guard_->ledger && lock_ledger(guard_->mutex)){
+            release_ledger(*guard_->ledger);
+            ReleaseMutex(guard_->mutex);
+        }
+        pointer_known_=false;
+        desktop_=next;
+        if(service_backend_available()) attach_authorized_desktop();
+        return false;
+    }
+    desktop_initialized_=true;
+    desktop_=next;
+    if(service_grant_authorized() && next==DesktopClass::secure) attach_authorized_desktop();
+    return injection_allowed();
+}
+bool WindowsInputSink::attach_capture_desktop(){
+    const auto identity=process_identity();
+    if(!identity.valid)return false;
+    if(!identity.system)return ordinary_desktop();
+    return service_backend_available() && attach_authorized_desktop();
+}
 bool WindowsInputSink::key(uint16_t usage,bool down,bool) {
     const auto scan=scan_code(usage);
     if(scan==0 || (down && !ensure_guard()) || !guard_ || !guard_->ledger || !lock_ledger(guard_->mutex))return false;
     bool sent=false;
     if(!down && !guard_->ledger->keys[usage])sent=true;
-    else if(ordinary_desktop() && (!down || (guard_->healthy() && target_focused() &&
+    else if(prepare_injection() && (!down || (guard_->healthy() && target_focused() &&
         (guard_->ledger->keys[usage] || !key_held(usage))))){
         auto event=key_event(usage,down);
         // Persist before injection: a crash after SendInput must still be
@@ -262,7 +439,7 @@ bool WindowsInputSink::button(uint8_t button,bool down) {
     if(button<1 || button>5 || (down && !ensure_guard()) || !guard_ || !guard_->ledger || !lock_ledger(guard_->mutex))return false;
     bool sent=false;
     if(!down && !guard_->ledger->buttons[button-1])sent=true;
-    else if(ordinary_desktop() && (!down || (guard_->healthy() && pointer_known_ && target_at_point(pointer_x_,pointer_y_) &&
+    else if(prepare_injection() && (!down || (guard_->healthy() && pointer_known_ && target_at_point(pointer_x_,pointer_y_) &&
         (guard_->ledger->buttons[button-1] || !button_held(button))))){
         std::array<INPUT,2> events{};events[down?1:0]=button_event(button,down);
         // MOVE completion is asynchronous. Use the button's own validated
@@ -278,11 +455,11 @@ bool WindowsInputSink::button(uint8_t button,bool down) {
     ReleaseMutex(guard_->mutex);return sent;
 }
 bool WindowsInputSink::pointer(uint16_t slot,uint16_t x,uint16_t y) {
-    if(slot!=display_.slot || display_.width<=0 || display_.height<=0 || !ordinary_desktop() || !target_focused() || !ensure_guard()) return false;
+    if(slot!=display_.slot || display_.width<=0 || display_.height<=0 || !prepare_injection() || !target_focused() || !ensure_guard()) return false;
     const int64_t px=int64_t(display_.x)+int64_t(x)*(display_.width-1)/65535;
     const int64_t py=int64_t(display_.y)+int64_t(y)*(display_.height-1)/65535;
     INPUT event{};if(!pointer_event(px,py,event) || !target_at_point(px,py) || !lock_ledger(guard_->mutex))return false;
-    const bool sent=guard_->healthy() && ordinary_desktop() && target_at_point(px,py) && SendInput(1,&event,sizeof(event))==1;
+    const bool sent=guard_->healthy() && injection_allowed() && target_at_point(px,py) && SendInput(1,&event,sizeof(event))==1;
     if(sent){pointer_x_=px;pointer_y_=py;pointer_known_=true;}
     ReleaseMutex(guard_->mutex);return sent;
 }
@@ -300,27 +477,27 @@ bool WindowsInputSink::target_at_point(int64_t x,int64_t y) const {
     return hit && GetAncestor(hit,GA_ROOT)==GetAncestor(window,GA_ROOT);
 }
 bool WindowsInputSink::wheel(int32_t dx,int32_t dy) {
-    if(!ordinary_desktop() || !target_focused() || dx < -12000 || dx>12000 || dy < -12000 || dy>12000 || !ensure_guard())return false;
+    if(!prepare_injection() || !target_focused() || dx < -12000 || dx>12000 || dy < -12000 || dy>12000 || !ensure_guard())return false;
     for(const auto axis:{0,1}) {
         const auto delta=axis? -dy:dx;if(!delta)continue;
         if(!lock_ledger(guard_->mutex))return false;
         std::array<INPUT,2> events{};events[1].type=INPUT_MOUSE;events[1].mi.dwFlags=axis?MOUSEEVENTF_WHEEL:MOUSEEVENTF_HWHEEL;
         events[1].mi.mouseData=static_cast<DWORD>(delta);
-        const bool sent=guard_->healthy() && ordinary_desktop() && pointer_known_ && target_at_point(pointer_x_,pointer_y_) &&
+        const bool sent=guard_->healthy() && injection_allowed() && pointer_known_ && target_at_point(pointer_x_,pointer_y_) &&
             pointer_event(pointer_x_,pointer_y_,events[0]) && SendInput(2,events.data(),sizeof(INPUT))==2;
         ReleaseMutex(guard_->mutex);if(!sent)return false;
     }
     return true;
 }
 bool WindowsInputSink::text(std::string_view text) {
-    if(text.empty() || text.size()>protocol::TEXT_BYTES || !ordinary_desktop() || !target_focused() || !ensure_guard()) return false;
+    if(text.empty() || text.size()>protocol::TEXT_BYTES || !prepare_injection() || !target_focused() || !ensure_guard()) return false;
     const int size=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);
     if(size<=0) return false;
     std::vector<wchar_t> utf16(static_cast<size_t>(size));
     if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),utf16.data(),size)!=size) return false;
     for(const auto unit:utf16) {
         if(!lock_ledger(guard_->mutex))return false;
-        if(!guard_->healthy() || !ordinary_desktop() || !target_focused()) {ReleaseMutex(guard_->mutex);return false;}
+        if(!guard_->healthy() || !injection_allowed() || !target_focused()) {ReleaseMutex(guard_->mutex);return false;}
         std::array<INPUT,2> pair{};
         pair[0].type=pair[1].type=INPUT_KEYBOARD;
         pair[0].ki.wScan=pair[1].ki.wScan=static_cast<WORD>(unit);

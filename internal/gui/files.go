@@ -10,6 +10,7 @@ import (
 
 	"github.com/ZHanry/home-tunnel-client/internal/filedialog"
 	"github.com/ZHanry/home-tunnel-client/internal/remotehost"
+	"github.com/ZHanry/home-tunnel-client/internal/windowshost"
 )
 
 func (server *Server) remoteFiles(writer http.ResponseWriter, request *http.Request) {
@@ -37,6 +38,9 @@ func (server *Server) remoteFiles(writer http.ResponseWriter, request *http.Requ
 	}
 	if body.Action != "send" && body.Action != "receive" && body.Action != "cancel" {
 		remoteError(writer, errors.New("RD_ACTION_INVALID"))
+		return
+	}
+	if server.serviceRemoteFiles(writer, request, windowshost.FileAction{SessionRef: body.SessionRef, Action: body.Action, ID: body.ID}) {
 		return
 	}
 	host, _, err := server.localRemote(request.Context())

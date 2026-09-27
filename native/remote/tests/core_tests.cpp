@@ -1,4 +1,5 @@
 #include "home_tunnel/remote.h"
+#include "platform/desktop_gate.hpp"
 #include "protocol.hpp"
 #include "session_gate.hpp"
 #include "crypto.hpp"
@@ -265,6 +266,45 @@ void signature_verification() {
 #endif
 }
 }
+void desktop_gate() {
+    uint8_t grant[kDesktopGrantBytes]{};
+    grant[0]=0x47;grant[1]=0x44;grant[2]=0x54;grant[3]=0x48;grant[4]=1;grant[8]=2;
+    grant[12]=0x00;grant[13]=0xE1;grant[14]=0xF5;grant[15]=0x05;
+    auto parsed=parse_desktop_grant(grant,sizeof(grant));
+    CHECK(parsed.well_formed && parsed.session_id==2 && parsed.expires_unix_ms==100000000);
+    CHECK(desktop_grant_accepts(parsed,2,99999999));
+    CHECK(!desktop_grant_accepts(parsed,2,100000000));
+    CHECK(!desktop_grant_accepts(parsed,3,1));
+    grant[0]=0;CHECK(!parse_desktop_grant(grant,sizeof(grant)).well_formed);
+    CHECK(!parse_desktop_grant(grant,sizeof(grant)-1).well_formed);
+    CHECK(capture_allowed(DesktopClass::ordinary,false));
+    CHECK(!capture_allowed(DesktopClass::secure,false));
+    CHECK(capture_allowed(DesktopClass::secure,true));
+    CHECK(!capture_allowed(DesktopClass::denied,true));
+    const std::string controller="controller-endpoint", thumbprint(43,'A');
+    CHECK(service_scope_matches(true,controller,thumbprint,controller,thumbprint));
+    CHECK(!service_scope_matches(false,controller,thumbprint,controller,thumbprint));
+    CHECK(!service_scope_matches(true,controller,thumbprint,"", ""));
+    CHECK(!service_scope_matches(true,controller,thumbprint,"another-controller",thumbprint));
+    CHECK(!service_scope_matches(true,controller,thumbprint,controller,std::string(43,'B')));
+    CHECK(!service_scope_matches(true,"",thumbprint,"",thumbprint));
+    CHECK(!service_scope_matches(true,controller,"short",controller,"short"));
+    // A local opt-in does not permit a session whose verified identity is
+    // missing, stale, or belongs to another controller.
+    CHECK(!capture_allowed(DesktopClass::secure,service_scope_matches(true,controller,thumbprint,"", "")));
+    CHECK(!capture_allowed(DesktopClass::secure,service_scope_matches(false,controller,thumbprint,controller,thumbprint)));
+    CHECK(clipboard_allowed(DesktopClass::ordinary,true));
+    CHECK(!clipboard_allowed(DesktopClass::secure,true));
+    CHECK(!clipboard_allowed(DesktopClass::ordinary,false));
+    CHECK(files_allowed(DesktopClass::secure,true));
+    CHECK(!files_allowed(DesktopClass::secure,false));
+    CHECK(!files_allowed(DesktopClass::denied,true));
+    CHECK(transition_releases_input(DesktopClass::ordinary,DesktopClass::secure));
+    CHECK(!transition_releases_input(DesktopClass::ordinary,DesktopClass::ordinary));
+    CHECK(protected_worker_path("C:\\Program Files\\Home Tunnel\\home_tunnel_remote_host.exe","C:\\Program Files"));
+    CHECK(!protected_worker_path("C:\\Users\\Public\\Home Tunnel\\home_tunnel_remote_host.exe","C:\\Users\\Public"));
+    CHECK(!protected_worker_path("C:\\Program Files\\Home Tunnel\\..\\other.exe","C:\\Program Files"));
+}
 int main() {
     android::SurfaceLifecycle surface;
     CHECK(surface.Replace(1, true, 100)); CHECK(!surface.presented());
@@ -279,7 +319,7 @@ int main() {
     CHECK(!surface.Presented(2, 13)); CHECK(!surface.Expired(15999));
     CHECK(surface.Presented(4, 1)); CHECK(!surface.Expired(999999));
     CHECK(!surface.Presented(4, 2));
-    framing();watchdog_and_epoch();heartbeat_replay_cannot_hold_input();network_gate();button_coordinates_and_watchdog();pointer_wheel_text_and_release();rejected_release_blocks_reenable();lease_and_isolation();abi_contract();callback_quiescence();transcript();signature_verification();
+    framing();watchdog_and_epoch();heartbeat_replay_cannot_hold_input();network_gate();button_coordinates_and_watchdog();pointer_wheel_text_and_release();rejected_release_blocks_reenable();lease_and_isolation();abi_contract();callback_quiescence();transcript();signature_verification();desktop_gate();
 #if defined(_WIN32)
     CHECK(WindowsInputSink::scan_code(4)==0x1e && WindowsInputSink::scan_code(224)==0x1d && WindowsInputSink::scan_code(228)==0xe01d);
     CHECK(WindowsInputSink::scan_code(0)==0 && WindowsInputSink::scan_code(300)==0);

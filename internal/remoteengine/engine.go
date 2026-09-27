@@ -64,7 +64,7 @@ type response struct {
 }
 
 type Engine struct {
-	command       *exec.Cmd
+	process       Process
 	input         io.WriteCloser
 	output        io.ReadCloser
 	events        chan remotehost.EngineEvent
@@ -84,6 +84,19 @@ type Engine struct {
 }
 
 var _ remotehost.HostEngine = (*Engine)(nil)
+
+// Process owns the trusted worker's lifetime. Service workers use an
+// authenticated cross-session pipe instead of inheriting session-0 handles.
+type Process interface {
+	ProcessID() int
+	Wait() error
+	Kill() error
+}
+
+type commandProcess struct{ *exec.Cmd }
+
+func (p commandProcess) ProcessID() int { return p.Process.Pid }
+func (p commandProcess) Kill() error    { return p.Process.Kill() }
 
 // New accepts installation metadata from the verified local release manifest.
 func New(parent context.Context, options Options) (*Engine, error) {
@@ -113,7 +126,16 @@ func New(parent context.Context, options Options) (*Engine, error) {
 		_ = output.Close()
 		return nil, err
 	}
-	engine := &Engine{command: command, input: input, output: output, events: make(chan remotehost.EngineEvent), done: make(chan struct{}), stopped: make(chan struct{}), pending: map[uint64]chan response{}, eventWake: make(chan struct{}, 1), eventProgress: map[fileEventKey]*queuedEvent{}}
+	return NewTransport(parent, commandProcess{command}, input, output)
+}
+
+// NewTransport is only for locally verified workers. The caller must pin the
+// image and authenticate the IPC peer before transferring ownership here.
+func NewTransport(parent context.Context, process Process, input io.WriteCloser, output io.ReadCloser) (*Engine, error) {
+	if process == nil || input == nil || output == nil || process.ProcessID() <= 0 {
+		return nil, errors.New("invalid native host transport")
+	}
+	engine := &Engine{process: process, input: input, output: output, events: make(chan remotehost.EngineEvent), done: make(chan struct{}), stopped: make(chan struct{}), pending: map[uint64]chan response{}, eventWake: make(chan struct{}, 1), eventProgress: map[fileEventKey]*queuedEvent{}}
 	go engine.dispatchEvents()
 	go engine.read()
 	go func() {
@@ -128,7 +150,9 @@ func New(parent context.Context, options Options) (*Engine, error) {
 		ABI           int    `json:"abi"`
 		MaxFrameBytes int    `json:"max_frame_bytes"`
 	}
-	if err = engine.call(parent, "hello", struct{}{}, &hello); err != nil || hello.Version != model.Version || hello.ABI != 1 || hello.MaxFrameBytes != maximumFrame {
+	helloCtx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	if err := engine.call(helloCtx, "hello", struct{}{}, &hello); err != nil || hello.Version != model.Version || hello.ABI != 1 || hello.MaxFrameBytes != maximumFrame {
 		_ = engine.Shutdown()
 		return nil, errors.New("native host version/ABI does not match this application")
 	}
@@ -162,6 +186,10 @@ func verifyExecutable(options Options) error {
 	return nil
 }
 
+// VerifyExecutable applies the same immutable package digest check to the
+// service launcher. Its protected-path check and open-file pin are additional.
+func VerifyExecutable(options Options) error { return verifyExecutable(options) }
+
 func environment() []string {
 	allowed := map[string]bool{"SYSTEMROOT": true, "WINDIR": true, "TEMP": true, "TMP": true, "USERPROFILE": true, "HOME": true, "LANG": true, "LC_ALL": true,
 		"DISPLAY": true, "XAUTHORITY": true, "XDG_SESSION_TYPE": true, "XDG_SESSION_ID": true, "XDG_RUNTIME_DIR": true, "WAYLAND_DISPLAY": true}
@@ -188,7 +216,8 @@ func (e *Engine) fail(err error) {
 			select {
 			case <-e.stopped:
 			case <-time.After(4 * time.Second):
-				_ = e.command.Process.Kill()
+				_ = e.process.Kill()
+				_ = e.output.Close()
 			}
 		}()
 	})
@@ -201,7 +230,7 @@ func (e *Engine) read() {
 		// releasing input. The fail deadline still bounds a malformed worker.
 		_, _ = io.Copy(io.Discard, e.output)
 		_ = e.output.Close()
-		_ = e.command.Wait()
+		_ = e.process.Wait()
 	}()
 	for {
 		var size uint32
@@ -554,10 +583,35 @@ func (e *Engine) RespondProof(ctx context.Context, ref remotehost.SessionRef, re
 	}{ref, request, signature}, nil)
 }
 func (e *Engine) Events() <-chan remotehost.EngineEvent { return e.events }
+func (e *Engine) Done() <-chan struct{}                 { return e.stopped }
 
 // ProcessID identifies this instance's worker for local lifecycle diagnostics.
 // It is never exposed to a browser or accepted as a remote command target.
-func (e *Engine) ProcessID() int { return e.command.Process.Pid }
+func (e *Engine) ProcessID() int { return e.process.ProcessID() }
+
+// DelegateDesktop renews only OS desktop access; native signed remote session
+// and permission checks remain mandatory and independent.
+type DesktopPolicy struct {
+	Enabled      bool   `json:"enabled"`
+	ControllerID string `json:"controller_id"`
+	Thumbprint   string `json:"thumbprint"`
+}
+
+func (e *Engine) DelegateDesktop(ctx context.Context, session uint32, expires time.Time, policy DesktopPolicy) error {
+	return e.call(ctx, "service_desktop", struct {
+		Session uint32        `json:"session"`
+		Expires int64         `json:"expires_unix_ms"`
+		Policy  DesktopPolicy `json:"policy"`
+	}{session, expires.UnixMilli(), policy}, nil)
+}
+
+// AdoptUserToken consumes a handle duplicated into this specific worker.
+// Zero revokes the user context on logoff.
+func (e *Engine) AdoptUserToken(ctx context.Context, handle uintptr) error {
+	return e.call(ctx, "user_context", struct {
+		Handle uint64 `json:"handle"`
+	}{uint64(handle)}, nil)
+}
 
 // Diagnostics reports bounded counters, never injected input values or content.
 func (e *Engine) Diagnostics(ctx context.Context) (map[string]json.RawMessage, error) {

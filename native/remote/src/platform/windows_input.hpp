@@ -1,6 +1,7 @@
 #pragma once
 #if defined(_WIN32)
 #include "../session_gate.hpp"
+#include "desktop_gate.hpp"
 #include "display_geometry.hpp"
 #include <cstdint>
 #include <memory>
@@ -23,6 +24,17 @@ public:
     bool wheel(int32_t dx, int32_t dy) override;
     static uint16_t scan_code(uint16_t usage);
     static bool ordinary_desktop();
+    static bool service_grant_authorized();
+    static bool service_backend_available();
+    static bool injection_allowed();
+    static bool user_broker_allowed();
+    static DesktopClass current_desktop();
+    static bool adopt_service_user_token(void* token);
+    static bool adopt_desktop_grant(void* mapping);
+    static bool renew_service_desktop(uint32_t session, uint64_t expires_unix_ms, bool enabled,
+                                     std::string_view controller,std::string_view thumbprint);
+    static void service_session(std::string_view verified_controller,std::string_view verified_thumbprint);
+    static bool attach_capture_desktop();
     // Must be called by the authenticated session's independent 250 ms tick.
     // A stopped or expired guard can never be rearmed by a later input event.
     bool watchdog_tick();
@@ -32,6 +44,7 @@ public:
 private:
     struct ReleaseGuard;
     bool ensure_guard();
+    bool prepare_injection();
     bool target_focused() const;
     bool target_at_point(int64_t x, int64_t y) const;
     DisplayGeometry display_;
@@ -40,6 +53,8 @@ private:
     bool guard_failed_ = false;
     int64_t pointer_x_ = 0, pointer_y_ = 0;
     bool pointer_known_ = false;
+    DesktopClass desktop_ = DesktopClass::none;
+    bool desktop_initialized_ = false;
 };
 }
 #endif

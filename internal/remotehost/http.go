@@ -14,15 +14,19 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type Config struct {
-	Origin     string
-	Store      *Store
-	Engine     HostEngine
-	HTTPClient *http.Client
-	TLSConfig  *tls.Config
+	// ServiceOwned is set only by the installed local service after an explicit
+	// endpoint handoff. A tray must not run a second copy of that identity.
+	ServiceOwned bool
+	Origin       string
+	Store        *Store
+	Engine       HostEngine
+	HTTPClient   *http.Client
+	TLSConfig    *tls.Config
 	// The existing account API supplies a temporary management access token only
 	// during explicit enrollment/reauthentication. It is never persisted here.
 	AccountToken func(context.Context) (string, error)
@@ -68,6 +72,7 @@ type Service struct {
 	autoPairAttempted map[string]bool
 	approvals         chan ApprovalEvent
 	running           bool
+	discovered        atomic.Bool
 }
 
 func New(config Config) (*Service, error) {
@@ -90,6 +95,9 @@ func New(config Config) (*Service, error) {
 	u.Path = ""
 	origin := strings.TrimRight(u.String(), "/")
 	saved := config.Store.snapshot()
+	if saved.ServiceManaged && !config.ServiceOwned {
+		return nil, ErrServiceManaged
+	}
 	if saved.Origin != "" && saved.Origin != origin {
 		return nil, ErrAuthorization
 	}
@@ -447,10 +455,7 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 		return ErrLocalApproval
 	}
 	caps.UnattendedEnabled = caps.UnattendedEnabled && d.UnattendedEnabled
-	wire := map[string]any{"permissions": caps.Permissions, "unattended_enabled": caps.UnattendedEnabled, "displays": caps.Displays, "codecs": caps.Codecs, "status": caps.Status}
-	if !enabled {
-		wire = map[string]any{"permissions": []string{"view"}, "unattended_enabled": false, "displays": []Display{}, "codecs": []string{}, "status": "unavailable"}
-	}
+	wire := wireCapabilities(caps, enabled, s.discovered.Load())
 	payload := map[string]any{"endpoint_id": d.EndpointID, "local_enabled": enabled, "capability_version": d.CapabilityVersion + 1, "capabilities": wire}
 	proof, e := signJWS(s.key, "ht-rd-capabilities+jwt", payload, false)
 	if e != nil {

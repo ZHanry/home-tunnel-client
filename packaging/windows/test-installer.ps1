@@ -16,7 +16,7 @@ $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`
 $process = Start-Process -FilePath $Installer -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
 $installedPayloads = @()
-foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe', 'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'docs\PLATFORM_SECURITY.md')) {
+foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home-tunnel-service.exe', 'home_tunnel_remote_host.exe', 'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt', 'platform-signing.json', 'README.md', 'docs\PLATFORM_SECURITY.md')) {
     $installed = (Get-FileHash -LiteralPath (Join-Path $destination $name) -Algorithm SHA256).Hash
     $expected = (Get-FileHash -LiteralPath (Join-Path $PayloadDirectory $name) -Algorithm SHA256).Hash
     if ($installed -ne $expected) { throw "Installed payload mismatch: $name" }
@@ -83,7 +83,7 @@ $uninstaller = Join-Path $destination 'unins000.exe'
 if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Native uninstaller is missing' }
 $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -WindowStyle Hidden -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Uninstaller exited with $($process.ExitCode)" }
-foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe')) {
+foreach ($name in @('home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home-tunnel-service.exe', 'home_tunnel_remote_host.exe')) {
     if (Test-Path -LiteralPath (Join-Path $destination $name)) { throw "Uninstall left $name behind" }
 }
 $report = @{ schema_version = 1; status = 'passed'; version = $Version; repository_revision = $env:GITHUB_SHA; installer_sha256 = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant(); install = 'passed'; payload_hashes = 'passed'; uninstall = 'passed'; embedded_icon = 'passed'; gui_subsystem = 'passed'; native_window_icon = 'passed' }

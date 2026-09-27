@@ -14,20 +14,23 @@ import (
 )
 
 type diskState struct {
-	Origin            string                `json:"origin"`
-	EndpointID        string                `json:"endpoint_id"`
-	OwnerUserID       string                `json:"owner_user_id"`
-	KeyPKCS8          string                `json:"key_pkcs8"`
-	InitialTrust      json.RawMessage       `json:"initial_trust"`
-	Keyset            json.RawMessage       `json:"keyset"`
-	Enabled           bool                  `json:"enabled"`
-	UnattendedEnabled bool                  `json:"unattended_enabled"`
-	CapabilityVersion int64                 `json:"capability_version"`
-	Grants            map[string]LocalGrant `json:"grants"`
-	AssistInvites     map[string]time.Time  `json:"assist_invites,omitempty"`
-	FixedRevision     int64                 `json:"fixed_revision,omitempty"`
-	FixedInvites      map[string]time.Time  `json:"fixed_invites,omitempty"`
-	EmergencyKey      string                `json:"emergency_key,omitempty"`
+	ServiceManaged          bool                  `json:"service_managed,omitempty"`
+	Origin                  string                `json:"origin"`
+	EndpointID              string                `json:"endpoint_id"`
+	OwnerUserID             string                `json:"owner_user_id"`
+	KeyPKCS8                string                `json:"key_pkcs8"`
+	InitialTrust            json.RawMessage       `json:"initial_trust"`
+	Keyset                  json.RawMessage       `json:"keyset"`
+	Enabled                 bool                  `json:"enabled"`
+	UnattendedEnabled       bool                  `json:"unattended_enabled"`
+	UnattendedControllerID  string                `json:"unattended_controller_id,omitempty"`
+	UnattendedControllerJKT string                `json:"unattended_controller_jkt,omitempty"`
+	CapabilityVersion       int64                 `json:"capability_version"`
+	Grants                  map[string]LocalGrant `json:"grants"`
+	AssistInvites           map[string]time.Time  `json:"assist_invites,omitempty"`
+	FixedRevision           int64                 `json:"fixed_revision,omitempty"`
+	FixedInvites            map[string]time.Time  `json:"fixed_invites,omitempty"`
+	EmergencyKey            string                `json:"emergency_key,omitempty"`
 }
 
 // Store wraps the existing OS credential protection in a separate remote-host
@@ -38,6 +41,23 @@ type Store struct {
 	mu      sync.Mutex
 	backend protectedBackend
 	data    diskState
+}
+
+type StoreBackend interface {
+	Load() ([]byte, error)
+	Save([]byte) error
+}
+
+type backendAdapter struct{ StoreBackend }
+
+func (b backendAdapter) Load() ([]byte, error)  { return b.StoreBackend.Load() }
+func (b backendAdapter) Save(data []byte) error { return b.StoreBackend.Save(data) }
+
+func OpenStoreWith(backend StoreBackend) (*Store, error) {
+	if backend == nil {
+		return nil, errors.New("remote host store requires a protected store")
+	}
+	return openStore(backendAdapter{backend})
 }
 
 func OpenStore(path string) (*Store, error) {

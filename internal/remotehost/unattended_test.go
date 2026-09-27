@@ -38,6 +38,16 @@ func TestUnattendedGrantBindsControllerAndRevokesBeforeNetwork(t *testing.T) {
 	service.config.LocalAdminCheck = func(context.Context) error { return nil }
 	service.config.Engine.(*fakeEngine).unattended = true
 	grant := running.Grant
+	if len(grant.ControllerJKT) != 43 {
+		grant.ControllerJKT = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+	}
+	if err := service.config.Store.update(func(state *diskState) error {
+		state.UnattendedControllerID = grant.ControllerEndpointID
+		state.UnattendedControllerJKT = grant.ControllerJKT
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	grant.Mode = "persistent"
 	grant.OneSessionRequestID = ""
 	grant.SessionID = ""
@@ -70,16 +80,16 @@ func TestUnattendedGrantBindsControllerAndRevokesBeforeNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := running.Session
-	if !canAutoApprove(grant, session, true) || canAutoApprove(grant, session, false) {
+	if !canAutoApprove(grant, session, true, grant.ControllerEndpointID, grant.ControllerJKT) || canAutoApprove(grant, session, false, grant.ControllerEndpointID, grant.ControllerJKT) {
 		t.Fatal("trusted controller did not follow the unattended local policy")
 	}
 	session.ControllerEndpointID = randomID()
-	if canAutoApprove(grant, session, true) {
+	if canAutoApprove(grant, session, true, grant.ControllerEndpointID, grant.ControllerJKT) {
 		t.Fatal("another controller inherited unattended access")
 	}
 	session = running.Session
 	session.Permissions = []string{"view", "input.keyboard"}
-	if canAutoApprove(grant, session, true) {
+	if canAutoApprove(grant, session, true, grant.ControllerEndpointID, grant.ControllerJKT) {
 		t.Fatal("persistent grant widened its scope")
 	}
 	if err := service.SetUnattendedEnabled(context.Background(), false); err != nil {
@@ -94,7 +104,7 @@ func TestUnattendedGrantBindsControllerAndRevokesBeforeNetwork(t *testing.T) {
 	}
 	grant.Revoked = true
 	grant.ExpiresAt = time.Now().Add(time.Minute)
-	if canAutoApprove(grant, running.Session, true) {
+	if canAutoApprove(grant, running.Session, true, grant.ControllerEndpointID, grant.ControllerJKT) {
 		t.Fatal("revoked persistent grant auto-approved")
 	}
 }
@@ -103,6 +113,13 @@ func TestHostDisableWinsInFlightUnattendedEnable(t *testing.T) {
 	service, _ := approvalFixture(t)
 	service.config.LocalAdminCheck = func(context.Context) error { return nil }
 	service.config.Engine.(*fakeEngine).unattended = true
+	if err := service.config.Store.update(func(state *diskState) error {
+		state.UnattendedControllerID = "controller1"
+		state.UnattendedControllerJKT = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var mu sync.Mutex
 	var revisions []int64
