@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "repository": "ZHanry/home-tunnel-server",
+  "source_revision": "fdb7541adedc44812a1b668d5e0dd4c68952faeb",
+  "source_tree_dirty": false,
+  "contract_status": "proposed",
+  "frozen_tag": null,
+  "published_contract_ref": null,
+  "proposed_ref": "api-v1.4.0",
+  "previous_immutable_tag": "api-v1.3.0",
+  "source_tree_sha256": "acf2b76f7df2f0a927f078b25f811308d3578575f16077164ef5285a8790c622",
+  "files": [
+    {
+      "source": "contracts/remote-desktop.v1.json",
+      "path": "native/remote/generated/remote-desktop.v1.json",
+      "sha256": "4cd6c6944dcc9003c36c6b3a7c4bbb457fbb2801d9c27351b9ce21a373eeabcf"
+    },
+    {
+      "source": "contracts/remote-test-vectors.json",
+      "path": "native/remote/generated/remote-test-vectors.json",
+      "sha256": "e4c47ea288cf92266f09ea2b40e595c1dd333132dc3262d42e86ef9ea042b168"
+    },
+    {
+      "source": "contracts/remote-authorization-vectors.json",
+      "path": "native/remote/generated/remote-authorization-vectors.json",
+      "sha256": "6ddafdaeb937cd8500c736e62bc21cb3ee92148173c4ae984d3fb9121a26cece"
+    },
+    {
+      "source": "contracts/generated/remote_protocol.hpp",
+      "path": "native/remote/generated/remote_protocol.hpp",
+      "sha256": "fd4dd9488f2d61f2b61a2a7d59062e92a2eea8c3bcce1bfc3a493eff372a6631"
+    }
+  ]
+}

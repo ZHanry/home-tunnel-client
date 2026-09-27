@@ -1,6 +1,13 @@
 {
   "repository": "ZHanry/home-tunnel-server",
-  "ref": "api-v1.3.0",
+  "ref": "api-v1.4.0",
+  "contract_status": "proposed",
+  "frozen_tag": null,
+  "published_contract_ref": null,
+  "source_revision": "fdb7541adedc44812a1b668d5e0dd4c68952faeb",
+  "previous_immutable_tag": "api-v1.3.0",
+  "source_tree_dirty": false,
+  "api_prefix": "/api/v1",
   "path": "contracts/home-tunnel.v1.json",
   "sha256": "47122e7f75788e0b60efe1f7b5180a6098183ea0310d248a9f96098474a5ef2a",
   "files": [
@@ -10,14 +17,11 @@
     },
     {
       "path": "contracts/openapi.v1.json",
-      "sha256": "a0892fb0263cb20fdb66f2d1d7497fa30d0a0ca7b8a5b28d46829cdfa83ba2fd"
+      "sha256": "6e5d590ab47cfefce99a31ff884053a6899d58973dc28525d714fc24068247e3"
     },
     {
       "path": "contracts/api.schema.json",
-      "sha256": "211c08f6aa1add653db4041924dcfde0bb111d43ad820103343c2fddacd6807a"
+      "sha256": "a691ce7131d38e5ec1ea825a15ccf35fa9fc653b110e9ecddb2a0cc79d01fe57"
     }
-  ],
-  "revision": "82b30aa2dc169e141bc5a4ae8c653aabb74fd96c",
-  "source_tree_dirty": false,
-  "published_contract_ref": "api-v1.3.0"
+  ]
 }

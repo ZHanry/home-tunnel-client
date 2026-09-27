@@ -2,6 +2,7 @@
 from pathlib import Path
 import importlib.util
 import runpy
+import copy
 import os
 import json
 import hashlib
@@ -22,6 +23,54 @@ finally:
     os.chdir(previous_directory)
 
 class ReleasePolicyTests(unittest.TestCase):
+    def frozen_contract_fixture(self):
+        project = {"contract_ref": "api-v1.4.0", "contract_status": "frozen", "frozen_tag": "api-v1.4.0"}
+        lock = {"repository": "ZHanry/home-tunnel-server", "contract_status": "frozen",
+                "frozen_tag": "api-v1.4.0", "published_contract_ref": "api-v1.4.0",
+                "source_revision": "a" * 40, "source_tree_dirty": False}
+        return project, [dict(lock, ref="api-v1.4.0"), dict(lock)]
+
+    def test_proposed_or_missing_freeze_cannot_enter_publication(self):
+        project, locks = self.frozen_contract_fixture()
+        self.assertEqual(module.validate_frozen_contract(project, locks), ("api-v1.4.0", "a" * 40))
+        for key, value in (("contract_status", "proposed"), ("frozen_tag", None), ("contract_ref", "main")):
+            with self.subTest(key=key), self.assertRaisesRegex(SystemExit, "frozen contract"):
+                module.validate_frozen_contract(dict(project, **{key: value}), locks)
+        for index in (0, 1):
+            for key, value in (("contract_status", "proposed"), ("published_contract_ref", None),
+                               ("frozen_tag", None), ("source_tree_dirty", True), ("source_revision", "main"),
+                               ("repository", "somebody/other-server")):
+                altered = copy.deepcopy(locks); altered[index][key] = value
+                with self.subTest(index=index, key=key), self.assertRaises(SystemExit):
+                    module.validate_frozen_contract(project, altered)
+        locks[1]["source_revision"] = "b" * 40
+        with self.assertRaisesRegex(SystemExit, "different server commits"):
+            module.validate_frozen_contract(project, locks)
+
+    def test_contract_tag_must_resolve_to_the_pinned_revision(self):
+        project, locks = self.frozen_contract_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); (root / "contracts").mkdir()
+            for name, lock in zip(("lock.json", "remote.lock.json"), locks):
+                (root / "contracts" / name).write_text(json.dumps(lock), encoding="utf-8")
+            with patch.object(module, "ROOT", root), patch.object(module, "PROJECT", project):
+                with patch.object(module, "api", return_value={"object": {"type": "commit", "sha": "a" * 40}}):
+                    module.check_frozen_contract()
+                with patch.object(module, "api", side_effect=[{"object": {"type": "tag", "sha": "b" * 40}},
+                                                               {"object": {"type": "commit", "sha": "a" * 40}}]) as query:
+                    module.check_frozen_contract()
+                    self.assertEqual(query.call_args.args[0], "repos/ZHanry/home-tunnel-server/git/tags/" + "b" * 40)
+                for response in ({"type": "commit", "sha": "b" * 40}, {"type": "tree", "sha": "a" * 40},
+                                 {"type": "tag", "sha": "b" * 40}):
+                    with self.subTest(response=response), patch.object(module, "api", return_value={"object": response}):
+                        with self.assertRaisesRegex(SystemExit, "Frozen contract tag"):
+                            module.check_frozen_contract()
+                with patch.object(module, "PROJECT", dict(project, contract_status="proposed")), patch.object(module, "api") as query:
+                    with self.assertRaisesRegex(SystemExit, "candidate-only"):
+                        module.check_frozen_contract()
+                    query.assert_not_called()
+
+
     def test_contract_snapshot_accepts_candidates_but_never_moving_or_ambiguous_refs(self):
         validator = runpy.run_path(str(Path(__file__).with_name("check-repository.py")))["valid_contract_ref"]
         for ref in ("api-v0.0.0", "api-v1.1.0", "api-v1.2.0-rc.1", "api-v10.20.30-rc.123"):

@@ -41,8 +41,54 @@ def validate_release_tag(tag, source_version, stage):
         raise SystemExit("Internal testing publishes prereleases only; use vX.Y.Z-rc.N")
     return version, candidate
 
+def validate_frozen_contract(project, locks):
+    """Candidates can use a draft; publication requires one frozen server source."""
+    ref = project.get("contract_ref")
+    number = r"(?:0|[1-9][0-9]*)"
+    if (not isinstance(ref, str) or
+            re.fullmatch(rf"api-v{number}\.{number}\.{number}(?:-rc\.[1-9][0-9]*)?", ref) is None or
+            project.get("contract_status") != "frozen" or project.get("frozen_tag") != ref):
+        raise SystemExit("Publication requires a frozen contract; proposed API contracts are candidate-only")
+    if len(locks) != 2:
+        raise SystemExit("Publication requires both API and remote contract locks")
+    revisions = set()
+    for lock in locks:
+        if (lock.get("repository") != "ZHanry/home-tunnel-server" or lock.get("contract_status") != "frozen" or
+                lock.get("frozen_tag") != ref or lock.get("published_contract_ref") != ref or
+                lock.get("ref", ref) != ref or lock.get("source_tree_dirty") is not False or
+                re.fullmatch(r"[0-9a-f]{40}", str(lock.get("source_revision", ""))) is None):
+            raise SystemExit("Publication contract locks must pin the same frozen, clean server source")
+        revisions.add(lock["source_revision"])
+    if len(revisions) != 1:
+        raise SystemExit("API and remote contract locks refer to different server commits")
+    return ref, revisions.pop()
+
+
+def check_frozen_contract():
+    ref, revision = validate_frozen_contract(PROJECT, [
+        json.loads((ROOT / "contracts" / name).read_text(encoding="utf-8"))
+        for name in ("lock.json", "remote.lock.json")
+    ])
+    repository = "repos/ZHanry/home-tunnel-server"
+    target = api(f"{repository}/git/ref/tags/{ref}").get("object", {})
+    visited = set()
+    for _ in range(8):
+        if target.get("type") == "commit":
+            if target.get("sha") != revision:
+                raise SystemExit("Frozen contract tag does not identify the locked server commit")
+            return
+        digest = target.get("sha")
+        if (target.get("type") != "tag" or not isinstance(digest, str) or
+                re.fullmatch(r"[0-9a-f]{40}", digest) is None or digest in visited):
+            break
+        visited.add(digest)
+        target = api(f"{repository}/git/tags/{digest}").get("object", {})
+    raise SystemExit("Frozen contract tag could not be resolved to the locked server commit")
+
+
 def metadata():
     version, candidate = validate_release_tag(TAG, local_version(), PROJECT.get("stage"))
+    check_frozen_contract()
     run("python3", "scripts/check-repository.py")
     run("git", "fetch", "--tags", "origin", "main")
     run("git", "merge-base", "--is-ancestor", SHA, "origin/main")

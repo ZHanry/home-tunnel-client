@@ -46,6 +46,31 @@ else:
     assert lock["repository"] == "ZHanry/home-tunnel-server"
     assert valid_contract_ref(lock["ref"]), "Protocol source must use a canonical versioned API ref"
     if component == "client":
+        status = lock.get("contract_status")
+        assert status in ("proposed", "frozen") and compat.get("contract_status") == status
+        assert lock.get("source_tree_dirty") is False
+        assert re.fullmatch(r"[0-9a-f]{40}", lock.get("source_revision", ""))
+        remote = json.loads((root / "contracts/remote.lock.json").read_text())
+        assert remote["repository"] == lock["repository"]
+        assert remote["source_revision"] == lock["source_revision"]
+        assert remote["source_tree_dirty"] is False and remote["contract_status"] == status
+        assert json.loads((root / "tests/remote-native/server-lock.json").read_text())["revision"] == lock["source_revision"]
+        if status == "proposed":
+            assert all(record.get("frozen_tag") is None for record in (compat, lock, remote))
+            assert lock.get("published_contract_ref") is None and remote.get("published_contract_ref") is None
+            assert remote.get("proposed_ref") == compat["contract_ref"]
+        else:
+            assert all(record.get("frozen_tag") == compat["contract_ref"] for record in (compat, lock, remote))
+            assert lock.get("published_contract_ref") == remote.get("published_contract_ref") == compat["contract_ref"]
+        required_remote = {"contracts/remote-desktop.v1.json", "contracts/generated/remote_protocol.hpp",
+                           "contracts/remote-test-vectors.json", "contracts/remote-authorization-vectors.json"}
+        assert len(remote["files"]) == len(required_remote) and {item["source"] for item in remote["files"]} == required_remote
+        source_hashes = {}
+        for item in remote["files"]:
+            assert item["path"] == "native/remote/generated/" + Path(item["source"]).name
+            assert hashlib.sha256((root / item["path"]).read_bytes()).hexdigest() == item["sha256"], "Remote contract drift"
+            source_hashes[item["source"]] = item["sha256"]
+        assert hashlib.sha256(json.dumps(source_hashes, sort_keys=True, separators=(",", ":")).encode()).hexdigest() == remote["source_tree_sha256"]
         assert (root / "go.mod").read_text().startswith("module github.com/ZHanry/home-tunnel-client\n")
         assert (root / "agent/go.mod").exists(), "The FRP source must be isolated from the GUI/CLI module"
         assert (root / "internal/app/app.go").exists()
