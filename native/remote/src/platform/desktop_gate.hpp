@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include <span>
 
 namespace ht::rd {
 inline constexpr uint32_t kDesktopGrantMagic = 0x48544447u;
@@ -16,20 +17,21 @@ struct DesktopGrantView {
     uint64_t expires_unix_ms = 0;
 };
 
-inline uint32_t read_u32(const uint8_t* data) {
+inline uint32_t read_desktop_u32(std::span<const uint8_t, 4> data) {
     return uint32_t(data[0]) | (uint32_t(data[1]) << 8) | (uint32_t(data[2]) << 16) | (uint32_t(data[3]) << 24);
 }
-inline uint64_t read_u64(const uint8_t* data) {
+inline uint64_t read_desktop_u64(std::span<const uint8_t, 8> data) {
     uint64_t value = 0;
     for (int shift = 0; shift < 8; ++shift) value |= uint64_t(data[shift]) << (8 * shift);
     return value;
 }
 
-inline DesktopGrantView parse_desktop_grant(const uint8_t* data, std::size_t size) {
+inline DesktopGrantView parse_desktop_grant(std::span<const uint8_t> data) {
     DesktopGrantView grant;
-    if (!data || size != kDesktopGrantBytes || read_u32(data) != kDesktopGrantMagic || read_u32(data + 4) != kDesktopGrantVersion) return grant;
-    grant.session_id = read_u32(data + 8);
-    grant.expires_unix_ms = read_u64(data + 12);
+    if (data.size() != kDesktopGrantBytes || read_desktop_u32(data.first<4>()) != kDesktopGrantMagic ||
+        read_desktop_u32(data.subspan<4, 4>()) != kDesktopGrantVersion) return grant;
+    grant.session_id = read_desktop_u32(data.subspan<8, 4>());
+    grant.expires_unix_ms = read_desktop_u64(data.subspan<12, 8>());
     grant.well_formed = grant.session_id != 0 && grant.session_id != 0xffffffffu && grant.expires_unix_ms != 0;
     return grant;
 }

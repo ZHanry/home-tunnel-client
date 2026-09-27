@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+from native_build import build_logged
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native/remote"
@@ -194,11 +195,11 @@ def main():
             targets += ["home_tunnel_remote_host", "home_tunnel_remote_host_xvfb", "home_tunnel_x11_input_tests"]
     run(gn_command, source, env)
     print(f"Building with {args.jobs} jobs; compiler output: {build / 'remote-build.log'}", flush=True)
-    with (build / "remote-build.log").open("w", encoding="utf-8") as log:
-        result = subprocess.run([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs), *targets], cwd=source, env=env, stdout=log, stderr=subprocess.STDOUT)
-    if result.returncode:
+    result = build_logged([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs)],
+                          targets, build, source, env, build / "remote-build.log")
+    if result:
         print("\n".join((build / "remote-build.log").read_text(encoding="utf-8", errors="replace").splitlines()[-80:]))
-        raise SystemExit(result.returncode)
+        raise SystemExit(result)
     artifact = build / "obj" / ("webrtc.lib" if target == "win" else "libwebrtc.a")
     if not artifact.is_file():
         raise SystemExit("Build did not produce the expected upstream static library")

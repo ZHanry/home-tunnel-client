@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+from native_build import build_logged
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native/remote"
@@ -477,11 +478,11 @@ def main():
     root_target = "--root-target=//home_tunnel_remote/android"
     run([gn, "gen", build, root_target], source, env)
     log = build / "android-build.log"
-    with log.open("w", encoding="utf-8") as stream:
-        result = subprocess.run([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs), "webrtc", "home_tunnel_android_surface", "home_tunnel_android_controller"], cwd=source, env=env, stdout=stream, stderr=subprocess.STDOUT)
-    if result.returncode:
+    result = build_logged([sys.executable, str(depot / "autoninja.py"), "-C", str(build), "-j", str(args.jobs)],
+                          ["webrtc", "home_tunnel_android_surface", "home_tunnel_android_controller"], build, source, env, log)
+    if result:
         print("\n".join(log.read_text(errors="replace").splitlines()[-100:]))
-        raise SystemExit(result.returncode)
+        raise SystemExit(result)
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
         raise SystemExit("Choose a new empty artifact output directory; existing artifacts are never overwritten")

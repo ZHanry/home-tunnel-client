@@ -320,7 +320,7 @@ bool WindowsInputSink::adopt_desktop_grant(void* mapping) {
     if(!view) return false;
     std::memcpy(adopted_grant_bytes,view,kDesktopGrantBytes);
     UnmapViewOfFile(view);
-    adopted_grant_ready=parse_desktop_grant(adopted_grant_bytes,kDesktopGrantBytes).well_formed;
+    adopted_grant_ready=parse_desktop_grant(adopted_grant_bytes).well_formed;
     return adopted_grant_ready;
 }
 bool WindowsInputSink::renew_service_desktop(uint32_t session,uint64_t expires,bool enabled,
@@ -345,7 +345,7 @@ bool WindowsInputSink::renew_service_desktop(uint32_t session,uint64_t expires,b
 bool valid_service_delegation_locked() {
     const auto session=process_session_id();
     if(!adopted_grant_ready || session==0 || !is_local_system() || !packaged_worker_image()) return false;
-    const auto grant=parse_desktop_grant(adopted_grant_bytes,kDesktopGrantBytes);
+    const auto grant=parse_desktop_grant(adopted_grant_bytes);
     const auto console=WTSGetActiveConsoleSessionId();
     FILETIME file_time{};GetSystemTimeAsFileTime(&file_time);
     ULARGE_INTEGER stamp{};stamp.LowPart=file_time.dwLowDateTime;stamp.HighPart=file_time.dwHighDateTime;

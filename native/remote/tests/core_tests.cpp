@@ -332,13 +332,13 @@ void desktop_gate() {
     uint8_t grant[kDesktopGrantBytes]{};
     grant[0]=0x47;grant[1]=0x44;grant[2]=0x54;grant[3]=0x48;grant[4]=1;grant[8]=2;
     grant[12]=0x00;grant[13]=0xE1;grant[14]=0xF5;grant[15]=0x05;
-    auto parsed=parse_desktop_grant(grant,sizeof(grant));
+    auto parsed=parse_desktop_grant(grant);
     CHECK(parsed.well_formed && parsed.session_id==2 && parsed.expires_unix_ms==100000000);
     CHECK(desktop_grant_accepts(parsed,2,99999999));
     CHECK(!desktop_grant_accepts(parsed,2,100000000));
     CHECK(!desktop_grant_accepts(parsed,3,1));
-    grant[0]=0;CHECK(!parse_desktop_grant(grant,sizeof(grant)).well_formed);
-    CHECK(!parse_desktop_grant(grant,sizeof(grant)-1).well_formed);
+    grant[0]=0;CHECK(!parse_desktop_grant(grant).well_formed);
+    CHECK(!parse_desktop_grant(std::span(grant).first(sizeof(grant)-1)).well_formed);
     CHECK(capture_allowed(DesktopClass::ordinary,false));
     CHECK(!capture_allowed(DesktopClass::secure,false));
     CHECK(capture_allowed(DesktopClass::secure,true));
