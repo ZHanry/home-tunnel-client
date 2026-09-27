@@ -245,7 +245,8 @@ def main():
     name = archive_name(args.version, abi)
     path = args.output / name
     provenance_path = args.output / provenance_name(abi)
-    if path.exists() or provenance_path.exists():
+    checksum_path = args.output / (name + ".sha256")
+    if path.exists() or provenance_path.exists() or checksum_path.exists():
         raise SystemExit("Existing Android SDK release artifacts are never overwritten")
     with tempfile.TemporaryDirectory() as temporary:
         source_dir = Path(temporary)
@@ -262,8 +263,8 @@ def main():
         record.update({"archive_sha256": digest(path), "archive_bytes": path.stat().st_size,
                        "files": {member: digest(original) for member, original in sorted(mapping.items())}})
         provenance_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    checksum_path.write_text(f"{record['archive_sha256']}  {name}\n", encoding="utf-8", newline="\n")
     verify(args.output, args.version, args.revision, abi)
-    (args.output / (name + ".sha256")).write_text(f"{digest(path)}  {name}\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

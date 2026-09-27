@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 import zipfile
 
 import yaml
@@ -24,6 +25,36 @@ SEAL_SPEC.loader.exec_module(SEAL)
 
 
 class AndroidSDKPolicy(unittest.TestCase):
+    def test_packaging_creates_checksum_before_full_self_verification(self):
+        # Exercise the real packaging entrypoint with small policy fixtures. Only the
+        # compiler output check and Git/process inputs are substituted; verify is real.
+        for abi in SDK.ENGINE.ABI_ORDER:
+            with self.subTest(abi=abi), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                version, revision, contents = self.fixture(root, abi)
+                engine = root / "engine"
+                prefix = SDK.engine_prefix(abi) + "/"
+                for name, data in contents.items():
+                    if name.startswith(prefix):
+                        destination = engine / name.removeprefix(prefix)
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.write_bytes(data)
+                def source_package(command, **kwargs):
+                    self.assertEqual(Path(command[1]).name, "package-remote-core.py")
+                    source_dir = Path(command[-1])
+                    for name, data in contents.items():
+                        if name.startswith("source/"):
+                            (source_dir / name.removeprefix("source/")).write_bytes(data)
+                output = root / "release"
+                args = ["package-remote-android-sdk.py", "--sdk", str(engine), "--output", str(output),
+                        "--abi", abi, "--version", version, "--revision", revision]
+                with patch.object(sys, "argv", args), patch.object(SDK.subprocess, "check_output", side_effect=[revision, ""]), \
+                        patch.object(SDK.subprocess, "run", side_effect=source_package), patch.object(SDK.ENGINE, "verify_artifact"):
+                    SDK.main()
+                verified = SDK.verify(output, version, revision, abi)
+                checksum = output / (verified["archive"] + ".sha256")
+                self.assertEqual(checksum.read_bytes(), f"{verified['archive_sha256']}  {verified['archive']}\n".encode())
+
     def test_pinned_header_volume_fits_but_the_file_limit_stays_bounded(self):
         entries = [zipfile.ZipInfo(f"include/header-{index}.h") for index in range(SDK.MAX_SDK_FILES)]
         bundle = SimpleNamespace(infolist=lambda: entries)
