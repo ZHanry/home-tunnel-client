@@ -508,8 +508,11 @@ def main():
         raise SystemExit("Controller shared library does not support 16 KiB Android pages")
     dynamic = run([readelf, "--dynamic", controller], source, env, True)
     dependencies = set(re.findall(r"Shared library: \[(.*?)\]", dynamic))
-    if "TEXTREL" in dynamic or dependencies - {"libandroid.so", "liblog.so", "libdl.so", "libm.so", "libc.so"}:
-        raise SystemExit("Controller leaked a C++ runtime or unexpected native dependency across the app ABI")
+    # AAudio is provided by Android itself beginning at the pinned API 26.
+    # The controller still owns its C++ runtime privately behind the C ABI.
+    unexpected = dependencies - {"libandroid.so", "libaaudio.so", "liblog.so", "libdl.so", "libm.so", "libc.so"}
+    if "TEXTREL" in dynamic or unexpected:
+        raise SystemExit(f"Controller has text relocations or unexpected native dependencies: {sorted(unexpected)}")
     nm = readelf.with_name("llvm-nm")
     exported = run([nm, "--dynamic", "--defined-only", controller], source, env, True)
     symbols = {line.split()[-1].split("@")[0] for line in exported.splitlines() if line.strip()}
