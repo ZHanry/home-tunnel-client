@@ -87,7 +87,7 @@ class ReleasePolicyTests(unittest.TestCase):
         version = "6.0.1"
         setup = "HomeTunnel-Setup-6.0.1-x64.exe"
         archive = "HomeTunnel-Windows-6.0.1-x64.zip"
-        payload = {"home-tunnel-gui.exe": b"gui", "home-tunnel-agent.exe": b"agent", "home_tunnel_remote_host.exe": b"native worker fixture",
+        payload = {"home-tunnel-gui.exe": b"gui", "home-tunnel-agent.exe": b"agent", "home-tunnel-service.exe": b"service", "home_tunnel_remote_host.exe": b"native worker fixture",
                    "remote-host-provenance.json": b'{}', "remote-host-build.json": b'{}', 'remote-source-manifest.json': b'{}',
                    'WEBRTC-THIRD-PARTY-NOTICES.md': b'fixture notices'}
         (directory/setup).write_bytes(b"installer")
@@ -310,6 +310,33 @@ class ReleasePolicyTests(unittest.TestCase):
             path.write_text(json.dumps(report))
             with self.assertRaisesRegex(SystemExit, 'installer payload differs'):
                 module.verify_windows_evidence(directory, '6.0.1', 'revision')
+
+    def test_service_binary_requires_successful_scan_and_identical_installed_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for failure in ('missing scan', 'failed scan', 'changed scan', 'duplicate scan', 'missing installed', 'changed installed', 'missing archive'):
+                with self.subTest(failure=failure):
+                    scan = self.windows_fixture(directory)
+                    service = next(item for item in scan['files'] if item['name'] == 'home-tunnel-service.exe')
+                    install_path = directory / 'windows-installer-smoke.json'
+                    install = json.loads(install_path.read_text())
+                    if failure == 'missing scan': scan['files'].remove(service)
+                    if failure == 'failed scan': service['exit_code'] = 2
+                    if failure == 'changed scan': service['sha256'] = hashlib.sha256(b'other service').hexdigest()
+                    if failure == 'duplicate scan': scan['files'].append(dict(service))
+                    if failure == 'missing installed': install['installed_payloads'] = [item for item in install['installed_payloads'] if item['name'] != 'home-tunnel-service.exe']
+                    if failure == 'changed installed':
+                        next(item for item in install['installed_payloads'] if item['name'] == 'home-tunnel-service.exe')['sha256'] = hashlib.sha256(b'other service').hexdigest()
+                    if failure == 'missing archive':
+                        archive = directory / 'HomeTunnel-Windows-6.0.1-x64.zip'
+                        with zipfile.ZipFile(archive) as bundle:
+                            payloads = {name: bundle.read(name) for name in bundle.namelist() if name != 'home-tunnel-service.exe'}
+                        with zipfile.ZipFile(archive, 'w') as bundle:
+                            for name, data in payloads.items(): bundle.writestr(name, data)
+                        next(item for item in scan['files'] if item['name'] == archive.name)['sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    install_path.write_text(json.dumps(install))
+                    (directory / 'windows-defender-scan.json').write_text(json.dumps(scan))
+                    with self.assertRaises(SystemExit): module.verify_windows_evidence(directory, '6.0.1', 'revision')
 
     def test_prepared_build_can_never_be_published_as_verified(self):
         with tempfile.TemporaryDirectory() as temporary:

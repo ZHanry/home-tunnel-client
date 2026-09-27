@@ -250,7 +250,8 @@ def verify_windows_evidence(directory, version, revision, *, validation_time=Non
     archive = f"HomeTunnel-Windows-{version}-x64.zip"
     files = scan.get("files", [])
     records = {item["name"]: item for item in files}
-    expected = {setup, archive, "home-tunnel-gui.exe", "home-tunnel-agent.exe", "home_tunnel_remote_host.exe"}
+    executables = ("home-tunnel-gui.exe", "home-tunnel-agent.exe", "home-tunnel-service.exe", "home_tunnel_remote_host.exe")
+    expected = {setup, archive, *executables}
     if set(records) != expected or len(files) != len(expected) or any(item.get("exit_code") != 0 for item in files):
         raise SystemExit("Windows antivirus scan did not pass for every release component")
     for name in (setup, archive):
@@ -258,14 +259,14 @@ def verify_windows_evidence(directory, version, revision, *, validation_time=Non
             raise SystemExit("Windows release bytes differ from the scanned files")
     with zipfile.ZipFile(directory / archive) as bundle:
         validate_windows_archive(bundle)
-        for name in ("home-tunnel-gui.exe", "home-tunnel-agent.exe", "home_tunnel_remote_host.exe"):
+        for name in executables:
             if bundle.namelist().count(name) != 1:
                 raise SystemExit("Windows archive must contain each executable exactly once")
             if hashlib.sha256(bundle.read(name)).hexdigest() != records[name].get("sha256"):
                 raise SystemExit("Windows archive payload differs from the scanned files")
         installed = install.get('installed_payloads', [])
         installed_by_name = {item['name']: item.get('sha256') for item in installed}
-        required_payloads = {'home-tunnel-gui.exe', 'home-tunnel-agent.exe', 'home_tunnel_remote_host.exe',
+        required_payloads = {*executables,
                              'remote-host-provenance.json', 'remote-host-build.json', 'remote-source-manifest.json', 'WEBRTC-THIRD-PARTY-NOTICES.md'}
         if len(installed_by_name) != len(installed) or not required_payloads <= installed_by_name.keys():
             raise SystemExit('Windows installer evidence omits actual installed payload identities')
