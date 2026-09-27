@@ -2,7 +2,9 @@
 
 The candidate binds the exact source SHA, GitHub Actions run, and archive digests.
 It does not create a tag or GitHub Release and does not record device acceptance.
-workflow_dispatch is the only Actions event allowed to invoke this seal.
+The only Actions entry point is workflow_dispatch of the already registered
+android-webrtc.yml, which calls android-sdk-candidate.yml. Attestations are
+signed by that called workflow.
 """
 import argparse
 import hashlib
@@ -16,7 +18,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CANDIDATE = "android-sdk-candidate.json"
-WORKFLOW = ".github/workflows/android-sdk-candidate.yml"
+REPOSITORY = "ZHanry/home-tunnel-client"
+CALLER_WORKFLOW = ".github/workflows/android-webrtc.yml"
+SIGNER_WORKFLOW = ".github/workflows/android-sdk-candidate.yml"
+WORKFLOW = SIGNER_WORKFLOW
 SPEC = importlib.util.spec_from_file_location("android_sdk_package", ROOT / "scripts/package-remote-android-sdk.py")
 SDK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SDK)
@@ -31,6 +36,10 @@ def require_clean_dispatch(revision):
     event = os.environ.get("GITHUB_EVENT_NAME", "")
     if event and event != "workflow_dispatch":
         raise SystemExit("Android SDK candidates are sealed only from a trusted workflow_dispatch")
+    caller = os.environ.get("GITHUB_WORKFLOW_REF", "")
+    expected = f"{REPOSITORY}/{CALLER_WORKFLOW}@refs/"
+    if caller and not caller.startswith(expected):
+        raise SystemExit("Android SDK candidate caller is not the registered android-webrtc dispatch")
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise SystemExit("Candidate SDK requires the exact source SHA")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -48,9 +57,11 @@ def signed_subject(directory, name):
             "sigstore_bundle": bundle.name, "sigstore_sha256": digest(bundle)}
 
 
-def candidate_record(directory, version, revision, run_id, workflow=WORKFLOW):
-    if workflow != WORKFLOW:
-        raise SystemExit("Candidate SDK workflow identity is not the trusted dispatch workflow")
+def candidate_record(directory, version, revision, run_id, workflow=SIGNER_WORKFLOW, caller_workflow=CALLER_WORKFLOW):
+    if workflow != SIGNER_WORKFLOW:
+        raise SystemExit("Candidate SDK signer workflow is not the trusted candidate workflow")
+    if caller_workflow != CALLER_WORKFLOW:
+        raise SystemExit("Candidate SDK caller workflow is not the registered android-webrtc dispatch")
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise SystemExit("Candidate SDK requires the exact source SHA")
     if not re.fullmatch(r"[1-9][0-9]{0,19}", str(run_id)):
@@ -106,6 +117,9 @@ def candidate_record(directory, version, revision, run_id, workflow=WORKFLOW):
         "tag_published": False,
         "stable_release": False,
         "workflow": workflow,
+        "signer_workflow": workflow,
+        "caller_workflow": caller_workflow,
+        "caller_event": "workflow_dispatch",
         "workflow_run_id": str(run_id),
         "device_media_accepted": False,
         "native_device_acceptance": "not_run",
@@ -127,10 +141,11 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--workflow", default=WORKFLOW)
+    parser.add_argument("--workflow", default=SIGNER_WORKFLOW)
+    parser.add_argument("--caller-workflow", default=CALLER_WORKFLOW)
     args = parser.parse_args()
     require_clean_dispatch(args.revision)
-    record = candidate_record(args.output, args.version, args.revision, args.run_id, args.workflow)
+    record = candidate_record(args.output, args.version, args.revision, args.run_id, args.workflow, args.caller_workflow)
     write_candidate(args.output, record)
     print(f"Sealed Android SDK candidate for {args.revision} run {args.run_id}; device acceptance remains required")
 

@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import unittest
 import zipfile
 
+import yaml
+
 SPEC = importlib.util.spec_from_file_location("android_sdk", Path(__file__).with_name("package-remote-android-sdk.py"))
 SDK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SDK)
@@ -270,6 +272,9 @@ class AndroidSDKPolicy(unittest.TestCase):
             self.assertEqual(record["source_revision"], revision)
             self.assertEqual(record["workflow_run_id"], "123456789")
             self.assertEqual(record["workflow"], ".github/workflows/android-sdk-candidate.yml")
+            self.assertEqual(record["signer_workflow"], SEAL.SIGNER_WORKFLOW)
+            self.assertEqual(record["caller_workflow"], SEAL.CALLER_WORKFLOW)
+            self.assertEqual(record["caller_event"], "workflow_dispatch")
             self.assertEqual(set(record["abis"]), {"arm64-v8a", "x86_64"})
             self.assertEqual(record["abis"]["arm64-v8a"]["source_tree_sha256"], record["abis"]["x86_64"]["source_tree_sha256"])
             self.assertEqual(record["abis"]["arm64-v8a"]["upstream_lock_sha256"], record["abis"]["x86_64"]["upstream_lock_sha256"])
@@ -294,8 +299,10 @@ class AndroidSDKPolicy(unittest.TestCase):
                     SEAL.candidate_record(directory, version, revision, run_id)
             with self.assertRaisesRegex(SystemExit, "source SHA"):
                 SEAL.candidate_record(directory, version, "A" * 40, "99")
-            with self.assertRaisesRegex(SystemExit, "trusted dispatch"):
+            with self.assertRaisesRegex(SystemExit, "signer"):
                 SEAL.candidate_record(directory, version, revision, "99", ".github/workflows/android-webrtc.yml")
+            with self.assertRaisesRegex(SystemExit, "registered android-webrtc"):
+                SEAL.candidate_record(directory, version, revision, "99", caller_workflow=".github/workflows/release.yml")
             bundle = directory / (SDK.archive_name(version, "arm64-v8a") + ".sigstore.json")
             bundle.unlink()
             with self.assertRaisesRegex(SystemExit, "unsigned"):
@@ -321,6 +328,64 @@ class AndroidSDKPolicy(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("clean source", result.stderr)
             self.assertFalse((Path(temporary) / SEAL.CANDIDATE).exists())
+            foreign = os.environ.copy()
+            foreign["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+            foreign["GITHUB_WORKFLOW_REF"] = "ZHanry/home-tunnel-client/.github/workflows/release.yml@refs/heads/main"
+            result = subprocess.run(command, cwd=SDK.ROOT, env=foreign, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("registered android-webrtc", result.stderr)
+            registered = os.environ.copy()
+            registered["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+            registered["GITHUB_WORKFLOW_REF"] = "ZHanry/home-tunnel-client/.github/workflows/android-webrtc.yml@refs/heads/codex/v10-overhaul"
+            result = subprocess.run(command, cwd=SDK.ROOT, env=registered, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("clean source", result.stderr)
+
+    def load_workflow(self, name):
+        data = yaml.safe_load((SDK.ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
+        if True in data and "on" not in data:
+            data["on"] = data.pop(True)
+        return data
+
+    def test_candidate_dispatch_stays_on_the_registered_read_only_caller(self):
+        caller = self.load_workflow("android-webrtc.yml")
+        called = self.load_workflow("android-sdk-candidate.yml")
+        self.assertEqual(set(caller["on"]), {"workflow_dispatch", "push"})
+        self.assertNotIn("pull_request", caller["on"])
+        self.assertNotIn("pull_request_target", caller["on"])
+        candidate_input = caller["on"]["workflow_dispatch"]["inputs"]["candidate"]
+        self.assertEqual(candidate_input["type"], "boolean")
+        self.assertIs(candidate_input["default"], False)
+        self.assertEqual(caller["permissions"], {"contents": "read"})
+        for name in ("policy", "engine"):
+            job = caller["jobs"][name]
+            self.assertNotIn("permissions", job)
+            self.assertIn("workflow_dispatch", job["if"])
+            self.assertIn("inputs.candidate", job["if"])
+        seal_job = caller["jobs"]["candidate"]
+        self.assertIn("workflow_dispatch", seal_job["if"])
+        self.assertIn("inputs.candidate", seal_job["if"])
+        self.assertEqual(seal_job["permissions"], {
+            "contents": "read", "id-token": "write", "attestations": "write"})
+        self.assertEqual(seal_job["uses"], "./.github/workflows/android-sdk-candidate.yml")
+        self.assertNotIn("secrets", seal_job)
+        self.assertEqual(set(called["on"]), {"workflow_call"})
+        for forbidden in ("workflow_dispatch", "pull_request", "pull_request_target", "push"):
+            self.assertNotIn(forbidden, called["on"])
+        self.assertNotIn("permissions", called)
+        self.assertEqual(called["jobs"]["guard"]["permissions"], {"contents": "read"})
+        guard_script = called["jobs"]["guard"]["steps"][0]["run"]
+        self.assertIn("workflow_dispatch", guard_script)
+        self.assertIn(SEAL.CALLER_WORKFLOW, guard_script)
+        for name in ("build", "seal"):
+            job = called["jobs"][name]
+            self.assertIn("guard", job["needs"] if isinstance(job["needs"], list) else [job["needs"]])
+            self.assertEqual(job["permissions"], {
+                "contents": "read", "id-token": "write", "attestations": "write"})
+            self.assertNotEqual(job["permissions"].get("contents"), "write")
+        seal_step = next(step for step in called["jobs"]["seal"]["steps"] if "seal-remote-android-sdk-candidate.py" in step.get("run", ""))
+        self.assertIn("--workflow .github/workflows/android-sdk-candidate.yml", seal_step["run"])
+        self.assertIn("--caller-workflow .github/workflows/android-webrtc.yml", seal_step["run"])
 
     def test_security_core_exporter_rejects_unknown_targets(self):
         with tempfile.TemporaryDirectory() as temporary:

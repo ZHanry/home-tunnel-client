@@ -1,20 +1,33 @@
 name: Android SDK candidate
 
-# Trusted pre-tag seal for both controller ABIs. This workflow does not push tags
-# or publish a GitHub Release. Stable acceptance stays on release.yml.
+# Trusted pre-tag seal for both controller ABIs. Called only by the registered
+# android-webrtc.yml workflow_dispatch (candidate=true). This file is not a
+# separate dispatch target and does not push tags or publish a Release.
+# actions/attest and keyless cosign run in this file, so their signer workflow
+# is android-sdk-candidate.yml. The caller remains android-webrtc.yml.
 'on':
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: android-sdk-candidate-${{ github.ref }}
-  cancel-in-progress: false
+  workflow_call:
 
 jobs:
+  guard:
+    name: Require the registered android-webrtc dispatch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject every caller except that workflow_dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+          test "${GITHUB_REPOSITORY}" = "ZHanry/home-tunnel-client"
+          case "${GITHUB_WORKFLOW_REF}" in
+            ZHanry/home-tunnel-client/.github/workflows/android-webrtc.yml@refs/*) ;;
+            *) echo "Android SDK candidate caller is not the registered android-webrtc dispatch" >&2; exit 1 ;;
+          esac
   build:
     name: Candidate Android ${{ matrix.abi }} controller SDK
+    needs: guard
     if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
@@ -97,7 +110,7 @@ jobs:
           if-no-files-found: ignore
   seal:
     name: Seal both candidate ABIs to this source SHA and run
-    needs: build
+    needs: [guard, build]
     if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
@@ -121,8 +134,9 @@ jobs:
             --version "$version" \
             --revision "$GITHUB_SHA" \
             --run-id "$GITHUB_RUN_ID" \
-            --workflow .github/workflows/android-sdk-candidate.yml
-          python3 -c 'import json; record=json.load(open("outputs/android-sdk-candidate/android-sdk-candidate.json")); assert record["tag_published"] is False and record["device_media_accepted"] is False and record["source_revision"]=="'"$GITHUB_SHA"'" and record["workflow_run_id"]=="'"$GITHUB_RUN_ID"'" and set(record["abis"])=={"arm64-v8a","x86_64"}'
+            --workflow .github/workflows/android-sdk-candidate.yml \
+            --caller-workflow .github/workflows/android-webrtc.yml
+          python3 -c 'import json; record=json.load(open("outputs/android-sdk-candidate/android-sdk-candidate.json")); assert record["tag_published"] is False and record["device_media_accepted"] is False and record["source_revision"]=="'"$GITHUB_SHA"'" and record["workflow_run_id"]=="'"$GITHUB_RUN_ID"'" and record["caller_workflow"]==".github/workflows/android-webrtc.yml" and record["signer_workflow"]==".github/workflows/android-sdk-candidate.yml" and set(record["abis"])=={"arm64-v8a","x86_64"}'
       - name: Attest the candidate index
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:

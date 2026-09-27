@@ -1,10 +1,17 @@
 name: Android pinned WebRTC engine
 
-# Build check for the dual-ABI recipe. It does not attest or publish.
-# Pre-tag sealed candidates are produced by android-sdk-candidate.yml.
+# Ordinary runs only check the dual-ABI recipe. They do not attest or publish.
+# A pre-tag candidate is sealed only when this already-registered workflow is
+# dispatched with candidate=true. That job calls android-sdk-candidate.yml.
+# A new workflow file cannot be dispatched until it exists on the default branch.
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate:
+        description: Seal both Android controller ABIs for this commit. Leave false for the read-only engine check.
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -19,12 +26,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-engine-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate && format('android-sdk-candidate-{0}', github.ref) || format('android-engine-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || !inputs.candidate }}
 
 jobs:
   policy:
     name: Android dual-ABI recipe policy
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.candidate }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -38,6 +46,7 @@ jobs:
   engine:
     name: Linux → Android ${{ matrix.abi }} controller (not device acceptance)
     needs: policy
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.candidate }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
@@ -96,3 +105,11 @@ jobs:
           path: outputs/android-sdk-release/*
           if-no-files-found: error
           retention-days: 14
+  candidate:
+    name: Seal trusted Android SDK candidate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/android-sdk-candidate.yml
