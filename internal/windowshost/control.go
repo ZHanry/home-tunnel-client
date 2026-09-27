@@ -5,8 +5,6 @@ import (
 	"github.com/ZHanry/home-tunnel-client/internal/remotehost"
 )
 
-const controlLimit = 768 << 10
-
 type ControlRequest struct {
 	Version      int             `json:"version"`
 	Operation    string          `json:"operation"`

@@ -25,6 +25,8 @@ import (
 	"golang.org/x/sys/windows/svc"
 )
 
+const controlLimit = 768 << 10
+
 type controlPeer struct {
 	SID          string
 	Session, PID uint32
