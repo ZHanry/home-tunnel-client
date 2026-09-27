@@ -11,6 +11,7 @@
   --secondary-fg: #3d4074;
   --danger: #be4759;
   --danger-bg: #fff0f2;
+  --success: #14664d;
 }
 html[data-theme=dark] {
   --bg: #15182a;
@@ -23,6 +24,7 @@ html[data-theme=dark] {
   --accent-fg: #242257;
   --secondary: #343756;
   --secondary-fg: #edf0ff;
+  --success: #75dbb9;
 }
 body { background: var(--bg); line-height: 1.5; }
 button { border-radius: 9px; min-height: 40px; box-shadow: none; }
@@ -138,7 +140,8 @@ body.workspace-active .app-header { display: none; }
 .remote-local-card { min-width: 0; min-height: 290px; margin: 0; overflow: hidden; background: radial-gradient(circle at 95% 85%, var(--secondary), transparent 38%), var(--card); }
 .remote-local-card h3 { margin-top: 13px; font-size: 17px; }
 .remote-local-card > p.muted { font-size: 13px; }
-.remote-local-card #rd-host-status { display: inline-block; margin: 8px 0 0; color: #168363; font-size: 12px; font-weight: 700; }
+.remote-local-card #rd-host-status { display: inline-block; margin: 8px 0 0; color: var(--muted); font-size: 12px; font-weight: 700; }
+.remote-local-card #rd-host-status[data-active=true] { color: var(--success); }
 .remote-host-identity { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; }
 .remote-host-identity button { display: grid; place-items: center; min-width: 30px; min-height: 30px; padding: 0; background: transparent; color: var(--muted); }
 .remote-host-identity svg { width: 15px; height: 15px; }
@@ -155,6 +158,11 @@ body.workspace-active .app-header { display: none; }
 .remote-security-card { margin-top: 20px; }
 .remote-security-card > p { font-size: 12px; }
 .remote-security-card:has(#rd-host-enroll.hidden) { padding-bottom: 20px; }
+.remote-enrollment-trust { margin: 20px 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.remote-enrollment-trust pre:empty { display: none; }
+.remote-enrollment-trust label.check { margin-bottom: 0; }
+.remote-security-card #rd-host-mfa-feedback { margin: 8px 0 0; font-size: 12px; }
+.remote-security-card #rd-host-mfa-feedback.error { color: var(--danger); }
 .remote-unattended { max-width: 790px; padding: 32px; }
 .remote-unattended h2 { margin-top: 20px; }
 .remote-unattended p { color: var(--muted); font-size: 14px; }

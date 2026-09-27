@@ -49,15 +49,31 @@ test("remote backend stays unavailable and enrollment requires explicit server t
     attempts.push(route.request().postDataJSON());
     return attempts.length===1
       ? route.fulfill({status:401,json:{error_code:"RD_MFA_REQUIRED",message:"Dynamic code required"}})
+      : attempts.length===2 ? route.fulfill({status:401,json:{error_code:"RD_MFA_INVALID",message:"Invalid code"}})
       : route.fulfill({json:{ok:true}});
   });
   await page.locator("#rd-host-enroll-submit").click();
   await expect(page.locator("#rd-host-mfa")).toBeVisible();
+  await expect(page.locator("#rd-host-mfa-feedback")).toHaveText("请输入动态码或恢复码。");
+  await expect(page.locator("#rd-host-error")).toBeEmpty();
+  await expect(page.locator("#rd-host-mfa")).toHaveAttribute("aria-invalid", "false");
+  const mfaBox = await page.locator("#rd-host-mfa").boundingBox();
+  const hintBox = await page.locator("#rd-host-mfa-feedback").boundingBox();
+  const trustBox = await page.locator("#rd-host-trust-load").boundingBox();
+  expect(hintBox.y).toBeGreaterThan(mfaBox.y + mfaBox.height + 4);
+  expect(trustBox.y).toBeGreaterThan(hintBox.y + hintBox.height + 12);
   expect(attempts[0].mfa_code).toBe("");
   await page.locator("#rd-host-password").fill("temporary-password");
   await page.locator("#rd-host-mfa").fill("123456");
   await page.locator("#rd-host-enroll-submit").click();
   await expect.poll(()=>attempts.length).toBe(2);
+  await expect(page.locator("#rd-host-mfa-feedback")).toHaveText("动态码或恢复码无效，请重试。");
+  await expect(page.locator("#rd-host-mfa")).toHaveAttribute("aria-invalid", "true");
+  await page.locator("#rd-host-password").fill("temporary-password");
+  await page.locator("#rd-host-mfa").fill("234567");
+  await expect(page.locator("#rd-host-mfa")).toHaveAttribute("aria-invalid", "false");
+  await page.locator("#rd-host-enroll-submit").click();
+  await expect.poll(()=>attempts.length).toBe(3);
   expect(attempts[1].action).toBe("enroll");
   expect(attempts[1].trust_pin).toBe("a".repeat(64));
   expect(attempts[1].mfa_code).toBe("123456");

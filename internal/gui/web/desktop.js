@@ -223,12 +223,39 @@
     for (const id of ["rd-host-enroll", "rd-host-pending", "rd-host-grants", "rd-host-files", "rd-host-error"]) remoteSecurity.append($(id));
     const hostMfaField = remoteSecurity.querySelector("#rd-host-mfa");
     const hostMfaLabel = remoteSecurity.querySelector('label[for="rd-host-mfa"]');
+    const hostMfaFeedback = document.createElement("p");
+    hostMfaFeedback.id = "rd-host-mfa-feedback";
+    hostMfaFeedback.className = "muted hidden";
+    hostMfaFeedback.setAttribute("role", "status");
+    hostMfaField.setAttribute("aria-describedby", hostMfaFeedback.id);
+    hostMfaField.after(hostMfaFeedback);
+    const hostTrustSection = document.createElement("div");
+    hostTrustSection.className = "remote-enrollment-trust";
+    hostTrustSection.setAttribute("role", "group");
+    hostTrustSection.setAttribute("aria-labelledby", "rd-host-trust-load");
+    remoteSecurity.querySelector("#rd-host-enroll-submit").before(hostTrustSection);
+    hostTrustSection.append(remoteSecurity.querySelector("#rd-host-trust-load"), remoteSecurity.querySelector("#rd-host-trust"), remoteSecurity.querySelector("#rd-host-trust-confirm").closest("label"));
+    function renderHostMfaFeedback() {
+      const code = hostMfaFeedback.dataset.code;
+      const invalid = code === "RD_MFA_INVALID";
+      hostMfaFeedback.classList.toggle("hidden", !code);
+      hostMfaFeedback.classList.toggle("error", invalid);
+      hostMfaFeedback.setAttribute("role", invalid ? "alert" : "status");
+      hostMfaField.setAttribute("aria-invalid", String(invalid));
+      hostMfaFeedback.textContent = !code ? "" : msg(invalid ? "动态码或恢复码无效，请重试。" : "请输入动态码或恢复码。");
+    }
     hostMfaField.classList.add("hidden");
     hostMfaLabel.classList.add("hidden");
     remoteSecurity.querySelector("#rd-host-user").addEventListener("input", () => {
       hostMfaField.value = "";
       hostMfaField.classList.add("hidden");
       hostMfaLabel.classList.add("hidden");
+      delete hostMfaFeedback.dataset.code;
+      renderHostMfaFeedback();
+    });
+    hostMfaField.addEventListener("input", () => {
+      if (hostMfaFeedback.dataset.code) hostMfaFeedback.dataset.code = "RD_MFA_REQUIRED";
+      renderHostMfaFeedback();
     });
     remoteOverview.prepend(hostCard);
     remoteOverview.append(remoteAssistCard);
@@ -310,6 +337,8 @@
       "刷新状态": ["刷新状态","Refresh status"],
       "刷新设备": ["刷新设备","Refresh devices"],
       "动态码或恢复码 / MFA code": ["动态码或恢复码","MFA code"],
+      "请输入动态码或恢复码。": ["请输入动态码或恢复码。","Enter your authenticator or recovery code."],
+      "动态码或恢复码无效，请重试。": ["动态码或恢复码无效，请重试。","The authenticator or recovery code is invalid. Try again."],
       "单次授权 · ": ["单次授权 · ","Session grant · "],
       "发现正式版后可下载并校验 SHA-256。安装前请退出正在进行的远控会话。": ["发现正式版后可下载并校验 SHA-256。安装前请退出正在进行的远控会话。","Download published updates with SHA-256 verification. End active remote sessions before installing."],
       "发送 / Send": ["发送","Send"],
@@ -524,6 +553,7 @@
     $("locale-toggle").onclick = () => {
       locale = locale === "en" ? "zh-CN" : "en";
       applyLocale(); applyTheme(document.documentElement.dataset.themePreference); renderServices(); renderAccountDevices();
+      renderHostMfaFeedback();
       void refreshRemoteHost();
       if (!$("update-page").classList.contains("hidden")) void checkUpdates();
       if (!$("editor").classList.contains("hidden")) { applyProtocol(); if (wizardActive) renderWizard(false); }
@@ -1213,6 +1243,7 @@
       $("rd-assist-create").disabled = true;
       $("rd-host-password").value = ""; $("rd-host-mfa").value = ""; $("rd-host-trust").textContent = "";
       hostMfaField.classList.add("hidden"); hostMfaLabel.classList.add("hidden");
+      delete hostMfaFeedback.dataset.code; renderHostMfaFeedback();
       $("rd-host-trust-confirm").checked = false; $("rd-host-enroll-submit").disabled = true;
       $("rd-host-pending").replaceChildren(); $("rd-host-grants").replaceChildren();
       $("rd-host-files").replaceChildren();
@@ -1344,6 +1375,7 @@
         if (generation !== remoteHostGeneration || !$("login").classList.contains("hidden")) return;
         const ready = state.capabilities?.available === true;
         $("rd-host-status").textContent = !ready ? msg("此安装包没有可用的远控后端") : state.active_session_id ? msg("远程会话进行中") : state.enabled ? msg("已允许连接") : msg("远程连接已关闭");
+        $("rd-host-status").dataset.active = String(ready && !!(state.active_session_id || state.enabled && state.running && !state.error_code));
         $("rd-host-detail").textContent = state.endpoint_id || state.error_code || msg("尚未登记");
         $("rd-host-copy").disabled = !state.endpoint_id;
         $("rd-host-enable").disabled = !ready || !state.enrolled || state.enabled && state.running;
@@ -1375,6 +1407,7 @@
         if (state.enrolled || !ready) {
           $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
           hostMfaField.classList.add("hidden"); hostMfaLabel.classList.add("hidden");
+          delete hostMfaFeedback.dataset.code; renderHostMfaFeedback();
         }
         renderRemoteApprovals(state);
         renderAssistInvites(state.invites);
@@ -1385,6 +1418,7 @@
       } catch {
         if (generation !== remoteHostGeneration) return;
         $("rd-host-status").textContent = msg("无法读取远控状态 / Remote status unavailable");
+        $("rd-host-status").dataset.active = "false";
         for (const id of ["enable", "disable", "stop"]) $("rd-host-" + id).disabled = id === "enable";
         for (const id of ["enable", "disable"]) $("rd-unattended-" + id).disabled = true;
       }
@@ -1418,6 +1452,7 @@
       event.preventDefault();
       if (!remoteHostTrust || !$("rd-host-trust-confirm").checked) return;
       return runAction($("rd-host-enroll-submit"), async () => {
+        $("rd-host-error").textContent = "";
         const body = {username:$("rd-host-user").value,password:$("rd-host-password").value,mfa_code:$("rd-host-mfa").value,trust_pin:remoteHostTrust.trust_pin};
         $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
         try { await remoteHostAction("enroll", body); }
@@ -1425,7 +1460,10 @@
           if (error.code === "RD_MFA_REQUIRED" || error.code === "RD_MFA_INVALID") {
             hostMfaField.classList.remove("hidden");
             hostMfaLabel.classList.remove("hidden");
+            hostMfaFeedback.dataset.code = error.code;
+            renderHostMfaFeedback();
             hostMfaField.focus();
+            return;
           }
           throw error;
         }
