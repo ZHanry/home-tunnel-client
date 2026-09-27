@@ -34,6 +34,7 @@ rtc_source_set("controller_objects") {
     "../webrtc/peer_identity.cpp",
     "controller_identity.cpp",
     "controller_runtime.cpp",
+    "audio_output.cpp",
     "surface_lifecycle.hpp",
   ]
   defines = [
@@ -56,7 +57,7 @@ rtc_source_set("controller_objects") {
     "//third_party/boringssl",
     "//third_party/jsoncpp",
   ]
-  libs = [ "android" ]
+  libs = [ "android", "aaudio" ]
 }
 
 # Compiled with the exact same headers/toolchain/stdlib as WebRTC. This archive

@@ -16,8 +16,9 @@ after the native controller has independently verified identity, lease and UDP.
 
 The recipe pins the upstream dependency-lock hash and exact GN arguments. Android
 currently enables software codecs and disables optional H.264/HEVC, internal audio
-device capture and upstream examples/tools. This does not claim hardware decoding,
-audio or any codec/device interoperability.
+device capture and upstream examples/tools. System-audio playback uses a separate
+AAudio output implementation compatible with API26; microphone capture is absent.
+Actual codec/device interoperability remains subject to installed-device tests.
 
 The internal SDK contains real `libwebrtc.a`, renderer archives, a shared C ABI
 controller, source headers,
@@ -46,6 +47,20 @@ The clipboard channel is scoped to the signed session and feature acknowledgemen
 Only foreground Android plain text is synchronized; backgrounding disables both
 directions. Rebuild both production ABIs from the same clean revision before
 claiming clipboard support in an installable APK.
+
+`ht_rd_set_system_audio(handle, enabled)` explicitly requests or mutes system
+audio. `HT_RD_OK` acknowledges the request; the actual enabled state arrives in
+the existing control event's `FEATURE_STATE`. Local mute closes the output
+immediately. Each controller has its own audio engine, output stream and a
+500 ms renewable media deadline. Only a signed audio scope, verified UDP path,
+host feature acknowledgement and foreground rendered surface permit playback.
+Pause, surface detach, lease expiry, device failure and close mute the stream.
+SDP accepts one Opus receiver and rejects microphone/sendrecv directions.
+
+The new source must pass the pinned GN build before SDK import. Compiling the
+standalone API26 AAudio file is not evidence that the complete engine decodes or
+plays sound. The Android app's JNI/UI consumer must import this ABI and handle
+its asynchronous state before exposing the sound control.
 
 Artifact metadata keeps `available:false` and `device_media_accepted:false` until
 acceptance for that ABI is recorded; `controller_backend_linked:true` and

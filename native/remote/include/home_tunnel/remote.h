@@ -99,6 +99,10 @@ HT_RD_API ht_rd_result ht_rd_create(const ht_rd_config_v1*, const ht_rd_callback
 HT_RD_API ht_rd_result ht_rd_start(ht_rd_handle, const uint8_t* ticket, size_t length);
 HT_RD_API ht_rd_result ht_rd_on_signal(ht_rd_handle, const uint8_t* envelope, size_t length);
 HT_RD_API ht_rd_result ht_rd_submit_input(ht_rd_handle, const uint8_t* message, size_t length);
+/* Explicit system-audio request/mute. Zero mutes locally immediately; one
+ * requests the granted host feature. Actual state arrives as FEATURE_STATE
+ * through the control event. Does not capture or return microphone audio. */
+HT_RD_API ht_rd_result ht_rd_set_system_audio(ht_rd_handle, uint32_t enabled);
 /* On success the implementation retains the platform surface; the caller keeps its own ref. */
 HT_RD_API ht_rd_result ht_rd_set_surface(ht_rd_handle, const ht_rd_surface_v1*);
 HT_RD_API ht_rd_result ht_rd_get_capabilities(ht_rd_handle, ht_rd_capabilities_v1*);

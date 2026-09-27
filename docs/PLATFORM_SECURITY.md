@@ -45,7 +45,11 @@ waiting for the network.
 File access impersonates the signed-in endpoint owner's exact logon token;
 handles cannot cross identities or logon sessions. Clipboard requires that user
 context and the ordinary desktop. The input-release guard survives a worker
-crash solely to release recorded held input. System audio remains unavailable.
+crash solely to release recorded held input. The system-audio implementation
+captures the render endpoint through WASAPI loopback under that same user
+context, only on the ordinary desktop and after a verified feature request.
+An independent 500 ms media deadline stops capture if the session thread stalls;
+expiry requires a new explicit activation. No microphone capture is implemented.
 
 These are implemented controls, not a claim of final runtime acceptance. Full
 native builds and installed Windows VM tests of lock, sign-in, UAC, session

@@ -110,6 +110,13 @@ ht_rd_result ht_rd_set_surface(ht_rd_handle handle, const ht_rd_surface_v1* surf
 }
 ht_rd_result ht_rd_pause(ht_rd_handle handle, uint32_t reason) { return notify(handle, reason, false); }
 ht_rd_result ht_rd_close(ht_rd_handle handle, uint32_t reason) { return notify(handle, reason, true); }
+ht_rd_result ht_rd_set_system_audio(ht_rd_handle handle, uint32_t enabled) {
+    if (enabled > 1) return HT_RD_INVALID_ARGUMENT;
+    const auto session = find(handle);
+    if (!session) return HT_RD_INVALID_HANDLE;
+    const std::lock_guard lock(session->mutex);
+    return session->closed ? HT_RD_STATE_CONFLICT : HT_RD_BACKEND_UNAVAILABLE;
+}
 void ht_rd_release(ht_rd_handle handle) {
     std::shared_ptr<Session> session;
     {

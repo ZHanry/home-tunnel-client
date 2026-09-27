@@ -6,6 +6,7 @@ HT_REMOTE_ANDROID_1 {
     ht_rd_start;
     ht_rd_on_signal;
     ht_rd_submit_input;
+    ht_rd_set_system_audio;
     ht_rd_set_surface;
     ht_rd_pause;
     ht_rd_close;

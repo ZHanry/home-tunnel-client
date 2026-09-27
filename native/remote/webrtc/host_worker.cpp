@@ -7,6 +7,7 @@
 #if defined(WEBRTC_WIN)
 #include "../src/platform/windows_user.hpp"
 #include "../src/platform/service_pipe_windows.hpp"
+#include "system_audio_source.hpp"
 #endif
 #include "no_audio_device.hpp"
 #include "../generated/host_version.hpp"
@@ -128,10 +129,12 @@ Json::Value capabilities(webrtc::PeerConnectionFactoryInterface& factory){
   value["unattended_enabled"]=HostInputSink::service_backend_available();
   const bool user_files=HostInputSink::user_broker_allowed();
   const bool file_user=files_allowed(HostInputSink::current_desktop(),user_context_available());
+  const bool system_audio=available && user_files && WindowsSystemAudio::available();
 #else
   value["unattended_enabled"]=false;
   const bool user_files=true;
   const bool file_user=false;
+  const bool system_audio=false;
 #endif
   value["permissions"]=Json::Value(Json::arrayValue);if(available){
     for(const auto name:{"view","input.keyboard","input.pointer"})value["permissions"].append(name);
@@ -140,6 +143,7 @@ Json::Value capabilities(webrtc::PeerConnectionFactoryInterface& factory){
     if(user_files && (supported_permissions&protocol::PERMISSION_CLIPBOARD_WRITE))value["permissions"].append("clipboard.write");
     if(file_user && (supported_permissions&protocol::PERMISSION_FILES_SEND))value["permissions"].append("files.send");
     if(file_user && (supported_permissions&protocol::PERMISSION_FILES_RECEIVE))value["permissions"].append("files.receive");
+    if(system_audio)value["permissions"].append("audio.system");
   }
   value["displays"]=Json::Value(Json::arrayValue);
   auto& native=value["native"];native["schema"]=1;native["reporter"]="agent";
@@ -150,6 +154,7 @@ Json::Value capabilities(webrtc::PeerConnectionFactoryInterface& factory){
     if(supported_permissions&protocol::PERMISSION_INPUT_TEXT)backends["input_text"]="available";
     if(user_files && (supported_permissions&(protocol::PERMISSION_CLIPBOARD_READ|protocol::PERMISSION_CLIPBOARD_WRITE)))backends["clipboard"]="available";
     if(file_user && (supported_permissions&(protocol::PERMISSION_FILES_SEND|protocol::PERMISSION_FILES_RECEIVE)))backends["files"]="available";
+    if(system_audio)backends["system_audio"]="available";
   }
   // OS service delegation is discovery of a working backend. It never replaces
   // the independently verified signed grant/lease required by HostSession.
@@ -253,7 +258,7 @@ bool direct_candidate(std::string_view value){
   if(c.type()!=webrtc::IceCandidateType::kHost || name.size()<7 || name.size()>69 || !name.ends_with(".local"))return false;
   return std::all_of(name.begin(),name.end()-6,[](char ch){return (ch>='a'&&ch<='z') || (ch>='A'&&ch<='Z') || (ch>='0'&&ch<='9') || ch=='-';});
 }
-bool valid_sdp(std::string_view sdp,std::string_view expected_fingerprint={}){return valid_sdp_profile(sdp,expected_fingerprint,direct_candidate);}
+bool valid_sdp(std::string_view sdp,std::string_view expected_fingerprint={},std::string_view audio_direction={}){return valid_sdp_profile(sdp,expected_fingerprint,direct_candidate,audio_direction);}
 
 class HostSession;
 class ChannelObserver : public webrtc::DataChannelObserver {
@@ -281,6 +286,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   bool Start(const Json::Value& request){
     if(started_ || closed_)return false;VerifiedLease lease;
     if(identity_->authorize(request,wall_ms(),supported_permissions,lease)!=auth::Error::ok)return false;
+    wants_audio_=(identity_->expected().permission_ceiling&protocol::PERMISSION_AUDIO_SYSTEM)!=0;
 #if defined(WEBRTC_WIN)
     // Only independently verified ticket/lease/grant identity is eligible to
     // match the service's local administrator-approved secure-desktop policy.
@@ -310,6 +316,18 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     for(const auto& transceiver:connection_->GetTransceivers())
       if(!transceiver->SetCodecPreferences(codecs).ok() || !transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendOnly).ok())return false;
 #if defined(WEBRTC_WIN)
+    if(wants_audio_){
+      if(!WindowsSystemAudio::available())return false;
+      audio_=webrtc::make_ref_counted<SystemAudioSource>();
+      auto audio_track=factory_.CreateAudioTrack("system-audio",audio_.get());
+      if(!connection_->AddTrack(audio_track,{"home-tunnel-desktop"}).ok())return false;
+      std::vector<webrtc::RtpCodecCapability> opus;
+      for(const auto& codec:factory_.GetRtpSenderCapabilities(webrtc::MediaType::AUDIO).codecs)
+        if(codec.name=="opus" || codec.name=="OPUS")opus.push_back(codec);
+      if(opus.empty())return false;
+      for(const auto& transceiver:connection_->GetTransceivers())if(transceiver->media_type()==webrtc::MediaType::AUDIO)
+        if(!transceiver->SetCodecPreferences(opus).ok() || !transceiver->SetDirectionWithError(webrtc::RtpTransceiverDirection::kSendOnly).ok())return false;
+    }
     if(HostInputSink::user_broker_allowed())
 #endif
     clipboard_storage_=host_clipboard();
@@ -341,7 +359,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     }
     Json::Value payload;if(identity_->peer_signal(message,wall_ms(),payload)!=auth::Error::ok)return false;
     if(text(message["type"],"peer.offer")){
-      if(!payload["sdp"].isString() || !valid_sdp(payload["sdp"].asString()))return false;
+      if(!payload["sdp"].isString() || !valid_sdp(payload["sdp"].asString(),{},wants_audio_?"recvonly":""))return false;
       pending_offer_=payload["sdp"].asString();return true;
     }
     if(text(message["type"],"peer.candidates")){
@@ -357,15 +375,15 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   }
   // Runs on the command thread, while WebRTC callbacks remain free to execute.
   bool Negotiate(){
-    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer;std::string fingerprint;
-    const auto sdp=signaling_.BlockingCall([&]{if(closed_)return std::string{};peer=connection_;fingerprint=identity_->prepared()["dtls_fingerprint_sha256"].asString();auto value=pending_offer_;pending_offer_.clear();return value;});
+    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> peer;std::string fingerprint;bool audio=false;
+    const auto sdp=signaling_.BlockingCall([&]{if(closed_)return std::string{};peer=connection_;audio=wants_audio_;fingerprint=identity_->prepared()["dtls_fingerprint_sha256"].asString();auto value=pending_offer_;pending_offer_.clear();return value;});
     if(sdp.empty())return true;
     if(!peer || !set_description(*peer,webrtc::CreateSessionDescription(webrtc::SdpType::kOffer,sdp),false))return false;
     if(!signaling_.BlockingCall([&]{if(closed_)return false;remote_description_=true;return ApplyCandidates();}))return false;
     auto create=webrtc::make_ref_counted<CreateDescription>();auto done=create->done.get_future();
     peer->CreateAnswer(create.get(),{});if(done.wait_for(4s)!=std::future_status::ready)return false;
     auto description=done.get();if(!description)return false;std::string answer;description->ToString(&answer);
-    if(!valid_sdp(answer,fingerprint))return false;
+    if(!valid_sdp(answer,fingerprint,audio?"sendonly":""))return false;
     if(!set_description(*peer,std::move(description),true))return false;
     return signaling_.BlockingCall([&]{
       if(closed_)return false;Json::Value payload;payload["type"]="answer";payload["sdp"]=answer;identity_->expect_answer(payload);
@@ -409,8 +427,14 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     if(close_finished_)return;close_finished_=true;
     if(files_){files_->close();files_.reset();}
     if(clipboard_)clipboard_->close();if(capture_){capture_->stop();capture_.reset();}
+#if defined(WEBRTC_WIN)
+    if(audio_)audio_->enable(false);
+#endif
     for(auto& [slot,pair]:channels_){pair.first->UnregisterObserver();pair.first->Close();}channels_.clear();
     if(connection_)connection_->Close();connection_=nullptr;source_=nullptr;
+#if defined(WEBRTC_WIN)
+    audio_=nullptr;
+#endif
     sink_.watchdog_stop();
     if(!close_reason_.empty()){Json::Value payload;payload["error_code"]=close_reason_;Event("closed",payload);}
   }
@@ -441,7 +465,14 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     if(frame.type==protocol::SESSION_PROOF){if(identity_->controller_proof(body)!=auth::Error::ok){Close("RD_PEER_IDENTITY_MISMATCH");return;}MaybeReady();return;}
     if(!identity_->authenticated()){Close("RD_PEER_IDENTITY_MISMATCH");return;}
     if(frame.type==protocol::SESSION_CLOSE){Close("RD_SESSION_CLOSED");return;}
-    if(frame.type==protocol::RELEASE_ALL || frame.type==protocol::CONTROL_RELEASED || frame.type==protocol::PAUSE){ReleaseInput("controller_released",false);return;}
+    if(frame.type==protocol::RELEASE_ALL || frame.type==protocol::CONTROL_RELEASED || frame.type==protocol::PAUSE){
+      if(frame.type==protocol::PAUSE){
+#if defined(WEBRTC_WIN)
+        if(audio_){audio_->enable(false);Json::Value state;state["permission"]="audio.system";state["enabled"]=false;Send(protocol::FEATURE_STATE,state);}
+#endif
+      }
+      ReleaseInput("controller_released",false);return;
+    }
     if(!ready_){Close("RD_STATE_CONFLICT");return;}
     if(slot==4){if(!clipboard_ || !clipboard_->receive(frame.type,frame.payload,steady_ms()))Close("RD_CLIPBOARD_INVALID");return;}
     if(slot==5){
@@ -463,6 +494,9 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
       bool approved=false;for(const auto& value:identity_->permissions())if(value==permission)approved=true;
       if(!approved){Close("RD_SCOPE_DENIED");return;}
       bool changed=false;
+#if defined(WEBRTC_WIN)
+      if(audio_ && permission=="audio.system")changed=(!enabled || FileCurrent()) && audio_->enable(enabled);
+#endif
       if(clipboard_ && (permission=="clipboard.read" || permission=="clipboard.write"))
         changed=(!enabled || (capture_ && capture_->frames>0)) && clipboard_->enable(permission,enabled,steady_ms());
       if(files_ && (permission=="files.send" || permission=="files.receive")){
@@ -673,6 +707,13 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     if(!ready_ && now-started_at_>protocol::ICE_DEADLINE_MS){Close("RD_NO_DIRECT_PATH");return;}
     if(capture_){const auto last=capture_->last_frame.load();if(capture_->failed || (now>=last && now-last>=1750)){Close("RD_CAPTURE_FAILED");return;}}
     if(ready_ && clipboard_)clipboard_->tick(now);
+#if defined(WEBRTC_WIN)
+    if(audio_){
+      if(audio_->failed()){
+        audio_->enable(false);Json::Value state;state["permission"]="audio.system";state["enabled"]=false;state["error_code"]="RD_FEATURE_UNAVAILABLE";Send(protocol::FEATURE_STATE,state);
+      } else if(FileCurrent())audio_->renew();
+    }
+#endif
     if(files_ && FileCurrent()){FileCall guard(*this);files_->tick(now);}
     if(closed_)return;
     // Cached stats may invoke Path synchronously and close this session. Keep
@@ -685,6 +726,9 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   HostInputSink sink_;SessionGate gate_;Screen screen_{};std::vector<Screen> available_screens_;
   std::unique_ptr<ClipboardStorage> clipboard_storage_;std::unique_ptr<ClipboardTransfer> clipboard_;
   std::unique_ptr<FileTransfer> files_;unsigned file_depth_=0;bool close_finished_=false;std::string close_reason_;
+#if defined(WEBRTC_WIN)
+  webrtc::scoped_refptr<SystemAudioSource> audio_;
+#endif
   webrtc::scoped_refptr<webrtc::PeerConnectionInterface> connection_;webrtc::scoped_refptr<ScreenSource> source_;std::unique_ptr<Capture> capture_;
   std::map<unsigned,std::pair<webrtc::scoped_refptr<webrtc::DataChannelInterface>,std::unique_ptr<ChannelObserver>>> channels_;
   std::array<uint32_t,6> received_{};std::vector<Json::Value> pending_candidates_;Json::Value pending_hello_;
@@ -693,6 +737,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
   std::string input_request_;std::set<std::array<uint8_t,16>> request_ids_;
   std::array<uint32_t,6> sent_sequence_{};uint32_t local_candidates_=0,remote_candidates_=0,request_input_epoch_=0;uint64_t started_at_=0,input_requested_at_=0,input_permissions_=0;
   bool input_pending_=false;
+  bool wants_audio_=false;
   bool closed_=false,started_=false,connected_=false,stats_pending_=false,remote_description_=false,answer_echoed_=false,path_verified_=false,ready_=false,capabilities_ack_=false;
 };
 void ChannelObserver::OnStateChange(){owner_.State(slot_);}
@@ -796,7 +841,12 @@ int main(int argc,char** argv){
   {
     auto network=webrtc::Thread::CreateWithSocketServer(),signaling=webrtc::Thread::Create();
     if(network->Start() && signaling->Start()){
-      auto factory=webrtc::CreatePeerConnectionFactory(network.get(),network.get(),signaling.get(),webrtc::make_ref_counted<NoAudioDevice>(),
+#if defined(WEBRTC_WIN)
+      auto device=webrtc::make_ref_counted<SourceAudioDevice>();
+#else
+      auto device=webrtc::make_ref_counted<NoAudioDevice>();
+#endif
+      auto factory=webrtc::CreatePeerConnectionFactory(network.get(),network.get(),signaling.get(),device,
         webrtc::CreateBuiltinAudioEncoderFactory(),webrtc::CreateBuiltinAudioDecoderFactory(),
         webrtc::CreateBuiltinVideoEncoderFactory(),webrtc::CreateBuiltinVideoDecoderFactory(),nullptr,nullptr);
       if(factory)result=serve(*factory,*signaling);factory=nullptr;

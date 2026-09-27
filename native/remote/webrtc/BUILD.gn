@@ -74,9 +74,9 @@ template("home_tunnel_host") {
       "//third_party/libyuv",
     ]
     if (is_win) {
-      sources += [ "clipboard_windows.cpp", "../src/platform/windows_input.cpp" ]
+      sources += [ "clipboard_windows.cpp", "../src/platform/windows_input.cpp", "../src/platform/windows_audio.cpp" ]
       deps += [ "//rtc_base:win32_socket_init" ]
-      libs = [ "ole32.lib", "user32.lib", "bcrypt.lib", "advapi32.lib" ]
+      libs = [ "ole32.lib", "user32.lib", "bcrypt.lib", "advapi32.lib", "uuid.lib" ]
     } else {
       sources += [ "../src/platform/x11_input.cpp", "../src/platform/x11_session.cpp" ]
       configs += [ ":home_tunnel_x11" ]
