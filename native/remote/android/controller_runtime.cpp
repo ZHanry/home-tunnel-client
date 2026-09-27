@@ -695,7 +695,7 @@ ht_rd_result ht_rd_create(const ht_rd_config_v1* config,const ht_rd_callbacks_v1
 }
 ht_rd_result ht_rd_get_capabilities(ht_rd_handle handle,ht_rd_capabilities_v1* output) {
   if (!compatible(output)) return HT_RD_ABI_MISMATCH; if (!find(handle)) return HT_RD_INVALID_HANDLE;
-  const auto permissions=AudioOutput::available()?supported:(supported&~protocol::PERMISSION_AUDIO_SYSTEM);
+  const auto permissions=AudioOutput::available()?supported:(supported&~ht::rd::protocol::PERMISSION_AUDIO_SYSTEM);
   *output={sizeof(*output),HT_RD_ABI_V1,1,HT_RD_OK,0,1,4,0,permissions}; return HT_RD_OK;
 }
 ht_rd_result ht_rd_start(ht_rd_handle handle,const uint8_t* bytes,size_t size) { return json_call(handle,bytes,size,true); }
