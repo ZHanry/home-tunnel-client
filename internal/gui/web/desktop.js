@@ -167,7 +167,7 @@
     $("nav-updates").append(updateDot);
     function setUpdateAvailable(result) {
       updateDot.hidden = !result.newer;
-      $("nav-updates").setAttribute("aria-label", result.newer ? `软件更新：发现正式版 ${result.latest}` : "软件更新");
+      $("nav-updates").setAttribute("aria-label", result.newer ? `${msg("软件更新：发现正式版 ")}${result.latest}` : msg("软件更新"));
     }
     const remoteTabs = document.createElement("div");
     remoteTabs.className = "remote-tabs";
@@ -238,17 +238,246 @@
     updateNotes.className = "settings-card update-notes";
     updateNotes.innerHTML = '<h3>版本与安装</h3><p>当前版本 <strong id="update-current-version">—</strong></p><p>发现正式版后可下载并校验 SHA-256。安装前请退出正在进行的远控会话。</p><p>私有候选版本不会显示为公开更新。</p>';
     updateLayout.append(updateNotes);
+    const desktopMessages = {
+      "\n临时密码：": ["\n临时密码：","\nOne-time password: "],
+      "\n实例 / Instance: ": ["\n实例：","\nInstance: "],
+      "\n密钥指纹 / Key: ": ["\n密钥指纹：","\nKey thumbprint: "],
+      " 台设备": [" 台设备"," devices"],
+      " 待批准 / pending": [" 待批准"," pending"],
+      "Home Tunnel · 本机服务": ["Home Tunnel · 本机服务","Home Tunnel · Local services"],
+      "MY DEVICES / 设备": ["设备","MY DEVICES"],
+      "NETWORK TUNNELS / 内网穿透": ["内网穿透","NETWORK TUNNELS"],
+      "REMOTE DESKTOP / 远程桌面": ["远程桌面","REMOTE DESKTOP"],
+      "。请在控制端核对一致后确认。": ["。请在控制端核对一致后确认。",". Confirm the matching code on the controller."],
+      "三种方式：收到连接请求后批准、设置固定密码自动连接、生成一次性临时密码。": ["三种方式：收到连接请求后批准、设置固定密码自动连接、生成一次性临时密码。","Choose host approval, a fixed password, or a one-time password."],
+      "两次新密码不一致": ["两次新密码不一致","Passwords do not match"],
+      "临时协助": ["临时协助","Temporary assistance"],
+      "临时密码：": ["临时密码：","One-time password: "],
+      "主导航": ["主导航","Main navigation"],
+      "仅本次会话 / This session only": ["仅本次会话","This session only"],
+      "仅本次显示，请安全地发送给对方": ["仅本次显示，请安全地发送给对方","Shown once. Share it securely with the other person."],
+      "仅通过 UDP 直连。这台电脑每次只接受一个控制端；配对与会话均由你在本机批准。": ["仅通过 UDP 直连。这台电脑每次只接受一个控制端；配对与会话均由你在本机批准。","Direct UDP only. This computer accepts one controller at a time. Approve pairing and sessions on this device."],
+      "从已登记设备快速进入": ["从已登记设备快速进入","Connect quickly to an enrolled device"],
+      "从本机接收文件 / Receive files": ["从本机接收文件","Receive files"],
+      "会话文件 / Session files": ["会话文件","Session files"],
+      "传输中 / Transferring": ["传输中","Transferring"],
+      "传输失败 / Failed": ["传输失败","Failed"],
+      "保存密码": ["保存密码","Save password"],
+      "保持应用最新": ["保持应用最新","Keep Home Tunnel up to date"],
+      "允许以上权限 / Allow listed permissions": ["允许以上权限","Allow listed permissions"],
+      "允许对方连接这台电脑": ["允许对方连接这台电脑","Allow access to this computer"],
+      "允许远程连接": ["允许远程连接","Allow remote access"],
+      "允许远程连接 / Enable": ["允许远程连接","Enable"],
+      "允许连接这台电脑，或选择一台已登记的设备。": ["允许连接这台电脑，或选择一台已登记的设备。","Allow access to this computer or choose an enrolled device."],
+      "公网地址": ["公网地址","Public address"],
+      "公钥指纹 / Key thumbprint": ["公钥指纹","Key thumbprint"],
+      "关闭固定密码": ["关闭固定密码","Disable fixed password"],
+      "关闭远程连接": ["关闭远程连接","Disable remote access"],
+      "关闭远程连接 / Disable": ["关闭远程连接","Disable"],
+      "关闭高权限服务": ["关闭高权限服务","Disable system service"],
+      "内网穿透": ["内网穿透","Private tunnels"],
+      "写入本机剪贴板 / Write local clipboard": ["写入本机剪贴板","Write local clipboard"],
+      "切换主题": ["切换主题","Change theme"],
+      "切换至浅色主题": ["切换至浅色主题","Switch to light theme"],
+      "切换至深色主题": ["切换至深色主题","Switch to dark theme"],
+      "创建设备 ID": ["创建设备 ID","Create device ID"],
+      "刷新状态": ["刷新状态","Refresh status"],
+      "刷新设备": ["刷新设备","Refresh devices"],
+      "动态码或恢复码 / MFA code": ["动态码或恢复码","MFA code"],
+      "单次授权 · ": ["单次授权 · ","Session grant · "],
+      "发现正式版后可下载并校验 SHA-256。安装前请退出正在进行的远控会话。": ["发现正式版后可下载并校验 SHA-256。安装前请退出正在进行的远控会话。","Download published updates with SHA-256 verification. End active remote sessions before installing."],
+      "发送 / Send": ["发送","Send"],
+      "发送文件到本机 / Send files here": ["发送文件到本机","Send files here"],
+      "取消此文件 / Cancel file": ["取消此文件","Cancel file"],
+      "只检查 GitHub 正式 Release，不显示未公开的测试包。": ["只检查 GitHub 正式 Release，不显示未公开的测试包。","Check published GitHub releases. Private test packages are excluded."],
+      "可信设备 · ": ["可信设备 · ","Trusted device · "],
+      "同账号设备未找到或当前离线": ["同账号设备未找到或当前离线","This account's device was not found or is offline"],
+      "固定密码": ["固定密码","Fixed password"],
+      "固定密码已启用 · 可跨账号自动连接": ["固定密码已启用 · 可跨账号自动连接","Fixed password enabled · Other accounts can connect automatically"],
+      "在本机批准单次授权后，绑定的会话自动启动；你可随时断开或撤销。": ["在本机批准单次授权后，绑定的会话自动启动；你可随时断开或撤销。","After local approval, the authorized session starts automatically. Disconnect or revoke access at any time."],
+      "在线": ["在线","Online"],
+      "复制协助信息": ["复制协助信息","Copy connection details"],
+      "复制本机设备标识": ["复制本机设备标识","Copy this device ID"],
+      "外观": ["外观","Appearance"],
+      "密码 / Password": ["密码","Password"],
+      "导出诊断包 / Export bundle": ["导出诊断包","Export bundle"],
+      "尚未创建": ["尚未创建","Not created"],
+      "尚未登记": ["尚未登记","Not enrolled"],
+      "屏幕 / Screen": ["屏幕","Screen"],
+      "工作空间": ["工作空间","Workspace"],
+      "已使用": ["已使用","Used"],
+      "已保存": ["已保存","Saved"],
+      "已允许连接": ["已允许连接","Remote access enabled"],
+      "已取消 / Cancelled": ["已取消","Cancelled"],
+      "已完成 / Complete": ["已完成","Complete"],
+      "已开启": ["已开启","Enabled"],
+      "已读取最新版本。输入保持不变，请核对并重新保存。": ["已读取最新版本。输入保持不变，请核对并重新保存。","The latest version was loaded. Your input was preserved; review it before saving again."],
+      "应用": ["应用","Application"],
+      "开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。 / Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access.": ["开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。","Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access."],
+      "开启无人值守 / Enable unattended access": ["开启无人值守","Enable unattended access"],
+      "开启高权限服务": ["开启高权限服务","Enable system service"],
+      "开始连接": ["开始连接","Connect"],
+      "强制断开快捷键": ["强制断开快捷键","Emergency disconnect shortcut"],
+      "当前安装还不能控制锁屏、登录前或 UAC 安全桌面；固定密码仅作用于已登录的桌面。 / This install cannot yet control the lock screen, sign-in, or UAC desktop. A fixed password applies only to a signed-in desktop. ": ["当前安装还不能控制锁屏、登录前或 UAC 安全桌面；固定密码仅作用于已登录的桌面。","This install cannot yet control the lock screen, sign-in, or UAC desktop. A fixed password applies only to a signed-in desktop. "],
+      "当前没有在线的其他设备": ["当前没有在线的其他设备","No other devices are online"],
+      "当前没有更新的正式版本。": ["当前没有更新的正式版本。","You have the latest published version."],
+      "当前版本": ["当前版本","Installed version"],
+      "当前版本 ·": ["当前版本 ·","Installed version ·"],
+      "当前连接使用的地址": ["当前连接使用的地址","Address used by this connection"],
+      "待批准的连接请求": ["待批准的连接请求","Connection requests awaiting approval"],
+      "快速连接": ["快速连接","Quick connect"],
+      "我已核对服务器身份，信任此密钥 / Trust this server identity": ["我已核对服务器身份，信任此密钥","Trust this server identity"],
+      "我的设备": ["我的设备","My devices"],
+      "打开网页远控": ["打开网页远控","Open web remote control"],
+      "批准本次连接": ["批准本次连接","Approve this connection"],
+      "拒绝": ["拒绝","Reject"],
+      "拒绝 / Reject": ["拒绝","Reject"],
+      "按下后立即停止本机远控并关闭远控开关；重新启用需回到本页面。": ["按下后立即停止本机远控并关闭远控开关；重新启用需回到本页面。","Press the shortcut to disconnect and disable remote access immediately. Return here to enable it again."],
+      "按名称或设备标识搜索": ["按名称或设备标识搜索","Search by device name or ID"],
+      "授权与会话": ["授权与会话","Permissions and sessions"],
+      "接收 / Receive": ["接收","Receive"],
+      "控制端标识 / Controller endpoint": ["控制端标识","Controller endpoint"],
+      "搜索设备": ["搜索设备","Search devices"],
+      "撤销": ["撤销","Revoke"],
+      "撤销授权并断开 / Revoke and disconnect": ["撤销授权并断开","Revoke and disconnect"],
+      "操作": ["操作","Actions"],
+      "文件 / File": ["文件","File"],
+      "文件可能已保存，请检查目标文件夹。 / The file may have been saved; check the destination folder.": ["文件可能已保存，请检查目标文件夹。","The file may have been saved; check the destination folder."],
+      "文件通过当前直连传输。请先在控制端开启文件权限；本机选择文件或保存位置，不覆盖已有文件。 / Enable file transfer on the controller, then choose files or a new destination here.": ["文件通过当前直连传输。请先在控制端开启文件权限；本机选择文件或保存位置，不覆盖已有文件。","Enable file transfer on the controller, then choose files or a new destination here."],
+      "文字输入 / Text input": ["文字输入","Text input"],
+      "新固定密码（至少 12 位）": ["新固定密码（至少 12 位）","New fixed password (at least 12 characters)"],
+      "无人值守": ["无人值守","Unattended access"],
+      "无人值守已绑定到登记的控制端。 / Unattended access is bound to the enrolled controller. ": ["无人值守已绑定到登记的控制端。","Unattended access is bound to the enrolled controller. "],
+      "无人值守绑定 / Unattended binding": ["无人值守绑定","Unattended binding"],
+      "无法读取远控状态 / Remote status unavailable": ["无法读取远控状态","Remote status unavailable"],
+      "暂无请求": ["暂无请求","No requests"],
+      "更新包未通过 SHA-256 校验 / Update verification failed": ["更新包未通过 SHA-256 校验","Update verification failed"],
+      "更新由你决定。": ["更新由你决定。","You control updates."],
+      "最近设备": ["最近设备","Recent devices"],
+      "有效至 ": ["有效至 ","Expires "],
+      "服务端公网端口已用完，请联系管理员扩容。": ["服务端公网端口已用完，请联系管理员扩容。","The server has no available public ports. Ask the administrator to expand the range."],
+      "服务端密码与本机授权版本不一致，请重新设置": ["服务端密码与本机授权版本不一致，请重新设置","The server password and local authorization versions differ. Set the password again."],
+      "未启用": ["未启用","Disabled"],
+      "未安装系统服务，便携模式仍可在已登录桌面使用。 / No system service is installed; signed-in desktop control still works.": ["未安装系统服务，便携模式仍可在已登录桌面使用。","No system service is installed; signed-in desktop control still works."],
+      "未设置固定密码": ["未设置固定密码","No fixed password set"],
+      "本地目标": ["本地目标","Local target"],
+      "本机 · ": ["本机 · ","This device · "],
+      "本机设备标识": ["本机设备标识","This device ID"],
+      "查看同账号下已登记的电脑。": ["查看同账号下已登记的电脑。","View computers enrolled with your account."],
+      "查看所有设备": ["查看所有设备","View all devices"],
+      "查看服务器身份 / Verify server": ["查看服务器身份","Verify server"],
+      "查看设备": ["查看设备","View device"],
+      "核对码 / Compare code: ": ["核对码：","Compare code: "],
+      "检查 DNS、HTTPS、FRPS 与本地服务。导出内容不含凭据、地址或原始日志。": ["检查 DNS、HTTPS、FRPS 与本地服务。导出内容不含凭据、地址或原始日志。","Check DNS, HTTPS, FRPS and local services. Exported reports exclude credentials, addresses and raw logs."],
+      "检查更新": ["检查更新","Check for updates"],
+      "检查正式版本": ["检查正式版本","Check published releases"],
+      "正在检查…": ["正在检查…","Checking…"],
+      "正在检查本机能力…": ["正在检查本机能力…","Checking this device's capabilities…"],
+      "此安装包没有可用的远控后端": ["此安装包没有可用的远控后端","This package has no available remote control backend"],
+      "没有匹配的设备": ["没有匹配的设备","No matching devices"],
+      "浅色": ["浅色","Light"],
+      "深色": ["深色","Dark"],
+      "版本与安装": ["版本与安装","Version and installation"],
+      "状态": ["状态","Status"],
+      "生成临时密码": ["生成临时密码","Generate one-time password"],
+      "由本机处理会话授权，你可以随时断开。": ["由本机处理会话授权，你可以随时断开。","Approve access on this computer and disconnect at any time."],
+      "登记本机 / Enroll": ["登记本机","Enroll"],
+      "知道设备 ID 和固定密码、且登录同一服务器的用户都可以连接。修改或关闭会撤销旧授权。": ["知道设备 ID 和固定密码、且登录同一服务器的用户都可以连接。修改或关闭会撤销旧授权。","Users signed in to the same server can connect with this device ID and fixed password. Changing or disabling it revokes previous access."],
+      "离线": ["离线","Offline"],
+      "私有候选版本不会显示为公开更新。": ["私有候选版本不会显示为公开更新。","Private candidate builds are excluded from public updates."],
+      "立即断开": ["立即断开","Disconnect now"],
+      "立即断开 / Disconnect": ["立即断开","Disconnect"],
+      "等待连接": ["等待连接","Waiting for a connection"],
+      "等待选择 / Awaiting selection": ["等待选择","Awaiting selection"],
+      "管理员信任此设备": ["管理员信任此设备","Trust this device as administrator"],
+      "管理员批准后绑定为可信设备，持续授权最长 30 天": ["管理员批准后绑定为可信设备，持续授权最长 30 天","An administrator can trust this device for up to 30 days"],
+      "粘贴设备标识": ["粘贴设备标识","Paste device ID"],
+      "系统声音 / System audio": ["系统声音","System audio"],
+      "给其他账号提供一次性设备 ID 和临时密码。密码 5 分钟有效，使用一次即失效。": ["给其他账号提供一次性设备 ID 和临时密码。密码 5 分钟有效，使用一次即失效。","Share this device ID and a one-time password with another account. The password expires after 5 minutes or one use."],
+      "继续设置 / Resume setup": ["继续设置","Resume setup"],
+      "网页控制台": ["网页控制台","Web console"],
+      "网页远控当前不可用": ["网页远控当前不可用","Web remote control is unavailable"],
+      "设备 ID：": ["设备 ID：","Device ID: "],
+      "设备列表暂不可用": ["设备列表暂不可用","The device list is temporarily unavailable"],
+      "设备标识": ["设备标识","Device ID"],
+      "设置": ["设置","Settings"],
+      "诊断 / Diagnostics": ["诊断","Diagnostics"],
+      "读取本机剪贴板 / Read local clipboard": ["读取本机剪贴板","Read local clipboard"],
+      "账号 / Account": ["账号","Account"],
+      "跟随系统": ["跟随系统","Follow system"],
+      "跨账号设备 ID": ["跨账号设备 ID","Device ID for another account"],
+      "软件更新": ["软件更新","Software updates"],
+      "软件更新：发现正式版 ": ["软件更新：发现正式版 ","Software updates: release available "],
+      "输入同账号设备标识，或选择在线设备。": ["输入同账号设备标识，或选择在线设备。","Enter a device ID from your account or choose an online device."],
+      "运行诊断 / Run checks": ["运行诊断","Run checks"],
+      "还没有其他已登记设备": ["还没有其他已登记设备","No other enrolled devices yet"],
+      "还没有登记设备": ["还没有登记设备","No enrolled devices yet"],
+      "远程会话请求 / Session request": ["远程会话请求","Session request"],
+      "远程会话进行中": ["远程会话进行中","Remote session active"],
+      "远程协助 / Remote assistance": ["远程协助","Remote assistance"],
+      "远程协助，直接开始。": ["远程协助，直接开始。","Start a remote connection."],
+      "远程控制": ["远程控制","Remote control"],
+      "远程桌面": ["远程桌面","Remote desktop"],
+      "远程连接已关闭": ["远程连接已关闭","Remote access disabled"],
+      "连接其他账号": ["连接其他账号","Connect to another account"],
+      "连接名称": ["连接名称","Connection name"],
+      "连接这台电脑": ["连接这台电脑","Connect to this computer"],
+      "连接远程电脑": ["连接远程电脑","Connect to another computer"],
+      "选择保存位置 / Choose destination": ["选择保存位置","Choose destination"],
+      "选择多个文件发送 / Select files to send": ["选择多个文件发送","Select files to send"],
+      "配对请求 / Pairing request": ["配对请求","Pairing request"],
+      "键盘 / Keyboard": ["键盘","Keyboard"],
+      "需要本机管理员权限，并绑定确切的控制端。 / An administrator must bind the exact controller. ": ["需要本机管理员权限，并绑定确切的控制端。","An administrator must bind the exact controller. "],
+      "首次启用需核对服务器身份；进行中的会话可在这里立即撤销。": ["首次启用需核对服务器身份；进行中的会话可在这里立即撤销。","Verify the server identity before first use. Revoke active sessions here at any time."],
+      "首次启用需要本设备所属账号验证。密码和动态码仅用于本次登记。": ["首次启用需要本设备所属账号验证。密码和动态码仅用于本次登记。","Verify the account that owns this device before first use. The password and MFA code are used only for this enrollment."],
+      "首次登录请设置新密码后继续。": ["首次登录请设置新密码后继续。","Set a new password before continuing."],
+      "麦克风回传 / Microphone": ["麦克风回传","Microphone"],
+      "默认关闭。开启需要管理员，并且只接受下面这个控制端标识和公钥指纹。": ["默认关闭。开启需要管理员，并且只接受下面这个控制端标识和公钥指纹。","Off by default. Administrator approval is required. Access is limited to the controller ID and public key thumbprint below."],
+      "鼠标 / Pointer": ["鼠标","Pointer"],
+      "<div class=\"service-list-head\"><span>连接名称</span><span>公网地址</span><span>本地目标</span><span>状态</span><span>操作</span></div>": ["<div class=\"service-list-head\"><span>连接名称</span><span>公网地址</span><span>本地目标</span><span>状态</span><span>操作</span></div>","<div class=\"service-list-head\"><span>Connection name</span><span>Public address</span><span>Local target</span><span>Status</span><span>Actions</span></div>"],
+    };
     let locale = document.documentElement.lang === "en" ? "en" : "zh-CN";
+    const msg = key => desktopMessages[key]?.[locale === "en" ? 1 : 0] ?? key;
+    const appearance = document.createElement("div");
+    appearance.className = "settings-card appearance-settings";
+    appearance.innerHTML = '<label for="theme-preference">外观</label><select id="theme-preference"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select>';
+    $("settings").append(appearance);
+    // Capture only the initial product nodes. Later device names, file names,
+    // credentials and API data are never searched or rewritten by this binding.
+    const staticLocaleBindings = [];
+    const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+    let productNode;
+    while ((productNode = walker.nextNode())) {
+      if (productNode.parentElement.closest("script,style,[data-i18n],[data-no-translate]")) continue;
+      const original = productNode.nodeValue, key = original.trim();
+      if (Object.hasOwn(desktopMessages, key)) staticLocaleBindings.push({ node: productNode, original, key });
+    }
+    for (const element of document.querySelectorAll("[aria-label],[title],[placeholder]")) {
+      for (const attribute of ["aria-label", "title", "placeholder"]) {
+        const key = element.getAttribute(attribute);
+        if (Object.hasOwn(desktopMessages, key)) staticLocaleBindings.push({ node: element, attribute, key });
+      }
+    }
+    const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
     const t = (key) => (strings[locale] && strings[locale][key]) || strings["zh-CN"][key] || key;
     function applyLocale() {
       document.documentElement.lang = locale;
+      for (const binding of staticLocaleBindings) {
+        if (!binding.node.isConnected) continue;
+        if (binding.attribute) binding.node.setAttribute(binding.attribute, msg(binding.key));
+        else binding.node.nodeValue = binding.original.replace(binding.key, msg(binding.key));
+      }
       document.querySelectorAll("[data-i18n]").forEach((node) => { node.textContent = t(node.dataset.i18n); });
       for (const [id, icon] of [["add", "plus"], ["refresh", "refresh"]]) $(id).insertAdjacentHTML("afterbegin", actionIcon(icon));
       $("service-search").placeholder = t("searchServices");
-      $("locale-toggle").textContent = locale === "en" ? "中" : "EN";
+      for (const id of ["locale-toggle", "sidebar-locale"]) $(id).textContent = locale === "en" ? "中" : "EN";
       try { localStorage.setItem("ht_locale", locale); } catch (e) {}
     }
-    function applyTheme(theme) {
+    function applyTheme(preference) {
+      if (!["light", "dark", "system"].includes(preference)) preference = "system";
+      const theme = preference === "system" ? themeMedia.matches ? "dark" : "light" : preference;
+      document.documentElement.dataset.themePreference = preference;
+      $("theme-preference").value = preference;
       document.documentElement.dataset.theme = theme;
       document.documentElement.style.colorScheme = theme;
       const icon = theme === "dark"
@@ -256,13 +485,23 @@
         : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/></svg>';
       for (const id of ["theme-toggle", "sidebar-theme"]) {
         $(id).innerHTML = icon;
-        $(id).setAttribute("aria-label", theme === "dark" ? "切换至浅色主题" : "切换至深色主题");
+        $(id).setAttribute("aria-label", theme === "dark" ? msg("切换至浅色主题") : msg("切换至深色主题"));
       }
-      try { localStorage.setItem("ht_theme", theme); } catch (e) {}
+      try { localStorage.setItem("ht_theme", preference); } catch (e) {}
     }
     applyLocale();
-    applyTheme(document.documentElement.dataset.theme || "light");
-    $("locale-toggle").onclick = () => { locale = locale === "en" ? "zh-CN" : "en"; applyLocale(); renderServices(); if (!$("editor").classList.contains("hidden")) applyProtocol(); };
+    applyTheme(document.documentElement.dataset.themePreference || "system");
+    $("theme-preference").onchange = event => applyTheme(event.target.value);
+    themeMedia.addEventListener("change", () => {
+      if (document.documentElement.dataset.themePreference === "system") applyTheme("system");
+    });
+    $("locale-toggle").onclick = () => {
+      locale = locale === "en" ? "zh-CN" : "en";
+      applyLocale(); applyTheme(document.documentElement.dataset.themePreference); renderServices(); renderAccountDevices();
+      void refreshRemoteHost();
+      if (!$("update-page").classList.contains("hidden")) void checkUpdates();
+      if (!$("editor").classList.contains("hidden")) applyProtocol();
+    };
     $("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     $("server").value = localStorage.getItem("ht_server") || "";
     $("username").value = localStorage.getItem("ht_username") || "";
@@ -272,7 +511,7 @@
       const text = await response.text();
       const data = text ? JSON.parse(text) : null;
       if (!response.ok) {
-        const descriptions = { CLIENT_RAW_TUNNELS_DISABLED: t("rawNotAllowed"), TCP_TUNNELS_DISABLED: t("transportDisabled"), UDP_TUNNELS_DISABLED: t("transportDisabled"), PORT_POOL_EXHAUSTED: locale === "en" ? "The server has no available public ports. Ask the administrator to expand the range." : "服务端公网端口已用完，请联系管理员扩容。", VERSION_CONFLICT: t("conflict") };
+        const descriptions = { CLIENT_RAW_TUNNELS_DISABLED: t("rawNotAllowed"), TCP_TUNNELS_DISABLED: t("transportDisabled"), UDP_TUNNELS_DISABLED: t("transportDisabled"), PORT_POOL_EXHAUSTED: locale === "en" ? "The server has no available public ports. Ask the administrator to expand the range." : msg("服务端公网端口已用完，请联系管理员扩容。"), VERSION_CONFLICT: t("conflict") };
         const error = new Error(descriptions[data?.error_code] || data?.message || text || response.statusText); error.code = data?.error_code; throw error;
       }
       return data;
@@ -300,15 +539,16 @@
       const details = document.createElement("div");
       details.className = "account-device-details";
       const name = document.createElement("strong");
+      name.setAttribute("data-no-translate", "");
       name.textContent = device.name || t("unnamedComputer");
       const status = document.createElement("small");
       const online = device.status === "active" && device.online;
-      status.textContent = `${device.id === localDeviceID ? "本机 · " : ""}${online ? "在线" : "离线"} · ${device.id || "—"}`;
+      status.textContent = `${device.id === localDeviceID ? msg("本机 · ") : ""}${online ? msg("在线") : msg("离线")} · ${device.id || "—"}`;
       details.append(name, status);
       const action = document.createElement("button");
       action.type = "button";
       action.className = "secondary";
-      action.textContent = compact ? "查看设备" : "远程控制";
+      action.textContent = compact ? msg("查看设备") : msg("远程控制");
       action.insertAdjacentHTML("beforeend", actionIcon(compact ? "arrow" : "external"));
       action.disabled = !compact && (!online || !consoleUrl);
       action.onclick = compact ? () => void showDevices() : () => void openDeviceRemote(device);
@@ -317,12 +557,12 @@
     }
     function renderAccountDevices() {
       const filtered = accountDevices.filter((device) => `${device.name || ""} ${device.id || ""}`.toLocaleLowerCase().includes($("devices-search").value.trim().toLocaleLowerCase()));
-      $("devices-count").textContent = `${filtered.length} 台设备`;
+      $("devices-count").textContent = `${filtered.length}${msg(" 台设备")}`;
       $("devices-list").replaceChildren(...filtered.map((device) => createDeviceCard(device)));
-      if (!filtered.length) $("devices-list").textContent = accountDevices.length ? "没有匹配的设备" : "还没有登记设备";
+      if (!filtered.length) $("devices-list").textContent = accountDevices.length ? msg("没有匹配的设备") : msg("还没有登记设备");
       const recent = accountDevices.filter((device) => device.id !== localDeviceID).slice(0, 3);
       $("recent-devices-list").replaceChildren(...recent.map((device) => createDeviceCard(device, true)));
-      if (!recent.length) $("recent-devices-list").textContent = "还没有其他已登记设备";
+      if (!recent.length) $("recent-devices-list").textContent = msg("还没有其他已登记设备");
       const connect = accountDevices.filter((device) => device.id !== localDeviceID && device.status === "active" && device.online).slice(0, 2);
       $("remote-connect-list").replaceChildren(...connect.map((device) => {
         const row = document.createElement("button");
@@ -330,15 +570,16 @@
         row.className = "secondary remote-connect-device";
         row.disabled = !consoleUrl;
         const name = document.createElement("strong");
+        name.setAttribute("data-no-translate", "");
         name.textContent = device.name || t("unnamedComputer");
         const hint = document.createElement("span");
-        hint.textContent = "远程控制";
+        hint.textContent = msg("远程控制");
         hint.insertAdjacentHTML("beforeend", actionIcon("external"));
         row.append(name, hint);
         row.onclick = () => void openDeviceRemote(device);
         return row;
       }));
-      if (!connect.length) $("remote-connect-list").textContent = "当前没有在线的其他设备";
+      if (!connect.length) $("remote-connect-list").textContent = msg("当前没有在线的其他设备");
     }
     async function loadDevices() {
       const result = await api("/local/devices");
@@ -346,19 +587,19 @@
       localDeviceID = result.local_device_id || "";
       renderAccountDevices();
     }
-    $("rd-host-enable").textContent = "允许远程连接";
-    $("rd-host-disable").textContent = "关闭远程连接";
-    $("rd-host-stop").textContent = "立即断开";
+    $("rd-host-enable").textContent = msg("允许远程连接");
+    $("rd-host-disable").textContent = msg("关闭远程连接");
+    $("rd-host-stop").textContent = msg("立即断开");
     $("remote-connect-form").onsubmit = (event) => {
       event.preventDefault();
       const id = $("remote-device-id").value.trim().toLowerCase();
       const device = accountDevices.find((item) => item.id?.toLowerCase() === id);
       if (!device || device.id === localDeviceID || device.status !== "active" || !device.online) {
-        $("remote-open-error").textContent = "同账号设备未找到或当前离线";
+        $("remote-open-error").textContent = msg("同账号设备未找到或当前离线");
         return;
       }
       if (!consoleUrl) {
-        $("remote-open-error").textContent = "网页远控当前不可用";
+        $("remote-open-error").textContent = msg("网页远控当前不可用");
         return;
       }
       void openDeviceRemote(device);
@@ -398,7 +639,7 @@
       $("sidebar-machine").textContent = state.device_name || t("unnamedComputer");
       $("sidebar-status").textContent = state.stale ? t("stale") : t(state.agent_state === "Online" ? "agentOnline" : "agentOffline");
       void refreshRemoteHost();
-      void loadDevices().catch(() => { $("recent-devices-list").textContent = "设备列表暂不可用"; });
+      void loadDevices().catch(() => { $("recent-devices-list").textContent = msg("设备列表暂不可用"); });
     }
     async function showDevices() {
       const revision = ++navigationRevision;
@@ -421,14 +662,14 @@
     }
     async function checkUpdates() {
       const status = $("update-page-status");
-      status.textContent = locale === "en" ? "Checking…" : "正在检查…";
+      status.textContent = locale === "en" ? "Checking…" : msg("正在检查…");
       try {
         const result = await api("/local/update");
         setUpdateAvailable(result);
         $("update-current-version").textContent = result.current || "—";
         $("update-version-badge").textContent = result.current || "—";
         status.replaceChildren();
-        status.append(result.newer ? `${t("updatePrefix")}${result.latest}${t("updateCurrent")}${result.current}${t("updateSuffix")}` : (locale === "en" ? "No newer stable release." : "当前没有更新的正式版本。"));
+        status.append(result.newer ? `${t("updatePrefix")}${result.latest}${t("updateCurrent")}${result.current}${t("updateSuffix")}` : (locale === "en" ? "No newer stable release." : msg("当前没有更新的正式版本。")));
         if (result.newer && result.download_url) {
           const download = document.createElement("button");
           download.type = "button";
@@ -437,7 +678,7 @@
             download.disabled = true;
             try {
               const packageResult = await api("/local/update/download", { method: "POST" });
-              if (packageResult.verified !== true) throw new Error("更新包未通过 SHA-256 校验 / Update verification failed");
+              if (packageResult.verified !== true) throw new Error(msg("更新包未通过 SHA-256 校验 / Update verification failed"));
               status.textContent = packageResult.hint || packageResult.path;
             } catch (error) { status.textContent = error.message; }
           };
@@ -588,7 +829,7 @@
               download.textContent = t("downloading");
               try {
                 const result = await api("/local/update/download", { method: "POST" });
-                if (result.verified !== true) throw new Error("更新包未通过 SHA-256 校验 / Update verification failed");
+                if (result.verified !== true) throw new Error(msg("更新包未通过 SHA-256 校验 / Update verification failed"));
                 $("update").textContent = result.hint || result.path;
               } catch (error) {
                 $("update").textContent = error.message;
@@ -620,7 +861,7 @@
       const search = $("service-search").value.trim().toLowerCase();
       const filter = $("service-filter").value;
       const items = connections.filter(item => (!search || `${item.name} ${item.subdomain} ${item.local_host}`.toLowerCase().includes(search)) && (filter === "all" || filter === "paused" && !item.enabled || filter === "online" && item.enabled && item.state === "Online"));
-      $("connections").innerHTML = items.length ? '<div class="service-list-head"><span>连接名称</span><span>公网地址</span><span>本地目标</span><span>状态</span><span>操作</span></div>' + items.map(item => {
+      $("connections").innerHTML = items.length ? msg("<div class=\"service-list-head\"><span>连接名称</span><span>公网地址</span><span>本地目标</span><span>状态</span><span>操作</span></div>") + items.map(item => {
         const publicUrl = item.public_url || item.access_url || item.public_endpoint || "";
         const status = !item.enabled ? t("paused") : item.state === "Online" ? t("online") : item.state || "—";
         return `<article class="service-row"><div class="service-identity"><input type="checkbox" class="batch-select" data-select="${escapeHtml(item.id)}" aria-label="${escapeHtml(t("select") + ": " + item.name)}" ${selectedConnections.has(item.id) ? "checked" : ""}><span class="service-protocol">${escapeHtml((item.application_protocol || item.proxy_type || "http").toUpperCase())}</span><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml((item.application_protocol || item.proxy_type || "http").toUpperCase())} ${escapeHtml(t("connectionType"))}</small></div></div><button type="button" class="url" data-copy="${escapeHtml(publicUrl)}" aria-label="${escapeHtml(t("copyAddress"))}">${escapeHtml(publicUrl || item.subdomain)}</button><span class="service-target">${escapeHtml(item.local_host)}:${escapeHtml(item.local_port)}</span><span class="state-badge ${item.enabled && item.state === "Online" ? "online" : ""}">${escapeHtml(status)}</span><div class="actions"><button class="secondary" data-edit="${escapeHtml(item.id)}" aria-label="${escapeHtml(t("edit") + ": " + item.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.1l2-1.5-2-3.5-2.4 1a7 7 0 0 0-1.9-1.1L14.2 3h-4.4l-.4 2.8a7 7 0 0 0-1.9 1.1l-2.4-1-2 3.5 2 1.5a7 7 0 0 0 0 2.2l-2 1.5 2 3.5 2.4-1a7 7 0 0 0 1.9 1.1l.4 2.8h4.4l.4-2.8a7 7 0 0 0 1.9-1.1l2.4 1 2-3.5-2-1.5A7 7 0 0 0 19 12Z"/></svg></button><button class="secondary" data-toggle="${escapeHtml(item.id)}" data-enabled="${item.enabled}" aria-label="${escapeHtml(t(item.enabled ? "pause" : "enable") + ": " + item.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${item.enabled ? "M6 5v14M12 5v14" : "M7 4v16l13-8Z"}"/></svg></button><details><summary aria-label="${escapeHtml(t("more") + ": " + item.name)}">⋯</summary><button class="danger" data-delete="${escapeHtml(item.id)}">${escapeHtml(t("remove"))}</button></details></div></article>`;
@@ -681,7 +922,7 @@
       const tags = [...new Set($("device-tags").value.split(",").map(tag => tag.trim()).filter(Boolean))];
       await api("/local/device/metadata", { method: "PATCH", body: JSON.stringify({tags, favorite: $("device-favorite").checked, expected_metadata_version: deviceMetadata.metadata_version}) });
       deviceMetadata = await api("/local/device/metadata");
-      $("settings-error").textContent = locale === "en" ? "Saved" : "已保存";
+      $("settings-error").textContent = locale === "en" ? "Saved" : msg("已保存");
     }, "settings-error");
     for (const enabled of [false, true]) {
       const button = $(enabled ? "batch-resume" : "batch-pause");
@@ -691,7 +932,7 @@
         const verb = t(enabled ? "batchResume" : "batchPause");
         if (!confirm(`${verb} (${items.length})?\n${items.map(item => item.name).join("\n")}`)) return;
         const result = await api("/local/batch", {method: "POST", body: JSON.stringify({enabled, items: items.map(item => ({id:item.id,expected_version:item.version}))})});
-        $("batch-results").textContent = result.results.map(row => `${items.find(item => item.id === row.id)?.name || row.id}: ${row.status === 200 ? (locale === "en" ? "Saved" : "已保存") : row.error_code || row.status}`).join("\n");
+        $("batch-results").textContent = result.results.map(row => `${items.find(item => item.id === row.id)?.name || row.id}: ${row.status === 200 ? (locale === "en" ? "Saved" : msg("已保存")) : row.error_code || row.status}`).join("\n");
         selectedConnections.clear(); await showHome();
       });
     }
@@ -720,7 +961,7 @@
     $("login-form").onsubmit = async (event) => {
       event.preventDefault();
       if (!$("login-form").reportValidity()) return;
-      if (!$("password-change").classList.contains("hidden") && $("new-password").value !== $("confirm-password").value) { $("login-error").textContent = locale === "en" ? "Passwords do not match" : "两次新密码不一致"; return; }
+      if (!$("password-change").classList.contains("hidden") && $("new-password").value !== $("confirm-password").value) { $("login-error").textContent = locale === "en" ? "Passwords do not match" : msg("两次新密码不一致"); return; }
       await runAction($("login-button"), async () => {
 	  resetRemoteHostUI();
       $("login-error").textContent = "";
@@ -738,7 +979,7 @@
           $("login-error").textContent = error.message;
         } else if (/requires a password change|PASSWORD_CHANGE_REQUIRED/.test(error.message)) {
           $("password-change").classList.remove("hidden"); $("new-password").required = true; $("confirm-password").required = true; $("new-password").focus();
-          $("login-error").textContent = locale === "en" ? "Set a new password to continue." : "首次登录请设置新密码后继续。";
+          $("login-error").textContent = locale === "en" ? "Set a new password to continue." : msg("首次登录请设置新密码后继续。");
         } else $("login-error").textContent = error.message;
       }
       }, "login-error");
@@ -774,7 +1015,7 @@
       const name = $("subdomain").value.trim();
       if (!name) return;
       try {
-        if (editBaseline && name === editBaseline.subdomain) { $("availability").textContent = locale === "en" ? "Your current address" : "当前连接使用的地址"; return; }
+        if (editBaseline && name === editBaseline.subdomain) { $("availability").textContent = locale === "en" ? "Your current address" : msg("当前连接使用的地址"); return; }
         const result = await api("/local/subdomain?name=" + encodeURIComponent(name));
         if (requestId !== availabilityRequest || $("subdomain").value.trim() !== name) return;
         $("availability").textContent = result.message || "";
@@ -820,7 +1061,7 @@
           latest.onclick = () => runAction(latest, async () => {
             const data = await api("/local/connections"); const item = data.items.find((c) => c.id === $("edit-id").value);
             if (!item) throw new Error(t("failed")); editVersion = item.version;
-            $("edit-error").textContent = locale === "en" ? "Latest version loaded. Review your changes and save again." : "已读取最新版本。输入保持不变，请核对并重新保存。";
+            $("edit-error").textContent = locale === "en" ? "Latest version loaded. Review your changes and save again." : msg("已读取最新版本。输入保持不变，请核对并重新保存。");
           }, "edit-error");
           $("edit-error").append(latest);
         }
@@ -845,9 +1086,9 @@
       for (const id of ["enable", "disable"]) $("rd-unattended-" + id).disabled = true;
     }
     const remotePermissionNames = {
-      view: "屏幕 / Screen", "input.keyboard": "键盘 / Keyboard", "input.pointer": "鼠标 / Pointer", "input.text": "文字输入 / Text input",
-      "audio.system": "系统声音 / System audio", "audio.microphone": "麦克风回传 / Microphone", "clipboard.read": "读取本机剪贴板 / Read local clipboard",
-      "clipboard.write": "写入本机剪贴板 / Write local clipboard", "files.send": "发送文件到本机 / Send files here", "files.receive": "从本机接收文件 / Receive files"
+      view: msg("屏幕 / Screen"), "input.keyboard": msg("键盘 / Keyboard"), "input.pointer": msg("鼠标 / Pointer"), "input.text": msg("文字输入 / Text input"),
+      "audio.system": msg("系统声音 / System audio"), "audio.microphone": msg("麦克风回传 / Microphone"), "clipboard.read": msg("读取本机剪贴板 / Read local clipboard"),
+      "clipboard.write": msg("写入本机剪贴板 / Write local clipboard"), "files.send": msg("发送文件到本机 / Send files here"), "files.receive": msg("从本机接收文件 / Receive files")
     };
     async function remoteHostAction(action, extra = {}) {
       try {
@@ -870,16 +1111,16 @@
       for (const event of state.pending || []) {
         const box = document.createElement("div"), title = document.createElement("h3"), detail = document.createElement("p"), scopes = document.createElement("p"), actions = document.createElement("div");
         box.className = "settings-card"; actions.className = "row";
-        title.textContent = event.kind === "session" ? "远程会话请求 / Session request" : "配对请求 / Pairing request";
+        title.textContent = event.kind === "session" ? msg("远程会话请求 / Session request") : msg("配对请求 / Pairing request");
         detail.textContent = `${event.controller_endpoint_id} · ${event.controller_thumbprint || ""}`; detail.style.overflowWrap = "anywhere";
         scopes.textContent = (event.permissions || []).map(name => remotePermissionNames[name] || name).join(" · ");
         box.append(title, detail, scopes);
         if (event.display_code) {
-          const code = document.createElement("p"); code.textContent = `核对码 / Compare code: ${event.display_code}。请在控制端核对一致后确认。`; box.append(code);
+          const code = document.createElement("p"); code.textContent = `${msg("核对码 / Compare code: ")}${event.display_code}${msg("。请在控制端核对一致后确认。")}`; box.append(code);
         } else {
-          const mode = document.createElement("p"); mode.textContent = event.mode === "persistent" ? "管理员批准后绑定为可信设备，持续授权最长 30 天" : "仅本次会话 / This session only"; box.append(mode);
+          const mode = document.createElement("p"); mode.textContent = event.mode === "persistent" ? msg("管理员批准后绑定为可信设备，持续授权最长 30 天") : msg("仅本次会话 / This session only"); box.append(mode);
           const data = {id:event.id,kind:event.kind,permissions:event.permissions,mode:event.mode,connection_epoch:event.connection_epoch,state_version:event.state_version};
-          actions.append(remoteActionButton(event.mode === "persistent" && event.kind === "pairing" ? "管理员信任此设备" : "允许以上权限 / Allow listed permissions", "approve", data), remoteActionButton("拒绝 / Reject", "reject", data, true));
+          actions.append(remoteActionButton(event.mode === "persistent" && event.kind === "pairing" ? msg("管理员信任此设备") : msg("允许以上权限 / Allow listed permissions"), "approve", data), remoteActionButton(msg("拒绝 / Reject"), "reject", data, true));
           box.append(actions);
         }
         $("rd-host-pending").append(box);
@@ -887,9 +1128,9 @@
       for (const grant of state.grants || []) {
         if (grant.revoked || Date.parse(grant.expires_at) <= Date.now()) continue;
         const row = document.createElement("div"), detail = document.createElement("p"); row.className = "settings-card";
-        detail.textContent = `${grant.mode === "persistent" ? "可信设备 · " : "单次授权 · "}${grant.controller_endpoint_id} · ${(grant.permissions || []).map(name => remotePermissionNames[name] || name).join(" · ")} · ${new Date(grant.expires_at).toLocaleString(locale)}`;
+        detail.textContent = `${grant.mode === "persistent" ? msg("可信设备 · ") : msg("单次授权 · ")}${grant.controller_endpoint_id} · ${(grant.permissions || []).map(name => remotePermissionNames[name] || name).join(" · ")} · ${new Date(grant.expires_at).toLocaleString(locale)}`;
         detail.style.overflowWrap = "anywhere";
-        row.append(detail, remoteActionButton("撤销授权并断开 / Revoke and disconnect", "revoke", {id:grant.id}, true)); $("rd-host-grants").append(row);
+        row.append(detail, remoteActionButton(msg("撤销授权并断开 / Revoke and disconnect"), "revoke", {id:grant.id}, true)); $("rd-host-grants").append(row);
       }
     }
     function renderAssistInvites(invites) {
@@ -897,33 +1138,33 @@
       const secretBox = $("rd-assist-secret"); secretBox.replaceChildren();
       if (assistSecret && Date.parse(assistSecret.expires_at) > Date.now() && !lastAssistInvites.some(item => item.id === assistSecret.id && item.state !== "active")) {
         secretBox.classList.remove("hidden");
-        const heading = document.createElement("strong"); heading.textContent = "仅本次显示，请安全地发送给对方";
-        const code = document.createElement("p"); code.textContent = `设备 ID：${assistSecret.device_id}`;
-        const password = document.createElement("p"); password.textContent = `临时密码：${assistSecret.temporary_password}`;
-        const copy = document.createElement("button"); copy.type = "button"; copy.className = "secondary"; copy.textContent = "复制协助信息";
-        copy.onclick = () => navigator.clipboard.writeText(`设备 ID：${assistSecret.device_id}\n临时密码：${assistSecret.temporary_password}`).catch(() => {});
+        const heading = document.createElement("strong"); heading.textContent = msg("仅本次显示，请安全地发送给对方");
+        const code = document.createElement("p"); code.textContent = `${msg("设备 ID：")}${assistSecret.device_id}`;
+        const password = document.createElement("p"); password.textContent = `${msg("临时密码：")}${assistSecret.temporary_password}`;
+        const copy = document.createElement("button"); copy.type = "button"; copy.className = "secondary"; copy.textContent = msg("复制协助信息");
+        copy.onclick = () => navigator.clipboard.writeText(`${msg("设备 ID：")}${assistSecret.device_id}${msg("\n临时密码：")}${assistSecret.temporary_password}`).catch(() => {});
         secretBox.append(heading, code, password, copy);
       } else { assistSecret = null; secretBox.classList.add("hidden"); }
       const list = $("rd-assist-list"); list.replaceChildren();
       for (const invite of lastAssistInvites) {
         const row = document.createElement("div"); row.className = "remote-assist-invite";
-        const detail = document.createElement("span"); detail.textContent = `${invite.device_id} · ${invite.state === "redeemed" ? "已使用" : "等待连接"} · ${new Date(invite.expires_at).toLocaleString(locale)}`;
-        const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "danger"; revoke.textContent = "撤销";
+        const detail = document.createElement("span"); detail.textContent = `${invite.device_id} · ${invite.state === "redeemed" ? msg("已使用") : msg("等待连接")} · ${new Date(invite.expires_at).toLocaleString(locale)}`;
+        const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "danger"; revoke.textContent = msg("撤销");
         revoke.onclick = () => runAction(revoke, async () => { await remoteHostAction("revoke_invite", {id:invite.id}); if (assistSecret?.id === invite.id) assistSecret = null; renderAssistInvites(lastAssistInvites.filter(item => item.id !== invite.id)); }, "rd-assist-error");
         row.append(detail, revoke); list.append(row);
       }
     }
     function renderAccessRequests(requests = []) {
       const list = $("rd-access-requests"); list.replaceChildren();
-      if (!requests.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "暂无请求"; list.append(empty); return; }
+      if (!requests.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = msg("暂无请求"); list.append(empty); return; }
       for (const request of requests) {
         const row = document.createElement("div"), detail = document.createElement("div"), actions = document.createElement("div");
         row.className = "remote-access-request"; actions.className = "remote-access-request-actions";
         const name = document.createElement("strong"), expiry = document.createElement("small");
-        name.textContent = request.controller_endpoint_id; expiry.textContent = `有效至 ${new Date(request.expires_at).toLocaleTimeString(locale)}`;
+        name.textContent = request.controller_endpoint_id; expiry.textContent = `${msg("有效至 ")}${new Date(request.expires_at).toLocaleTimeString(locale)}`;
         detail.append(name, expiry);
         const approve = document.createElement("button"), reject = document.createElement("button");
-        approve.type = reject.type = "button"; approve.textContent = "批准本次连接"; reject.textContent = "拒绝"; reject.className = "danger";
+        approve.type = reject.type = "button"; approve.textContent = msg("批准本次连接"); reject.textContent = msg("拒绝"); reject.className = "danger";
         approve.onclick = () => runAction(approve, () => remoteHostAction("approve_access_request", { id: request.id }), "rd-unattended-error");
         reject.onclick = () => runAction(reject, () => remoteHostAction("reject_access_request", { id: request.id }), "rd-unattended-error");
         actions.append(approve, reject); row.append(detail, actions); list.append(row);
@@ -936,8 +1177,8 @@
       const container = $("rd-host-files"); container.replaceChildren();
       if (!files.session_id || !files.can_send && !files.can_receive) return;
       const title = document.createElement("h3"), help = document.createElement("p");
-      title.textContent = "会话文件 / Session files";
-      help.textContent = "文件通过当前直连传输。请先在控制端开启文件权限；本机选择文件或保存位置，不覆盖已有文件。 / Enable file transfer on the controller, then choose files or a new destination here.";
+      title.textContent = msg("会话文件 / Session files");
+      help.textContent = msg("文件通过当前直连传输。请先在控制端开启文件权限；本机选择文件或保存位置，不覆盖已有文件。 / Enable file transfer on the controller, then choose files or a new destination here.");
       container.append(title, help);
       const button = (label, action, id) => {
         const node = document.createElement("button"); node.type = "button"; node.className = "secondary"; node.textContent = label;
@@ -947,15 +1188,15 @@
         }, "rd-host-error");
         return node;
       };
-      if (files.can_send) container.append(button("选择多个文件发送 / Select files to send", "send"));
+      if (files.can_send) container.append(button(msg("选择多个文件发送 / Select files to send"), "send"));
       for (const item of files.items || []) {
         const row = document.createElement("div"), detail = document.createElement("p"); row.className = "settings-card";
-        const phases = {offer:"等待选择 / Awaiting selection", progress:"传输中 / Transferring", complete:"已完成 / Complete", cancelled:"已取消 / Cancelled", error:"传输失败 / Failed"};
-        detail.textContent = `${item.name || "文件 / File"} · ${item.outgoing ? "发送 / Send" : "接收 / Receive"} · ${phases[item.event] || item.event} · ${item.offset || 0} / ${item.size || 0} bytes${item.error_code ? " · " + item.error_code : ""}`;
+        const phases = {offer:msg("等待选择 / Awaiting selection"), progress:msg("传输中 / Transferring"), complete:msg("已完成 / Complete"), cancelled:msg("已取消 / Cancelled"), error:msg("传输失败 / Failed")};
+        detail.textContent = `${item.name || msg("文件 / File")} · ${item.outgoing ? msg("发送 / Send") : msg("接收 / Receive")} · ${phases[item.event] || item.event} · ${item.offset || 0} / ${item.size || 0} bytes${item.error_code ? " · " + item.error_code : ""}`;
         detail.style.overflowWrap = "anywhere"; row.append(detail);
-        if (item.may_be_saved) { const note = document.createElement("p"); note.textContent = "文件可能已保存，请检查目标文件夹。 / The file may have been saved; check the destination folder."; row.append(note); }
-        if (item.event === "offer" && !item.outgoing && files.can_receive) row.append(button("选择保存位置 / Choose destination", "receive", item.id));
-        if (["offer", "progress"].includes(item.event)) row.append(button("取消此文件 / Cancel file", "cancel", item.id));
+        if (item.may_be_saved) { const note = document.createElement("p"); note.textContent = msg("文件可能已保存，请检查目标文件夹。 / The file may have been saved; check the destination folder."); row.append(note); }
+        if (item.event === "offer" && !item.outgoing && files.can_receive) row.append(button(msg("选择保存位置 / Choose destination"), "receive", item.id));
+        if (["offer", "progress"].includes(item.event)) row.append(button(msg("取消此文件 / Cancel file"), "cancel", item.id));
         container.append(row);
       }
     }
@@ -967,31 +1208,31 @@
         const state = await api("/local/remote/state", {signal:remoteHostAbort.signal});
         if (generation !== remoteHostGeneration || !$("login").classList.contains("hidden")) return;
         const ready = state.capabilities?.available === true;
-        $("rd-host-status").textContent = !ready ? "此安装包没有可用的远控后端" : state.active_session_id ? "远程会话进行中" : state.enabled ? "已允许连接" : "远程连接已关闭";
-        $("rd-host-detail").textContent = state.endpoint_id || state.error_code || "尚未登记";
+        $("rd-host-status").textContent = !ready ? msg("此安装包没有可用的远控后端") : state.active_session_id ? msg("远程会话进行中") : state.enabled ? msg("已允许连接") : msg("远程连接已关闭");
+        $("rd-host-detail").textContent = state.endpoint_id || state.error_code || msg("尚未登记");
         $("rd-host-copy").disabled = !state.endpoint_id;
         $("rd-host-enable").disabled = !ready || !state.enrolled || state.enabled && state.running;
         $("rd-host-disable").disabled = !state.enabled;
         $("rd-host-stop").disabled = !state.active_session_id;
         const unattendedSupported = state.capabilities?.unattended_enabled === true;
         const canConfigureService = state.service?.installed === true && state.service?.running === true;
-        const serviceDetail = state.service?.detail || "未安装系统服务，便携模式仍可在已登录桌面使用。 / No system service is installed; signed-in desktop control still works.";
-        $("rd-unattended-status").textContent = state.unattended_enabled ? "已开启" : "未启用";
-        $("rd-unattended-detail").textContent = (!unattendedSupported ? "当前安装还不能控制锁屏、登录前或 UAC 安全桌面；固定密码仅作用于已登录的桌面。 / This install cannot yet control the lock screen, sign-in, or UAC desktop. A fixed password applies only to a signed-in desktop. " : state.unattended_enabled ? "无人值守已绑定到登记的控制端。 / Unattended access is bound to the enrolled controller. " : "需要本机管理员权限，并绑定确切的控制端。 / An administrator must bind the exact controller. ") + serviceDetail;
+        const serviceDetail = state.service?.detail || msg("未安装系统服务，便携模式仍可在已登录桌面使用。 / No system service is installed; signed-in desktop control still works.");
+        $("rd-unattended-status").textContent = state.unattended_enabled ? msg("已开启") : msg("未启用");
+        $("rd-unattended-detail").textContent = (!unattendedSupported ? msg("当前安装还不能控制锁屏、登录前或 UAC 安全桌面；固定密码仅作用于已登录的桌面。 / This install cannot yet control the lock screen, sign-in, or UAC desktop. A fixed password applies only to a signed-in desktop. ") : state.unattended_enabled ? msg("无人值守已绑定到登记的控制端。 / Unattended access is bound to the enrolled controller. ") : msg("需要本机管理员权限，并绑定确切的控制端。 / An administrator must bind the exact controller. ")) + serviceDetail;
         $("rd-unattended-enable").disabled = !state.enrolled || !canConfigureService || state.unattended_enabled;
-        $("rd-unattended-enable").textContent = state.error_code === "RD_SERVICE_SETUP_INCOMPLETE" ? "继续设置 / Resume setup" : "开启无人值守 / Enable unattended access";
+        $("rd-unattended-enable").textContent = state.error_code === "RD_SERVICE_SETUP_INCOMPLETE" ? msg("继续设置 / Resume setup") : msg("开启无人值守 / Enable unattended access");
         if (!state.unattended_enabled && canConfigureService) {
-          $("rd-unattended-detail").textContent = "开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。 / Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access.";
+          $("rd-unattended-detail").textContent = msg("开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。 / Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access.");
         }
         $("rd-unattended-disable").disabled = !state.unattended_enabled;
         const access = state.access_profile || {};
 		$("rd-emergency-key").value = state.emergency_key || "X";
-        $("rd-access-device-id").textContent = access.device_id || "尚未创建";
+        $("rd-access-device-id").textContent = access.device_id || msg("尚未创建");
         $("rd-access-create").disabled = !state.enrolled || !state.enabled || !state.running || !!access.device_id;
         $("rd-fixed-save").disabled = !state.enabled || !state.running || !ready;
         const fixedActive = !!access.fixed_password_enabled && access.revision === state.fixed_revision;
         $("rd-fixed-disable").disabled = !fixedActive;
-        $("rd-fixed-status").textContent = fixedActive ? "固定密码已启用 · 可跨账号自动连接" : access.fixed_password_enabled ? "服务端密码与本机授权版本不一致，请重新设置" : "未设置固定密码";
+        $("rd-fixed-status").textContent = fixedActive ? msg("固定密码已启用 · 可跨账号自动连接") : access.fixed_password_enabled ? msg("服务端密码与本机授权版本不一致，请重新设置") : msg("未设置固定密码");
         renderAccessRequests(state.access_requests);
         $("rd-assist-create").disabled = !state.enabled || !state.running || !state.enrolled || !ready;
         if (!state.enabled) assistSecret = null;
@@ -1005,10 +1246,10 @@
         renderRemoteFiles(state.files);
         remoteSecurity.classList.toggle("hidden", !ready || state.enrolled && !$("rd-host-pending").childElementCount && !$("rd-host-grants").childElementCount && !$("rd-host-files").childElementCount && !$("rd-host-error").textContent);
         const count = (state.pending || []).filter(event => !event.display_code).length + (state.access_requests || []).length;
-        $("settings-open").textContent = t("settings") + (count ? ` · ${count} 待批准 / pending` : "");
+        $("settings-open").textContent = t("settings") + (count ? ` · ${count}${msg(" 待批准 / pending")}` : "");
       } catch {
         if (generation !== remoteHostGeneration) return;
-        $("rd-host-status").textContent = "无法读取远控状态 / Remote status unavailable";
+        $("rd-host-status").textContent = msg("无法读取远控状态 / Remote status unavailable");
         for (const id of ["enable", "disable", "stop"]) $("rd-host-" + id).disabled = id === "enable";
         for (const id of ["enable", "disable"]) $("rd-unattended-" + id).disabled = true;
       }
@@ -1035,7 +1276,7 @@
       const trust = await api("/local/remote/trust", {signal:remoteHostAbort.signal});
       if (generation !== remoteHostGeneration || !$("login").classList.contains("hidden")) return;
       remoteHostTrust = trust;
-      $("rd-host-trust").textContent = `${trust.origin}\n实例 / Instance: ${trust.server_instance_id}\n密钥指纹 / Key: ${trust.active_kid}`;
+      $("rd-host-trust").textContent = `${trust.origin}${msg("\n实例 / Instance: ")}${trust.server_instance_id}${msg("\n密钥指纹 / Key: ")}${trust.active_kid}`;
     }, "rd-host-error");
     $("rd-host-trust-confirm").onchange = () => { $("rd-host-enroll-submit").disabled = !remoteHostTrust || !$("rd-host-trust-confirm").checked; };
     $("rd-host-enroll").onsubmit = event => {

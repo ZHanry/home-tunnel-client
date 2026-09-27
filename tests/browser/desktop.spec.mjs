@@ -75,7 +75,7 @@ test("local approval lists every requested permission and pairing code cannot gr
   await expect(page.locator("#rd-host-pending")).toContainText("发送文件到本机");
   let action;
   await page.route("**/local/remote/action",route=>{action=route.request().postDataJSON();event.kind="pairing_display";event.display_code="123456";return route.fulfill({json:{ok:true}});});
-  await page.locator("#rd-host-pending").getByRole("button",{name:"允许以上权限 / Allow listed permissions"}).click();
+  await page.locator("#rd-host-pending").getByRole("button",{name:"允许以上权限"}).click();
   await expect.poll(()=>action?.action).toBe("approve");
   expect(action.permissions).toEqual(event.permissions);
   await expect(page.locator("#rd-host-pending")).toContainText("123456");
@@ -98,6 +98,12 @@ test("unattended controls stay unavailable without a native service and can revo
   await expect(page.locator("#rd-unattended-enable")).toBeDisabled();
   await expect(page.locator("#rd-unattended-detail")).toContainText("固定密码仅作用于已登录的桌面");
   state.capabilities.unattended_enabled=true;
+  await page.evaluate(()=>refreshRemoteHost());
+  await expect(page.locator("#rd-unattended-enable")).toBeDisabled();
+  state.service={installed:true,running:false};
+  await page.evaluate(()=>refreshRemoteHost());
+  await expect(page.locator("#rd-unattended-enable")).toBeDisabled();
+  state.service.running=true;
   await page.evaluate(()=>refreshRemoteHost());
   await expect(page.locator("#rd-unattended-enable")).toBeEnabled();
   await page.locator("#rd-unattended-enable").click();
@@ -244,16 +250,16 @@ test("session files request local selection with the displayed epoch and render 
   await expect(page.locator("#rd-host-files img")).toHaveCount(0);
   const actions=[];
   await page.route("**/local/remote/files",route=>{actions.push(route.request().postDataJSON());return route.fulfill({json:{ok:true,cancelled:true}});});
-  await page.getByRole("button",{name:"选择保存位置 / Choose destination"}).click();
+  await page.getByRole("button",{name:"选择保存位置"}).click();
   await expect.poll(()=>actions.length).toBe(1);
   expect(actions[0]).toEqual({action:"receive",id:"file-one",session_id:"session-file",connection_epoch:3});
-  await page.getByRole("button",{name:"选择多个文件发送 / Select files to send"}).click();
+  await page.getByRole("button",{name:"选择多个文件发送"}).click();
   await expect.poll(()=>actions.length).toBe(2);
   expect(actions[1]).toEqual({action:"send",session_id:"session-file",connection_epoch:3});
   files.items[0]={...files.items[0],event:"error",may_be_saved:true,error_code:"RD_FILE_CANCELLED"};
   await page.evaluate(()=>refreshRemoteHost());
   await expect(page.locator("#rd-host-files")).toContainText("文件可能已保存");
-  await expect(page.getByRole("button",{name:"选择保存位置 / Choose destination"})).toHaveCount(0);
+  await expect(page.getByRole("button",{name:"选择保存位置"})).toHaveCount(0);
   files.session_id="";
   await page.evaluate(()=>refreshRemoteHost());
   await expect(page.locator("#rd-host-files")).toBeEmpty();
@@ -266,6 +272,65 @@ async function services(page, capabilities, connections = []) {
   await page.locator("#nav-tunnels").click();
   await expect(page.locator("#home")).toBeVisible();
 }
+
+test("English navigation and live locale changes preserve user names and drafts", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ht_locale", "en"));
+  await page.route("**/local/devices", route => route.fulfill({ json: { local_device_id: "local", items: [
+    { id: "peer", name: "设置", status: "active", online: true },
+  ] } }));
+  await page.route("**/local/device/metadata", route => route.fulfill({ json: { tags: ["home"], metadata_version: 1 } }));
+  const connection = { id: "service", name: "在线", enabled: true, proxy_type: "http", local_host: "127.0.0.1", local_port: 8080, state: "Online" };
+  await services(page, undefined, [connection]);
+  const untranslated = () => page.evaluate(() => {
+    const found = [], walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent.closest("script,style,[data-no-translate],.service-identity strong,#locale-toggle,#sidebar-locale")
+          && parent.getClientRects().length && /\p{Script=Han}/u.test(node.nodeValue)) found.push(node.nodeValue.trim());
+    }
+    return found;
+  });
+  for (const tab of ["remote", "devices", "tunnels", "settings", "updates"]) {
+    await page.locator("#nav-" + tab).click();
+    await expect.poll(untranslated).toEqual([]);
+  }
+  await page.locator("#nav-devices").click();
+  await expect(page.locator("#devices-list [data-no-translate]")).toHaveText("设置");
+  await page.locator("#sidebar-locale").click();
+  await expect(page.locator("#nav-devices")).toContainText("我的设备");
+  await expect(page.locator("#devices-list [data-no-translate]")).toHaveText("设置");
+  await page.locator("#sidebar-locale").click();
+  await expect(page.locator("#nav-devices")).toContainText("My devices");
+  await page.locator("#nav-tunnels").click();
+  await expect(page.locator(".service-identity strong")).toHaveText("在线");
+  await page.locator("#nav-settings").click();
+  await expect(page.locator("#device-tags")).toHaveValue("home");
+  await page.locator("#device-tags").fill("home, draft");
+  await page.locator("#sidebar-locale").click();
+  await expect(page.locator("#device-tags")).toHaveValue("home, draft");
+});
+
+test("system theme follows the OS and persists while explicit light mode stays fixed", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ht_theme", "system"));
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.route("**/local/device/metadata", route => route.fulfill({ json: { tags: [], metadata_version: 1 } }));
+  await services(page, undefined);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-preference", "system");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.reload();
+  expect(await page.evaluate(() => localStorage.getItem("ht_theme"))).toBe("system");
+  await page.locator("#nav-settings").click();
+  await page.locator("#theme-preference").selectOption("light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(() => page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(true);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  expect(await page.evaluate(() => localStorage.getItem("ht_theme"))).toBe("light");
+  await page.locator("#theme-preference").selectOption("system");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+});
 
 test("batch selection confirms the affected names and preserves each result", async ({page}) => {
   const connections = ["one", "two"].map((id,index)=>({id,device_id:"local",name:`Service ${index+1}`,proxy_type:"http",enabled:true,version:index+3,local_host:"127.0.0.1",local_port:8080}));
