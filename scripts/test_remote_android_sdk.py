@@ -355,6 +355,8 @@ class AndroidSDKPolicy(unittest.TestCase):
             self.assertFalse((Path(temporary) / SEAL.CANDIDATE).exists())
             dispatched = os.environ.copy()
             dispatched["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+            # Isolate this source-mismatch fixture from the workflow running it.
+            dispatched["GITHUB_WORKFLOW_REF"] = "ZHanry/home-tunnel-client/.github/workflows/android-webrtc.yml@refs/heads/codex/v10-overhaul"
             result = subprocess.run(command, cwd=SDK.ROOT, env=dispatched, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("clean source", result.stderr)
