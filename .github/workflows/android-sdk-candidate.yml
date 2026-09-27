@@ -1,0 +1,135 @@
+name: Android SDK candidate
+
+# Trusted pre-tag seal for both controller ABIs. This workflow does not push tags
+# or publish a GitHub Release. Stable acceptance stays on release.yml.
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-sdk-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Candidate Android ${{ matrix.abi }} controller SDK
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Prepare isolated hosted Android build machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_ENVIRONMENT}" = "github-hosted"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ca-certificates git ninja-build pkg-config libglib2.0-dev libnss3-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libgbm-dev libdrm-dev
+      - name: Build and package this ABI from the dispatched commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          abi="${{ matrix.abi }}"
+          version=$(python3 -c 'import json; print(json.load(open("compatibility.json"))["version"])')
+          python3 scripts/build-remote-android-webrtc.py --abi "$abi"
+          python3 scripts/package-remote-android-sdk.py --describe --abi "$abi" --version "$version" > "$RUNNER_TEMP/android-abi.json"
+          engine_dir=$(python3 -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/android-abi.json"))["engine_dir"])')
+          archive=$(python3 -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/android-abi.json"))["archive"])')
+          sbom=$(python3 -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/android-abi.json"))["sbom"])')
+          provenance=$(python3 -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/android-abi.json"))["provenance"])')
+          {
+            echo "ANDROID_ENGINE_DIR=$engine_dir"
+            echo "ANDROID_ARCHIVE=$archive"
+            echo "ANDROID_SBOM=$sbom"
+            echo "ANDROID_PROVENANCE=$provenance"
+          } >> "$GITHUB_ENV"
+          python3 scripts/build-remote-android-webrtc.py --build --abi "$abi" --jobs 4
+          python3 scripts/package-remote-android-sdk.py --abi "$abi" --sdk "outputs/$engine_dir" --output outputs/android-sdk-release --version "$version" --revision "$GITHUB_SHA"
+      - id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          syft-version: v1.42.3
+      - name: Scan the candidate Android SDK inventory
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          "$SYFT" scan "file:outputs/android-sdk-release/$ANDROID_ARCHIVE" -o spdx-json > "outputs/android-sdk-release/$ANDROID_SBOM"
+          test -s "outputs/android-sdk-release/$ANDROID_SBOM"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Sign the candidate SDK subjects
+        run: |
+          for subject in outputs/android-sdk-release/*; do
+            cosign sign-blob --yes --bundle "$subject.sigstore.json" "$subject"
+          done
+      - name: Attest the candidate SDK and its source identity
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            outputs/android-sdk-release/${{ env.ANDROID_ARCHIVE }}
+            outputs/android-sdk-release/${{ env.ANDROID_PROVENANCE }}
+      - name: Attest the candidate SDK SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: outputs/android-sdk-release/${{ env.ANDROID_ARCHIVE }}
+          sbom-path: outputs/android-sdk-release/${{ env.ANDROID_SBOM }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-sdk-candidate-part-${{ matrix.abi }}
+          path: outputs/android-sdk-release/*
+          if-no-files-found: error
+      - name: Preserve candidate compilation diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-sdk-candidate-log-${{ matrix.abi }}
+          path: .downloads/remote-webrtc-android/checkout/src/out/${{ matrix.abi == 'arm64-v8a' && 'home_tunnel_android_arm64' || 'home_tunnel_android_x64' }}/android-build.log
+          if-no-files-found: ignore
+  seal:
+    name: Seal both candidate ABIs to this source SHA and run
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: android-sdk-candidate-part-*
+          path: outputs/android-sdk-candidate
+          merge-multiple: true
+      - name: Bind both ABIs to the dispatched commit and this run
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("compatibility.json"))["version"])')
+          python3 scripts/seal-remote-android-sdk-candidate.py \
+            --output outputs/android-sdk-candidate \
+            --version "$version" \
+            --revision "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --workflow .github/workflows/android-sdk-candidate.yml
+          python3 -c 'import json; record=json.load(open("outputs/android-sdk-candidate/android-sdk-candidate.json")); assert record["tag_published"] is False and record["device_media_accepted"] is False and record["source_revision"]=="'"$GITHUB_SHA"'" and record["workflow_run_id"]=="'"$GITHUB_RUN_ID"'" and set(record["abis"])=={"arm64-v8a","x86_64"}'
+      - name: Attest the candidate index
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: outputs/android-sdk-candidate/android-sdk-candidate.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: android-sdk-candidate
+          path: outputs/android-sdk-candidate/*
+          if-no-files-found: error
+          retention-days: 14

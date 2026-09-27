@@ -1,4 +1,9 @@
-"""Package and verify the tagged Android controller SDK; no device acceptance is implied."""
+"""Package and verify a tagged Android controller SDK for one reviewed ABI.
+
+arm64-v8a remains the default archive and provenance names. x86_64 is a second
+production WebRTC controller from the same source and dependency lock, not a
+security-core library or a rewritten emulator tree. Device acceptance is not implied.
+"""
 import argparse
 import hashlib
 import importlib.util
@@ -15,8 +20,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native/remote"
-PROVENANCE = "android-sdk-provenance.json"
 MAX_SDK_FILES = 65536  # The pinned dependency snapshot currently contains about 40,000 headers.
+ENGINE_SPEC = importlib.util.spec_from_file_location("android_engine_build", ROOT / "scripts/build-remote-android-webrtc.py")
+ENGINE = importlib.util.module_from_spec(ENGINE_SPEC)
+ENGINE_SPEC.loader.exec_module(ENGINE)
 
 
 def digest(path):
@@ -24,15 +31,98 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def archive_name(version):
+def archive_name(version, abi=ENGINE.DEFAULT_ABI):
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?", version):
         raise SystemExit("Invalid Android SDK version")
-    return f"HomeTunnel-Remote-SDK-{version}-android-arm64.zip"
+    profile = ENGINE.ABI_PROFILES[ENGINE.require_abi(abi)]
+    return f"HomeTunnel-Remote-SDK-{version}-android-{profile['asset_token']}.zip"
+
+
+def provenance_name(abi=ENGINE.DEFAULT_ABI):
+    abi = ENGINE.require_abi(abi)
+    if abi == ENGINE.DEFAULT_ABI:
+        return "android-sdk-provenance.json"
+    return f"android-sdk-{ENGINE.ABI_PROFILES[abi]['asset_token']}-provenance.json"
+
+
+def sbom_name(abi=ENGINE.DEFAULT_ABI):
+    abi = ENGINE.require_abi(abi)
+    if abi == ENGINE.DEFAULT_ABI:
+        return "android-sdk.spdx.json"
+    return f"android-sdk-{ENGINE.ABI_PROFILES[abi]['asset_token']}.spdx.json"
+
+
+def engine_prefix(abi=ENGINE.DEFAULT_ABI):
+    return ENGINE.ABI_PROFILES[ENGINE.require_abi(abi)]["output_dir"]
+
+
+def release_asset_names(version):
+    names = []
+    for abi in ENGINE.ABI_ORDER:
+        archive = archive_name(version, abi)
+        group = [archive, archive + ".sha256", provenance_name(abi), sbom_name(abi)]
+        names.extend(group)
+        names.extend(name + ".sigstore.json" for name in group)
+    return names
+
+
+def describe(version, abi):
+    abi = ENGINE.require_abi(abi)
+    profile = ENGINE.ABI_PROFILES[abi]
+    archive = archive_name(version, abi)
+    return {
+        "abi": abi,
+        "gn_cpu": profile["gn_cpu"],
+        "elf_machine": profile["elf_machine"],
+        "asset_token": profile["asset_token"],
+        "archive": archive,
+        "provenance": provenance_name(abi),
+        "sbom": sbom_name(abi),
+        "checksum": archive + ".sha256",
+        "engine_prefix": engine_prefix(abi),
+        "engine_dir": profile["output_dir"],
+        "build_dir": profile["build_dir"],
+        "library_dir": f"lib/{abi}",
+        "android_api": ENGINE.ANDROID_API,
+        "page_size": ENGINE.PAGE_SIZE,
+        "default_abi": ENGINE.DEFAULT_ABI,
+    }
+
+
+def provenance_identity(version, revision, abi, archive, tree, upstream, android):
+    abi = ENGINE.require_abi(abi)
+    profile = ENGINE.ABI_PROFILES[abi]
+    return {
+        "schema_version": 1,
+        "repository": "ZHanry/home-tunnel-client",
+        "source_revision": revision,
+        "source_modified": False,
+        "source_tree_sha256": tree,
+        "version": version,
+        "tag": "v" + version,
+        "target": abi,
+        "elf_machine": profile["elf_machine"],
+        "android_api": ENGINE.ANDROID_API,
+        "page_size": ENGINE.PAGE_SIZE,
+        "controller_backend_linked": True,
+        "production_controller": True,
+        "device_media_accepted": False,
+        "archive": archive,
+        "upstream_lock_sha256": android["upstream_lock_sha256"],
+        "recipe_sha256": ENGINE.sha(ENGINE.ANDROID / "android-build.lock.json"),
+        "gn_args": ENGINE.resolved_gn_args(android, abi),
+        "compiler_lock": ENGINE.compiler_lock(upstream, android),
+    }
 
 
 def source_files():
     return {path.relative_to(NATIVE).as_posix(): digest(path) for path in sorted(NATIVE.rglob("*")) if path.is_file() and
             (path.suffix in {".cpp", ".hpp", ".h", ".json", ".md", ".patch", ".gn", ".exports"} or path.name in {"CMakeLists.txt", "DEPS", "WEBRTC-LICENSE"})}
+
+
+def source_tree_sha256(files=None):
+    actual = source_files() if files is None else files
+    return hashlib.sha256(json.dumps(actual, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def checked_members(bundle):
@@ -51,17 +141,26 @@ def checked_members(bundle):
     return result
 
 
-def verify(directory, version, revision):
-    record = json.loads((directory / PROVENANCE).read_text(encoding="utf-8"))
-    name = archive_name(version)
-    expected = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "source_revision": revision,
-                "source_modified": False, "version": version, "tag": "v" + version, "target": "arm64-v8a",
-                "android_api": 26, "device_media_accepted": False, "archive": name}
+def verify(directory, version, revision, abi=None):
+    abi = ENGINE.require_abi(abi) if abi is not None else ENGINE.DEFAULT_ABI
+    provenance_path = directory / provenance_name(abi)
+    if not provenance_path.is_file():
+        raise SystemExit("Android SDK provenance does not match the requested ABI")
+    record = json.loads(provenance_path.read_text(encoding="utf-8"))
+    name = archive_name(version, abi)
+    actual = source_files()
+    tree = source_tree_sha256(actual)
+    upstream, android = ENGINE.locks()
+    expected = provenance_identity(version, revision, abi, name, tree, upstream, android)
     if any(record.get(key) != value for key, value in expected.items()):
         raise SystemExit("Android SDK release identity differs from the tagged source")
     path = directory / name
     if digest(path) != record.get("archive_sha256") or path.stat().st_size != record.get("archive_bytes"):
         raise SystemExit("Android SDK archive bytes differ from provenance")
+    checksum = directory / (name + ".sha256")
+    if not checksum.is_file() or checksum.read_text(encoding="utf-8") != f"{record['archive_sha256']}  {name}\n":
+        raise SystemExit("Android SDK checksum file differs from provenance")
+    prefix = engine_prefix(abi)
     with zipfile.ZipFile(path) as bundle:
         members = checked_members(bundle)
         if set(members) != set(record.get("files", {})):
@@ -74,41 +173,30 @@ def verify(directory, version, revision):
             if member not in members or members[member].file_size > 8 * 1024 * 1024:
                 raise SystemExit("Android SDK required manifest is missing or oversized")
             return json.loads(bundle.read(member))
-        engine = read_json("android-webrtc-arm64/android-webrtc-build.json")
+        engine = read_json(f"{prefix}/android-webrtc-build.json")
         source = read_json("source/remote-artifact.json")
-        actual = source_files()
-        tree = hashlib.sha256(json.dumps(actual, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        recipe = json.loads((NATIVE / "android/android-build.lock.json").read_text())
-        if (engine.get("source_revision") != revision or engine.get("source_modified") is not False or
-                engine.get("target") != "arm64-v8a" or engine.get("android_api") != 26 or engine.get("available") is not False or
-                engine.get("gn_args") != recipe["gn_args"] or
-                engine.get("controller_backend_linked") is not True or engine.get("device_media_accepted") is not False or
-                engine.get("source_files") != actual or engine.get("source_tree_sha256") != tree or
-                engine.get("upstream_lock_sha256") != digest(NATIVE / "remote-deps.lock.json") or
-                engine.get("recipe_sha256") != digest(NATIVE / "android/android-build.lock.json") or
+        ENGINE.production_controller_manifest(engine, upstream, android, abi)
+        if (engine.get("source_revision") != revision or engine.get("source_files") != actual or engine.get("source_tree_sha256") != tree or
                 source.get("source_revision") != revision or source.get("source_tree_dirty") is not False or
                 source.get("source_files") != actual or source.get("source_tree_sha256") != tree or
                 source.get("header_sha256") != actual.get("include/home_tunnel/remote.h")):
             raise SystemExit("Android SDK engine/source/dependency identity mismatch")
-        required = {"lib/arm64-v8a/libwebrtc.a", "lib/arm64-v8a/libhome_tunnel_android_surface.a",
-                    "lib/arm64-v8a/libhome_tunnel_remote.so", "include/home_tunnel/remote.h", "LICENSE.md", "source-manifest.json",
+        required = {f"lib/{abi}/libwebrtc.a", f"lib/{abi}/libhome_tunnel_android_surface.a",
+                    f"lib/{abi}/libhome_tunnel_remote.so", "include/home_tunnel/remote.h", "LICENSE.md", "source-manifest.json",
                     "PROJECT-LICENSE", "source-license-inventory.json"}
         if not required.issubset(engine.get("files", {})):
             raise SystemExit("Android SDK omits required engine/source/license files")
-        if {"android-webrtc-arm64/" + key for key in engine["files"]} != {key for key in members if key.startswith("android-webrtc-arm64/")} - {"android-webrtc-arm64/android-webrtc-build.json"}:
+        if {prefix + "/" + key for key in engine["files"]} != {key for key in members if key.startswith(prefix + "/")} - {f"{prefix}/android-webrtc-build.json"}:
             raise SystemExit("Android SDK engine inventory changed")
         for key, checksum in engine["files"].items():
-            if record["files"].get("android-webrtc-arm64/" + key) != checksum:
+            if record["files"].get(prefix + "/" + key) != checksum:
                 raise SystemExit("Android SDK engine digest differs from its build manifest")
-        spec = importlib.util.spec_from_file_location("android_notice_policy", ROOT / "scripts/build-remote-android-webrtc.py")
-        policy = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(policy)
-        policy.verify_notice_record(read_json("android-webrtc-arm64/source-license-inventory.json"),
-                                    read_json("android-webrtc-arm64/source-manifest.json"), engine["files"])
-        if bundle.read("android-webrtc-arm64/PROJECT-LICENSE") != (ROOT / "LICENSE").read_bytes():
+        ENGINE.verify_notice_record(read_json(f"{prefix}/source-license-inventory.json"),
+                                    read_json(f"{prefix}/source-manifest.json"), engine["files"])
+        if bundle.read(f"{prefix}/PROJECT-LICENSE") != (ROOT / "LICENSE").read_bytes():
             raise SystemExit("Android SDK engine project license differs from source")
         for key in ("libwebrtc.a", "libhome_tunnel_android_surface.a"):
-            with bundle.open("android-webrtc-arm64/lib/arm64-v8a/" + key) as stream:
+            with bundle.open(f"{prefix}/lib/{abi}/" + key) as stream:
                 if stream.read(8) != b"!<arch>\n":
                     raise SystemExit("Android SDK cannot redistribute thin archives")
         source_name = "source/" + source["source_archive"]
@@ -117,11 +205,11 @@ def verify(directory, version, revision):
         contents = set()
         with tarfile.open(fileobj=io.BytesIO(bundle.read(source_name)), mode="r:gz") as archive:
             for entry in archive:
-                name = entry.name.removeprefix("native/remote/")
-                if entry.name != "native/remote/" + name or not entry.isfile() or entry.size > 4 * 1024 * 1024 or name not in actual or name in contents:
+                member_name = entry.name.removeprefix("native/remote/")
+                if entry.name != "native/remote/" + member_name or not entry.isfile() or entry.size > 4 * 1024 * 1024 or member_name not in actual or member_name in contents:
                     raise SystemExit("Unsafe or unexpected Android SDK source member")
-                contents.add(name)
-                if hashlib.sha256(archive.extractfile(entry).read()).hexdigest() != actual[name]:
+                contents.add(member_name)
+                if hashlib.sha256(archive.extractfile(entry).read()).hexdigest() != actual[member_name]:
                     raise SystemExit("Android SDK source bytes differ from the tagged source")
         if contents != set(actual) or bundle.read("PROJECT-LICENSE") != (ROOT / "LICENSE").read_bytes():
             raise SystemExit("Android SDK source or project license is incomplete")
@@ -131,42 +219,50 @@ def verify(directory, version, revision):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--version", required=True)
-    parser.add_argument("--revision", required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--version")
+    parser.add_argument("--revision")
+    parser.add_argument("--abi", help="arm64-v8a (default) or x86_64")
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--describe", action="store_true")
     args = parser.parse_args()
+    abi = ENGINE.require_abi(args.abi) if args.abi is not None else ENGINE.DEFAULT_ABI
+    if args.describe:
+        if not args.version:
+            parser.error("--describe requires --version")
+        print(json.dumps(describe(args.version, abi), indent=2, sort_keys=True))
+        return
+    if not args.output or not args.version or not args.revision:
+        parser.error("--output, --version and --revision are required")
     if args.verify:
-        verify(args.output, args.version, args.revision)
-        print("Tagged Android SDK archive, source tree and dependency identity verified; device acceptance remains required")
+        verify(args.output, args.version, args.revision, abi)
+        print(f"Tagged Android {abi} SDK archive, source tree and dependency identity verified; device acceptance remains required")
         return
     if not args.sdk or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip() != args.revision or subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip():
         raise SystemExit("Android SDK packaging requires its exact clean source commit")
-    spec = importlib.util.spec_from_file_location("android_engine", ROOT / "scripts/build-remote-android-webrtc.py")
-    engine = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(engine)
-    engine.verify_artifact(args.sdk)
+    ENGINE.verify_artifact(args.sdk, abi)
     args.output.mkdir(parents=True, exist_ok=True)
-    name = archive_name(args.version)
+    name = archive_name(args.version, abi)
     path = args.output / name
-    if path.exists() or (args.output / PROVENANCE).exists():
+    provenance_path = args.output / provenance_name(abi)
+    if path.exists() or provenance_path.exists():
         raise SystemExit("Existing Android SDK release artifacts are never overwritten")
     with tempfile.TemporaryDirectory() as temporary:
         source_dir = Path(temporary)
         subprocess.run([sys.executable, ROOT / "scripts/package-remote-core.py", "--output", source_dir], check=True)
-        mapping = {"android-webrtc-arm64/" + p.relative_to(args.sdk).as_posix(): p for p in args.sdk.rglob("*") if p.is_file()}
-        mapping.update({"source/" + p.name: p for p in source_dir.iterdir() if p.is_file()})
+        prefix = engine_prefix(abi)
+        mapping = {prefix + "/" + item.relative_to(args.sdk).as_posix(): item for item in args.sdk.rglob("*") if item.is_file()}
+        mapping.update({"source/" + item.name: item for item in source_dir.iterdir() if item.is_file()})
         mapping["PROJECT-LICENSE"] = ROOT / "LICENSE"
         with zipfile.ZipFile(path, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
             for member, original in sorted(mapping.items()):
                 bundle.write(original, member)
-        record = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "source_revision": args.revision,
-                  "source_modified": False, "version": args.version, "tag": "v" + args.version,
-                  "target": "arm64-v8a", "android_api": 26, "device_media_accepted": False,
-                  "archive": name, "archive_sha256": digest(path), "archive_bytes": path.stat().st_size,
-                  "files": {member: digest(original) for member, original in sorted(mapping.items())}}
-        (args.output / PROVENANCE).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    verify(args.output, args.version, args.revision)
+        upstream, android = ENGINE.locks()
+        record = provenance_identity(args.version, args.revision, abi, name, source_tree_sha256(), upstream, android)
+        record.update({"archive_sha256": digest(path), "archive_bytes": path.stat().st_size,
+                       "files": {member: digest(original) for member, original in sorted(mapping.items())}})
+        provenance_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    verify(args.output, args.version, args.revision, abi)
     (args.output / (name + ".sha256")).write_text(f"{digest(path)}  {name}\n", encoding="utf-8")
 
 

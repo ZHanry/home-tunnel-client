@@ -19,6 +19,10 @@ def main():
     parser.add_argument("--library", type=Path)
     parser.add_argument("--target", default="source")
     args = parser.parse_args()
+    if args.target != "source" and args.target not in ("arm64-v8a", "x86_64"):
+        raise SystemExit("Unsupported native target; expected source, arm64-v8a, or x86_64")
+    if args.library and args.target not in ("arm64-v8a", "x86_64"):
+        raise SystemExit("A security-core library requires arm64-v8a or x86_64 and is not a production WebRTC controller")
     args.output.mkdir(parents=True, exist_ok=True)
     paths = sorted((path for path in NATIVE.rglob("*") if path.is_file() and
                    (path.suffix in {".cpp", ".hpp", ".h", ".json", ".md", ".patch", ".gn", ".exports"} or path.name in {"CMakeLists.txt", "DEPS", "WEBRTC-LICENSE"})),
@@ -36,6 +40,7 @@ def main():
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain", "--", "native/remote"], cwd=ROOT, text=True))
     manifest = {"schema_version": 1, "abi": 1, "status": "security-core-only-media-unavailable", "target": args.target,
+                "controller_backend_linked": False, "production_controller": False,
                 "source_revision": revision, "source_tree_dirty": dirty, "source_tree_sha256": identity,
                 "source_archive": source.name, "source_archive_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                 "source_files": entries,

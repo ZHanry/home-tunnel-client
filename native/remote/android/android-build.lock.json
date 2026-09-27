@@ -1,15 +1,25 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "build-recipe-surface-layer-device-acceptance-required",
   "upstream_lock_sha256": "f0b0e46823e19a989fa14fece5d243be35939e742b247e77f45c6a17c714585d",
   "host": "linux-x64",
-  "target": "arm64-v8a",
+  "default_target": "arm64-v8a",
   "android_api": 26,
+  "page_size": 16384,
   "app_ndk_version": "27.2.12479018",
   "cxx_boundary": "Compile controller and WebRTC together with the pinned Chromium toolchain. JNI links only the exported C ABI; no std::, exceptions, RTTI or C++ ownership crosses into the NDK 27 app.",
+  "targets": {
+    "arm64-v8a": {
+      "gn_cpu": "arm64",
+      "elf_machine": "AArch64"
+    },
+    "x86_64": {
+      "gn_cpu": "x64",
+      "elf_machine": "Advanced Micro Devices X86-64"
+    }
+  },
   "gn_args": {
     "target_os": "android",
-    "target_cpu": "arm64",
     "is_debug": false,
     "is_component_build": false,
     "default_min_sdk_version": 26,

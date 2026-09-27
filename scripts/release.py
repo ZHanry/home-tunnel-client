@@ -69,9 +69,7 @@ def required_assets(directory, *, for_publication=True):
         expected += ["agent-provenance.json", "windows-defender-scan.json", "windows-installer-smoke.json",
                      "remote-host-provenance.json", "remote-host-build.json", "remote-source-manifest.json",
                      f"HomeTunnel-Remote-SDK-{version}-windows-x64.zip", "remote-sdk-provenance.json"]
-        android_sdk = f"HomeTunnel-Remote-SDK-{version}-android-arm64.zip"
-        android_sdk_assets = [android_sdk, android_sdk + ".sha256", "android-sdk-provenance.json", "android-sdk.spdx.json"]
-        expected += android_sdk_assets + [name + ".sigstore.json" for name in android_sdk_assets]
+        expected += android_controller_sdk_assets(version)
         if for_publication:
             expected.append("windows-remote-native-acceptance.json")
     elif COMPONENT == "android":
@@ -92,7 +90,8 @@ def required_assets(directory, *, for_publication=True):
             str(directory / f"home-tunnel-linux-{version}-amd64.tar.gz"), "--version", version, "--revision", SHA)
         verify_windows_evidence(directory, version, SHA)
         verify_remote_sdk(directory, version, SHA)
-        run(sys.executable, str(ROOT / "scripts/package-remote-android-sdk.py"), "--verify", "--output", str(directory), "--version", version, "--revision", SHA)
+        for abi in ("arm64-v8a", "x86_64"):
+            run(sys.executable, str(ROOT / "scripts/package-remote-android-sdk.py"), "--verify", "--abi", abi, "--output", str(directory), "--version", version, "--revision", SHA)
         if for_publication:
             verify_remote_evidence(directory, version, SHA)
         else:
@@ -383,6 +382,14 @@ def import_native_acceptance():
     except BaseException:
         path.unlink()
         raise
+
+def android_controller_sdk_assets(version):
+    """Sealed client assets for both production Android controller ABIs."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("android_sdk_assets", ROOT / "scripts/package-remote-android-sdk.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.release_asset_names(version)
 
 def public_asset_names(component, version):
     if component == "android":

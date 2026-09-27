@@ -328,5 +328,18 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertTrue(all(name.endswith((".exe", ".zip", ".tar.gz")) for name in client))
         self.assertEqual(module.public_asset_names("server", "6.0.0"), ["home-tunnel-server-6.0.0.tar.gz", "compose.release.yaml"])
 
+    def test_client_candidate_seals_both_android_controller_sdks(self):
+        assets = module.android_controller_sdk_assets("9.0.0")
+        self.assertEqual(assets[:4], [
+            "HomeTunnel-Remote-SDK-9.0.0-android-arm64.zip",
+            "HomeTunnel-Remote-SDK-9.0.0-android-arm64.zip.sha256",
+            "android-sdk-provenance.json",
+            "android-sdk.spdx.json",
+        ])
+        self.assertIn("HomeTunnel-Remote-SDK-9.0.0-android-x86_64.zip", assets)
+        self.assertIn("android-sdk-x86_64-provenance.json.sigstore.json", assets)
+        self.assertEqual(len(assets), 16)
+        self.assertNotIn("HomeTunnel-Remote-SDK-9.0.0-android-x86_64.zip", module.public_asset_names("client", "9.0.0"))
+
 if __name__ == "__main__":
     unittest.main()

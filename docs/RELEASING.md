@@ -8,7 +8,7 @@
 
 1. 将最终代码提交到 `main`，等待该提交的 Quality Gate、CodeQL、Secret scan 全部通过。原生依赖使用 `native/remote/remote-deps.lock.json` 的固定版本；验收服务端使用 `tests/remote-native/server-lock.json` 的固定提交。
 2. 在这个提交上创建版本标签。标签 push 运行构建阶段，生成 Windows 安装器、ZIP、Linux/macOS 包、扫描与安装报告、原生构建来源、依赖许可证等材料。
-3. 构建阶段写出 `verification_stage: "prepared"` 的发布清单，保存为 Actions 产物。`prepared` 表示待实机验收，不能直接发布；不得预填原生验收成功报告。
+3. 构建阶段写出 `verification_stage: "prepared"` 的发布清单，保存为 Actions 产物。`prepared` 表示待实机验收，不能直接发布；不得预填原生验收成功报告。Android 控制器候选必须同时封存同源的 arm64-v8a 与 x86_64 WebRTC SDK：`HomeTunnel-Remote-SDK-<version>-android-arm64.zip`（provenance 仍为 `android-sdk-provenance.json`）和 `HomeTunnel-Remote-SDK-<version>-android-x86_64.zip`（`android-sdk-x86_64-provenance.json`），以及各自的 `.sha256`、SPDX 与 Sigstore。两份产物使用同一未改写的 native 源码和依赖锁，只允许已审核配方中的 `target_cpu` 不同。它们是正式控制器构建，不是安全核心，也不是模拟器源码改写包。`device_media_accepted` 保持 false，直到该 ABI 的运行验收单独记录；未执行的原生编译不能记为通过。稳定标签之前，可在精确提交上手动运行 `.github/workflows/android-sdk-candidate.yml`。该工作流不对 pull request 开放，不创建标签或 GitHub Release；它封存两份 ABI、SPDX、Sigstore 和 `android-sdk-candidate.json`（绑定源码 SHA 与本次 run ID）。Windows 安装包候选仍只走 `release.yml` 的标签构建与实机验收。
 4. 记录本仓库 `release.yml` 的成功构建 run ID、标签、完整提交 SHA 和构建产物身份。后续发布必须下载这个运行的原始产物，不能另行重新编译、重新签名或重新打包来替代。
 
 Windows 构建顺序必须是：原生 worker 构建和授权/守护进程测试 → worker 与 Agent 的平台签名（如已配置）→ 将最终分发字节的 SHA-256 固定到 GUI → GUI 签名 → 打包和安装器签名。验收对象是此后分发的 `home_tunnel_remote_host.exe`，不能用签名前或本地临时编译的同名文件替代。

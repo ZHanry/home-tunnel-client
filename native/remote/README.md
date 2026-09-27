@@ -116,8 +116,10 @@ Dependencies live only under `.downloads/remote-webrtc`; no machine security
 policy or global Git configuration is changed. Windows depot_tools bootstrap
 downloads its pinned Git/Python/CIPD tools. The process inherits the current
 system network proxy if explicit proxy environment variables are absent.
-Android upstream WebRTC builds require a Linux build host; use
-`--target-os android --target-cpu arm64` there. A successful upstream build writes
+Android upstream WebRTC builds require a Linux build host. The production
+controller is `scripts/build-remote-android-webrtc.py --build --abi arm64-v8a`
+or `--abi x86_64`, not an ad-hoc `--target-cpu` rewrite. A successful upstream
+build writes
 `remote-webrtc-build.json` with the *actual* static library hash. The wrapper,
 capture/codec/input adapters, signed authorization handshake, selected-pair
 statistics and complete media tests still have to be integrated and verified.
@@ -164,6 +166,24 @@ SDK does not turn the generic C ABI into a complete cross-platform media backend
 
 ## Android consumer artifact
 
+Production controller SDKs are built on Linux x64:
+
+```bash
+python3 scripts/build-remote-android-webrtc.py --build --abi arm64-v8a
+python3 scripts/package-remote-android-sdk.py --abi arm64-v8a --sdk outputs/android-webrtc-arm64 --output outputs/android-sdk-release --version <version> --revision <sha>
+python3 scripts/build-remote-android-webrtc.py --build --abi x86_64
+python3 scripts/package-remote-android-sdk.py --abi x86_64 --sdk outputs/android-webrtc-x86_64 --output outputs/android-sdk-release --version <version> --revision <sha>
+```
+
+`--abi` defaults to `arm64-v8a`. The arm64 archive remains
+`HomeTunnel-Remote-SDK-<version>-android-arm64.zip` with
+`android-sdk-provenance.json`. The x86_64 archive is
+`HomeTunnel-Remote-SDK-<version>-android-x86_64.zip` with
+`android-sdk-x86_64-provenance.json`. Both zip files contain the real WebRTC
+controller under `lib/<abi>/`, plus one shared source archive. See
+`native/remote/android/README.md` for the import fields. Device acceptance stays
+false until a run of those exact bytes is recorded.
+
 ```powershell
 python scripts/package-remote-core.py --output outputs/remote-artifacts
 ```
@@ -171,15 +191,11 @@ python scripts/package-remote-core.py --output outputs/remote-artifacts
 This creates a deterministic source archive, C header and `remote-artifact.json`
 with source-tree/archive/header/lock hashes. Uncommitted source is explicitly
 identified by `source_tree_dirty=true`; consumers pin the archive hash and must
-not treat the repository HEAD as the archive identity.
-
-To package an NDK-built library, pass `--library <path>/libhome_tunnel_remote.so
---target arm64-v8a` (or `x86_64`). Output layout is
-`include/home_tunnel/remote.h`, `<abi>/libhome_tunnel_remote.so`, and
-`<abi>/remote-artifact.json`. Build the extracted `native/remote` with the NDK
-CMake toolchain, `-DBUILD_TESTING=OFF -DHT_RD_BUILD_WORKER=OFF`. The security-only
-library continues to advertise unavailable; loading an ABI library alone never
-means that video/audio, platform capture/input, or microphone injection works.
+not treat the repository HEAD as the archive identity. This export is the
+security core (`production_controller=false`), including when `--library` and
+`--target arm64-v8a` or `--target x86_64` attach an NDK CMake build of
+`native/remote` with `-DBUILD_TESTING=OFF -DHT_RD_BUILD_WORKER=OFF`. That library
+advertises media unavailable. It is not a substitute for the WebRTC SDK above.
 
 ## Outstanding release gates
 

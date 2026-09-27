@@ -205,9 +205,77 @@ class AndroidArtifactPolicy(unittest.TestCase):
     def test_wrong_upstream_revision_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            (path / "android-webrtc-build.json").write_text(json.dumps({"target": "arm64-v8a", "android_api": 26, "available": False, "webrtc_revision": "0" * 40}))
+            (path / "android-webrtc-build.json").write_text(json.dumps({
+                "target": "arm64-v8a", "android_api": 26, "available": False, "page_size": 16384,
+                "elf_machine": "AArch64", "webrtc_revision": "0" * 40}))
             with self.assertRaisesRegex(SystemExit, "recipe"):
                 BUILD.verify_artifact(path)
+
+    def test_same_source_recipe_selects_arm64_by_default_and_x86_64_explicitly(self):
+        upstream, android = BUILD.locks()
+        arm = BUILD.resolved_gn_args(android, "arm64-v8a")
+        intel = BUILD.resolved_gn_args(android, "x86_64")
+        self.assertEqual(BUILD.DEFAULT_ABI, "arm64-v8a")
+        self.assertEqual(tuple(BUILD.ABI_ORDER), ("arm64-v8a", "x86_64"))
+        self.assertEqual(arm["target_cpu"], "arm64")
+        self.assertEqual(intel["target_cpu"], "x64")
+        self.assertEqual(arm["default_min_sdk_version"], 26)
+        self.assertEqual({key: value for key, value in arm.items() if key != "target_cpu"},
+                         {key: value for key, value in intel.items() if key != "target_cpu"})
+        self.assertEqual(BUILD.compiler_lock(upstream, android), BUILD.compiler_lock(upstream, android))
+        self.assertNotIn("target_cpu", android["gn_args"])
+        build = (BUILD.ANDROID / "BUILD.gn").read_text(encoding="utf-8")
+        self.assertIn('assert(is_android && (current_cpu == "arm64" || current_cpu == "x64"))', build)
+        self.assertIn("max-page-size=16384", build)
+
+    def test_malformed_or_unknown_abi_is_rejected(self):
+        for value in ("", "x64", "arm64", "armeabi-v7a", "x86", "ARM64-V8A", "x86_64 ",
+                      "../arm64-v8a", "arm64-v8a/..", "lib/arm64-v8a", "arm64-v8a;rm", None, 64):
+            with self.subTest(value=value), self.assertRaisesRegex(SystemExit, "Unsupported Android ABI"):
+                BUILD.require_abi(value)
+
+    def controller_manifest(self, abi="arm64-v8a", **overrides):
+        upstream, android = BUILD.locks()
+        manifest = {
+            "target": abi, "android_api": 26, "available": False, "page_size": 16384,
+            "elf_machine": BUILD.ABI_PROFILES[abi]["elf_machine"],
+            "webrtc_revision": upstream["webrtc"]["revision"],
+            "recipe_sha256": BUILD.sha(BUILD.ANDROID / "android-build.lock.json"),
+            "status": BUILD.PRODUCTION_STATUS, "controller_backend_linked": True, "production_controller": True,
+            "device_media_accepted": False, "source_modified": False, "test_only": False,
+            "upstream_lock_sha256": android["upstream_lock_sha256"],
+            "gn_args": BUILD.resolved_gn_args(android, abi),
+            "compiler_lock": BUILD.compiler_lock(upstream, android),
+        }
+        manifest.update(overrides)
+        return manifest, upstream, android
+
+    def test_production_manifest_accepts_both_abis_and_rejects_relabeling(self):
+        for abi in BUILD.ABI_ORDER:
+            manifest, upstream, android = self.controller_manifest(abi)
+            self.assertEqual(BUILD.production_controller_manifest(manifest, upstream, android, abi), abi)
+        manifest, upstream, android = self.controller_manifest(
+            "x86_64", test_only=True, source_modified=True, status="emulator-test-only", production_controller=False)
+        with self.assertRaisesRegex(SystemExit, "production"):
+            BUILD.production_controller_manifest(manifest, upstream, android)
+        manifest, upstream, android = self.controller_manifest(
+            "x86_64", status="security-core-only-media-unavailable", controller_backend_linked=False, production_controller=False)
+        with self.assertRaisesRegex(SystemExit, "production"):
+            BUILD.production_controller_manifest(manifest, upstream, android)
+        manifest, upstream, android = self.controller_manifest("x86_64")
+        manifest["gn_args"] = dict(manifest["gn_args"], target_cpu="arm64")
+        with self.assertRaisesRegex(SystemExit, "configuration"):
+            BUILD.production_controller_manifest(manifest, upstream, android)
+        manifest, upstream, android = self.controller_manifest("arm64-v8a", source_modified=True)
+        with self.assertRaisesRegex(SystemExit, "production"):
+            BUILD.production_controller_manifest(manifest, upstream, android, "arm64-v8a")
+        manifest, upstream, android = self.controller_manifest("arm64-v8a")
+        with self.assertRaisesRegex(SystemExit, "capability"):
+            BUILD.production_controller_manifest(manifest, upstream, android, "x86_64")
+        for target in ("x64", "armeabi-v7a", "../x86_64", ""):
+            manifest, upstream, android = self.controller_manifest("arm64-v8a", target=target)
+            with self.subTest(target=target), self.assertRaisesRegex(SystemExit, "capability"):
+                BUILD.production_controller_manifest(manifest, upstream, android)
 
 
 if __name__ == "__main__":

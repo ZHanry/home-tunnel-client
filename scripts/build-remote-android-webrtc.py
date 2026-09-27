@@ -1,7 +1,9 @@
-"""Build the pinned Android arm64 engine and native Surface renderer on Linux.
+"""Build the pinned Android arm64-v8a or x86_64 WebRTC controller on Linux.
 
-The output is an internal engine SDK, not an installable/accepted Android media
-backend. Never change app capabilities from the existence of this archive.
+Both ABIs use this same unmodified native source and dependency lock. The output
+is an internal engine SDK, not device acceptance. Never change app capabilities
+from the existence of this archive, and do not relabel the security-core library
+or a rewritten emulator tree as this controller.
 """
 from pathlib import Path, PurePosixPath
 import argparse
@@ -37,6 +39,38 @@ CHROMIUM_MIRRORS = {
     "src/build": ("0a2808e883f9443b41ed1f49eb0aa4da0cfe3cf6", "41e5cf5e71b16fdde8ae211bb6d39d5e871134a1"),
     "src/tools": ("c60db23bebc8938b6bfa250eee92fefee66bd571", "41e5cf5e71b16fdde8ae211bb6d39d5e871134a1"),
     "src/third_party": ("e7b072867dcb5c59a461d58b853a498f938f8f96", "17a3918979e73d9a840546b79c3f5a7c0a49d35f"),
+}
+ANDROID_API = 26
+PAGE_SIZE = 16384
+DEFAULT_ABI = "arm64-v8a"
+ABI_ORDER = ("arm64-v8a", "x86_64")
+PRODUCTION_STATUS = "controller-built-device-acceptance-required"
+ABI_PROFILES = {
+    "arm64-v8a": {
+        "gn_cpu": "arm64",
+        "elf_machine": "AArch64",
+        "asset_token": "arm64",
+        "output_dir": "android-webrtc-arm64",
+        "build_dir": "home_tunnel_android_arm64",
+    },
+    "x86_64": {
+        "gn_cpu": "x64",
+        "elf_machine": "Advanced Micro Devices X86-64",
+        "asset_token": "x86_64",
+        "output_dir": "android-webrtc-x86_64",
+        "build_dir": "home_tunnel_android_x64",
+    },
+}
+GN_KEYS = {
+    "target_os", "is_debug", "is_component_build", "default_min_sdk_version",
+    "rtc_include_tests", "rtc_build_examples", "rtc_build_tools", "rtc_enable_protobuf",
+    "rtc_include_internal_audio_device", "rtc_use_h264", "rtc_use_h265",
+    "proprietary_codecs", "use_custom_libcxx", "use_cxx23", "symbol_level",
+    "android_static_analysis",
+}
+RECIPE_KEYS = {
+    "schema_version", "status", "upstream_lock_sha256", "host", "default_target",
+    "android_api", "page_size", "app_ndk_version", "cxx_boundary", "targets", "gn_args",
 }
 
 
@@ -240,13 +274,59 @@ def verify_notice_inventory(directory, files):
         raise SystemExit("SDK project license differs from its source")
 
 
+def require_abi(value):
+    if not isinstance(value, str) or value not in ABI_PROFILES:
+        raise SystemExit("Unsupported Android ABI; expected arm64-v8a or x86_64")
+    return value
+
+
+def resolved_gn_args(android, abi):
+    abi = require_abi(abi)
+    shared = android["gn_args"]
+    ordered = {"target_os": shared["target_os"], "target_cpu": ABI_PROFILES[abi]["gn_cpu"]}
+    for key, value in shared.items():
+        if key != "target_os":
+            ordered[key] = value
+    return ordered
+
+
+def compiler_lock(upstream, android):
+    toolchain = upstream["toolchain"]
+    return {
+        "clang_revision": toolchain["clang_revision"],
+        "clang_sub_revision": toolchain["clang_sub_revision"],
+        "clang_update_script_sha256": toolchain["clang_update_script_sha256"],
+        "chromium_tools_revision": toolchain["chromium_tools_revision"],
+        "chromium_build_revision": toolchain["chromium_build_revision"],
+        "android_ndk": toolchain["android_ndk"],
+        "depot_tools_revision": upstream["depot_tools"]["revision"],
+        "app_ndk_version": android["app_ndk_version"],
+    }
+
+
 def locks():
     upstream = json.loads((NATIVE / "remote-deps.lock.json").read_text())
     android = json.loads((ANDROID / "android-build.lock.json").read_text())
-    if android["schema_version"] != 1 or android["upstream_lock_sha256"] != sha(NATIVE / "remote-deps.lock.json"):
+    if set(android) != RECIPE_KEYS or android["schema_version"] != 2 or android["upstream_lock_sha256"] != sha(NATIVE / "remote-deps.lock.json"):
         raise SystemExit("Android engine recipe must be reviewed against the exact upstream lock")
-    if android["target"] != "arm64-v8a" or android["android_api"] != 26:
+    if (android["host"] != "linux-x64" or android["default_target"] != DEFAULT_ABI or android["android_api"] != ANDROID_API
+            or android["page_size"] != PAGE_SIZE or android["app_ndk_version"] != "27.2.12479018"
+            or not isinstance(android["cxx_boundary"], str) or len(android["cxx_boundary"]) < 40):
         raise SystemExit("Unreviewed Android ABI/API requirement")
+    targets = android["targets"]
+    if not isinstance(targets, dict) or set(targets) != set(ABI_ORDER):
+        raise SystemExit("Android recipe must review exactly arm64-v8a and x86_64")
+    for abi, profile in ABI_PROFILES.items():
+        entry = targets[abi]
+        if not isinstance(entry, dict) or set(entry) != {"gn_cpu", "elf_machine"} or entry["gn_cpu"] != profile["gn_cpu"] or entry["elf_machine"] != profile["elf_machine"]:
+            raise SystemExit(f"Android ABI recipe does not match the reviewed {abi} controller")
+    shared = android["gn_args"]
+    if not isinstance(shared, dict) or set(shared) != GN_KEYS or "target_cpu" in shared:
+        raise SystemExit("Shared Android GN arguments must not select a CPU")
+    if shared["target_os"] != "android" or shared["is_debug"] is not False or shared["is_component_build"] is not False or shared["default_min_sdk_version"] != ANDROID_API:
+        raise SystemExit("Unreviewed Android GN requirement")
+    if any(shared[name] is not False for name in ("rtc_include_tests", "rtc_build_examples", "rtc_build_tools")):
+        raise SystemExit("Android controller recipe must not build tests, examples, or tools")
     for name, expected in [("DEPS", upstream["webrtc"]["deps_sha256"]), ("WEBRTC-LICENSE", upstream["webrtc"]["license_sha256"])]:
         if sha(NATIVE / "upstream" / name) != expected:
             raise SystemExit("Pinned upstream source snapshot mismatch")
@@ -254,6 +334,26 @@ def locks():
         if sha(NATIVE / patch["path"]) != patch["sha256"]:
             raise SystemExit("Reviewed upstream patch differs from the source lock")
     return upstream, android
+
+
+def production_controller_manifest(manifest, upstream, android, expected_abi=None):
+    """Reject security-core libraries and rewritten emulator trees before trusting hashes."""
+    abi = manifest.get("target")
+    profile = ABI_PROFILES.get(abi) if isinstance(abi, str) else None
+    if (profile is None or manifest.get("android_api") != ANDROID_API or manifest.get("available") is not False
+            or manifest.get("page_size") != PAGE_SIZE or manifest.get("elf_machine") != profile["elf_machine"]
+            or (expected_abi is not None and abi != require_abi(expected_abi))):
+        raise SystemExit("Unexpected engine artifact capability/ABI")
+    if manifest.get("webrtc_revision") != upstream["webrtc"]["revision"] or manifest.get("recipe_sha256") != sha(ANDROID / "android-build.lock.json"):
+        raise SystemExit("Engine artifact was built from a different reviewed recipe")
+    if (manifest.get("status") != PRODUCTION_STATUS or manifest.get("controller_backend_linked") is not True
+            or manifest.get("production_controller") is not True or manifest.get("device_media_accepted") is not False
+            or manifest.get("source_modified") is not False or manifest.get("test_only") is True):
+        raise SystemExit("Engine artifact is not a production same-source WebRTC controller")
+    if (manifest.get("upstream_lock_sha256") != android["upstream_lock_sha256"] or manifest.get("gn_args") != resolved_gn_args(android, abi)
+            or manifest.get("compiler_lock") != compiler_lock(upstream, android)):
+        raise SystemExit("Engine artifact build configuration mismatch")
+    return abi
 
 
 def dependency_entries(path):
@@ -273,16 +373,11 @@ def dependency_entries(path):
     return result
 
 
-def verify_artifact(directory):
+def verify_artifact(directory, expected_abi=None):
     directory = directory.resolve()
     manifest = json.loads((directory / "android-webrtc-build.json").read_text())
     upstream, android = locks()
-    if manifest.get("target") != android["target"] or manifest.get("android_api") != 26 or manifest.get("available") is not False:
-        raise SystemExit("Unexpected engine artifact capability/ABI")
-    if manifest.get("webrtc_revision") != upstream["webrtc"]["revision"] or manifest.get("recipe_sha256") != sha(ANDROID / "android-build.lock.json"):
-        raise SystemExit("Engine artifact was built from a different reviewed recipe")
-    if manifest.get("upstream_lock_sha256") != android["upstream_lock_sha256"] or manifest.get("gn_args") != android["gn_args"]:
-        raise SystemExit("Engine artifact build configuration mismatch")
+    abi = production_controller_manifest(manifest, upstream, android, expected_abi)
     source_files = manifest.get("source_files")
     if not isinstance(source_files, dict) or not source_files or hashlib.sha256(json.dumps(source_files, sort_keys=True, separators=(",", ":")).encode()).hexdigest() != manifest.get("source_tree_sha256"):
         raise SystemExit("Engine artifact has no immutable controller source identity")
@@ -296,7 +391,7 @@ def verify_artifact(directory):
         path = directory / name
         if not path.resolve().is_relative_to(directory) or path.is_symlink() or not re.fullmatch(r"[0-9a-f]{64}", expected) or sha(path) != expected:
             raise SystemExit("Engine artifact hash/path mismatch")
-    required = {"lib/arm64-v8a/libwebrtc.a", "lib/arm64-v8a/libhome_tunnel_android_surface.a", "lib/arm64-v8a/libhome_tunnel_remote.so", "LICENSE.md", "PROJECT-LICENSE", NOTICE_INVENTORY, "source-manifest.json", "include/api/peer_connection_interface.h", "include/home_tunnel/remote.h"}
+    required = {f"lib/{abi}/libwebrtc.a", f"lib/{abi}/libhome_tunnel_android_surface.a", f"lib/{abi}/libhome_tunnel_remote.so", "LICENSE.md", "PROJECT-LICENSE", NOTICE_INVENTORY, "source-manifest.json", "include/api/peer_connection_interface.h", "include/home_tunnel/remote.h"}
     if not required.issubset(files):
         raise SystemExit("Engine artifact omits a required library/header/license/source manifest")
     verify_notice_inventory(directory, files)
@@ -307,17 +402,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", action="store_true")
     parser.add_argument("--build-existing", action="store_true")
+    parser.add_argument("--abi", help="arm64-v8a (default) or x86_64")
     parser.add_argument("--cache", type=Path, default=ROOT / ".downloads/remote-webrtc-android")
-    parser.add_argument("--output", type=Path, default=ROOT / "outputs/android-webrtc-arm64")
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--verify-artifact", type=Path)
     parser.add_argument("--jobs", type=int, default=4)
     args = parser.parse_args()
     upstream, android = locks()
     if args.verify_artifact:
-        verify_artifact(args.verify_artifact)
+        verify_artifact(args.verify_artifact, require_abi(args.abi) if args.abi is not None else None)
         return
+    abi = require_abi(args.abi) if args.abi is not None else DEFAULT_ABI
+    profile = ABI_PROFILES[abi]
+    if args.output is None:
+        args.output = ROOT / "outputs" / profile["output_dir"]
     if not args.build and not args.build_existing:
-        print("Android arm64/API 26 engine recipe matches the immutable upstream lock")
+        print(f"Android {abi} API {ANDROID_API} controller recipe matches the immutable upstream lock; supported ABIs: {', '.join(ABI_ORDER)}")
         return
     if platform.system() != "Linux" or platform.machine() not in ("x86_64", "AMD64"):
         raise SystemExit("Pinned Android WebRTC builds require a Linux x64 host; no host settings are changed")
@@ -332,7 +432,7 @@ def main():
     env = dict(os.environ, DEPOT_TOOLS_UPDATE="0", DEPOT_TOOLS_WIN_TOOLCHAIN="0", PYTHONUTF8="1")
     env["PATH"] = str(depot) + os.pathsep + env["PATH"]
     if args.build:
-        run([sys.executable, ROOT / "scripts/build-remote-webrtc.py", "--fetch", "--target-os", "android", "--target-cpu", "arm64", "--cache", cache], ROOT, env)
+        run([sys.executable, ROOT / "scripts/build-remote-webrtc.py", "--fetch", "--target-os", "android", "--target-cpu", profile["gn_cpu"], "--cache", cache], ROOT, env)
         run([sys.executable, depot / "gclient.py", "runhooks"], source.parent, env)
     for folder, expected in [(source, upstream["webrtc"]["revision"]), (depot, upstream["depot_tools"]["revision"]),
                              (source / "tools", upstream["toolchain"]["chromium_tools_revision"]), (source / "build", upstream["toolchain"]["chromium_build_revision"])]:
@@ -365,9 +465,13 @@ def main():
             destination = overlay / path.relative_to(NATIVE)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, destination)
-    build = source / "out/home_tunnel_android_arm64"
+    copied_build = (overlay / "android/BUILD.gn").read_text(encoding="utf-8")
+    if copied_build != (ANDROID / "BUILD.gn").read_text(encoding="utf-8") or 'current_cpu == "arm64"' not in copied_build or 'current_cpu == "x64"' not in copied_build:
+        raise SystemExit("Android controller GN source was rewritten; both ABIs must compile from the same file")
+    build = source / "out" / profile["build_dir"]
     build.mkdir(parents=True, exist_ok=True)
-    (build / "args.gn").write_text("\n".join(f"{key} = {json.dumps(value)}" for key, value in android["gn_args"].items()) + "\n")
+    gn_args = resolved_gn_args(android, abi)
+    (build / "args.gn").write_text("\n".join(f"{key} = {json.dumps(value)}" for key, value in gn_args.items()) + "\n")
     gn = source / "buildtools/linux64/gn"
     root_target = "--root-target=//home_tunnel_remote/android"
     run([gn, "gen", build, root_target], source, env)
@@ -381,20 +485,21 @@ def main():
     if output.exists() and any(output.iterdir()):
         raise SystemExit("Choose a new empty artifact output directory; existing artifacts are never overwritten")
     output.mkdir(parents=True, exist_ok=True)
-    library_dir = output / "lib/arm64-v8a"
+    library_dir = output / "lib" / abi
     library_dir.mkdir(parents=True)
     readelf = source / "third_party/llvm-build/Release+Asserts/bin/llvm-readelf"
+    expected_machine = {profile["elf_machine"]}
     for library in [build / "obj/libwebrtc.a", build / "obj/home_tunnel_remote/android/libhome_tunnel_android_surface.a"]:
         require_regular_archive(library)
         architecture = run([readelf, "--file-headers", library], source, env, True)
         machines = {value.strip() for value in re.findall(r"Machine:\s*(.+)", architecture)}
-        if not machines or machines != {"AArch64"}:
+        if not machines or machines != expected_machine:
             raise SystemExit("Engine archive contains unexpected architecture objects")
         shutil.copyfile(library, library_dir / library.name)
     controller = build / "libhome_tunnel_remote.so"
     architecture = run([readelf, "--file-headers", controller], source, env, True)
-    if set(value.strip() for value in re.findall(r"Machine:\s*(.+)", architecture)) != {"AArch64"}:
-        raise SystemExit("Controller shared library is not AArch64")
+    if set(value.strip() for value in re.findall(r"Machine:\s*(.+)", architecture)) != expected_machine:
+        raise SystemExit("Controller shared library architecture does not match the requested ABI")
     segments = run([readelf, "--wide", "--program-headers", controller], source, env, True)
     alignments = [int(value, 16) for value in re.findall(r"^\s*LOAD\s+.*\s+(0x[0-9a-fA-F]+)\s*$", segments, re.MULTILINE)]
     if not alignments or any(value < 16384 or value % 16384 for value in alignments):
@@ -426,19 +531,21 @@ def main():
     licenses.LicenseBuilder._run_gn = staticmethod(lambda directory, target: run([gn, "desc", root_target, "--all", "--format=json", directory, target], source, env, True))
     licenses.LicenseBuilder([str(build)], ["//:webrtc", "//home_tunnel_remote/android:home_tunnel_android_controller"]).generate_license_text(str(output))
     source_manifest = {"schema_version": 1, "repository": "ZHanry/home-tunnel-client", "revision": revision, "source_modified": False,
-                       "dependency_sources": entries, "upstream_lock": upstream, "android_recipe": android,
-                       "reviewed_upstream_patches": upstream["patches"],
-                       "rebuild": "Use Linux x64 and run python3 scripts/build-remote-android-webrtc.py --build from the exact clean client revision."}
+                       "selected_abi": abi, "dependency_sources": entries, "upstream_lock": upstream, "android_recipe": android,
+                       "compiler_lock": compiler_lock(upstream, android), "reviewed_upstream_patches": upstream["patches"],
+                       "rebuild": f"Use a Linux x64 host and run python3 scripts/build-remote-android-webrtc.py --build --abi {abi} from the exact clean client revision. Both ABIs compile this same unmodified source and dependency lock."}
     (output / "source-manifest.json").write_text(json.dumps(source_manifest, indent=2, sort_keys=True) + "\n")
     files = {path.relative_to(output).as_posix(): sha(path) for path in sorted(output.rglob("*")) if path.is_file()}
     source_files = {path.relative_to(NATIVE).as_posix(): sha(path) for path in sorted(NATIVE.rglob("*")) if path.is_file() and
                     (path.suffix in {".cpp", ".hpp", ".h", ".json", ".md", ".patch", ".gn", ".exports"} or path.name in {"CMakeLists.txt", "DEPS", "WEBRTC-LICENSE"})}
-    manifest = {"schema_version": 1, "status": "controller-built-device-acceptance-required", "available": False,
-                "controller_backend_linked": True, "device_media_accepted": False,
-                "target": "arm64-v8a", "android_api": 26, "source_revision": revision, "source_modified": False,
+    manifest = {"schema_version": 1, "status": PRODUCTION_STATUS, "available": False,
+                "controller_backend_linked": True, "production_controller": True, "device_media_accepted": False, "test_only": False,
+                "target": abi, "elf_machine": profile["elf_machine"], "android_api": ANDROID_API, "page_size": PAGE_SIZE,
+                "source_revision": revision, "source_modified": False,
                 "source_files": source_files, "source_tree_sha256": hashlib.sha256(json.dumps(source_files, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                 "webrtc_revision": upstream["webrtc"]["revision"], "upstream_lock_sha256": android["upstream_lock_sha256"],
-                "recipe_sha256": sha(ANDROID / "android-build.lock.json"), "gn_args": android["gn_args"], "files": files}
+                "recipe_sha256": sha(ANDROID / "android-build.lock.json"), "gn_args": gn_args,
+                "compiler_lock": compiler_lock(upstream, android), "files": files}
     (output / "android-webrtc-build.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     verify_artifact(output)
 
