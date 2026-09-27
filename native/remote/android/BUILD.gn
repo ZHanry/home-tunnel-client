@@ -1,6 +1,8 @@
 import("//webrtc.gni")
+import("//build/config/android/config.gni")
 
 assert(is_android && (current_cpu == "arm64" || current_cpu == "x64"))
+assert(android_ndk_api_level == 26, "The controller C ABI requires the pinned Android API 26 native target")
 
 group("default") {
   testonly = true

@@ -62,7 +62,7 @@ ABI_PROFILES = {
     },
 }
 GN_KEYS = {
-    "target_os", "is_debug", "is_component_build", "default_min_sdk_version",
+    "target_os", "is_debug", "is_component_build", "default_min_sdk_version", "android_ndk_api_level",
     "rtc_include_tests", "rtc_build_examples", "rtc_build_tools", "rtc_enable_protobuf",
     "rtc_include_internal_audio_device", "rtc_use_h264", "rtc_use_h265",
     "proprietary_codecs", "use_custom_libcxx", "use_cxx23", "symbol_level",
@@ -323,7 +323,8 @@ def locks():
     shared = android["gn_args"]
     if not isinstance(shared, dict) or set(shared) != GN_KEYS or "target_cpu" in shared:
         raise SystemExit("Shared Android GN arguments must not select a CPU")
-    if shared["target_os"] != "android" or shared["is_debug"] is not False or shared["is_component_build"] is not False or shared["default_min_sdk_version"] != ANDROID_API:
+    if (shared["target_os"] != "android" or shared["is_debug"] is not False or shared["is_component_build"] is not False or
+            shared["default_min_sdk_version"] != ANDROID_API or shared["android_ndk_api_level"] != ANDROID_API):
         raise SystemExit("Unreviewed Android GN requirement")
     if any(shared[name] is not False for name in ("rtc_include_tests", "rtc_build_examples", "rtc_build_tools")):
         raise SystemExit("Android controller recipe must not build tests, examples, or tools")

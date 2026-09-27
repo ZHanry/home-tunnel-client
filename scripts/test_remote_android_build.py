@@ -220,6 +220,8 @@ class AndroidArtifactPolicy(unittest.TestCase):
         self.assertEqual(arm["target_cpu"], "arm64")
         self.assertEqual(intel["target_cpu"], "x64")
         self.assertEqual(arm["default_min_sdk_version"], 26)
+        self.assertEqual(arm["android_ndk_api_level"], 26)
+        self.assertEqual(intel["android_ndk_api_level"], 26)
         self.assertEqual({key: value for key, value in arm.items() if key != "target_cpu"},
                          {key: value for key, value in intel.items() if key != "target_cpu"})
         self.assertEqual(BUILD.compiler_lock(upstream, android), BUILD.compiler_lock(upstream, android))

@@ -4,6 +4,8 @@
 #include <chrono>
 #include <future>
 
+static_assert(__ANDROID_API__ >= 26, "System audio requires an Android API 26 native toolchain target");
+
 namespace ht::rd::android {
 namespace {
 uint64_t now_ms(){return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());}
@@ -48,7 +50,8 @@ bool AudioOutput::start(Pull pull){
       while(written<480 && !stopping_ && deadline_.alive(now_ms())){
         // A bounded blocking write paces 10 ms frames and cannot accumulate
         // an unbounded app queue. Expiry/mute closes and flushes this stream.
-        const auto count=AAudioStream_write(output.stream,samples.data()+written*2,static_cast<int32_t>(480-written),20000000);
+        const auto remaining=std::span(samples).subspan(written*2);
+        const auto count=AAudioStream_write(output.stream,remaining.data(),static_cast<int32_t>(remaining.size()/2),20000000);
         if(count<=0){failed_=true;return;}
         written+=static_cast<size_t>(count);
       }

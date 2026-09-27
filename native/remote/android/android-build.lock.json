@@ -23,6 +23,7 @@
     "is_debug": false,
     "is_component_build": false,
     "default_min_sdk_version": 26,
+    "android_ndk_api_level": 26,
     "rtc_include_tests": false,
     "rtc_build_examples": false,
     "rtc_build_tools": false,

@@ -258,11 +258,10 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
     if(!Live() || !identity_ || !(identity_->expected().permission_ceiling&bit) || !files_ || !FilesCurrent())return !enabled;
     requested=enabled;Json::Value body;body["permission"]=permission;body["enabled"]=enabled;Send(protocol::FEATURE_REQUEST,body);return !closed_;
   }
-  bool OfferFiles(const ht_rd_file_source_v1* sources,size_t count){
+  bool OfferFiles(std::span<const ht_rd_file_source_v1> sources){
     if(!FilesCurrent() || !files_ || !files_->enabled("files.receive"))return false;
     FileCall guard(*this);std::vector<std::filesystem::path> tokens;
-    for(size_t n=0;n<count;++n){
-      const auto& source=sources[n];
+    for(const auto& source:sources){
       const auto token=file_access_.source(source.descriptor,std::string_view(reinterpret_cast<const char*>(source.name),source.name_length));
       if(token.empty()){file_access_.clear();return false;}tokens.push_back(token);
     }
@@ -725,12 +724,21 @@ ht_rd_result ht_rd_set_files_enabled(ht_rd_handle handle,uint32_t direction,uint
 }
 ht_rd_result ht_rd_files_offer(ht_rd_handle handle,const ht_rd_file_source_v1* sources,size_t count){
   if(!sources || !count || count>ht::rd::protocol::BATCH_FILES)return HT_RD_INVALID_ARGUMENT;
-  for(size_t n=0;n<count;++n){
-    if(!compatible(&sources[n]))return HT_RD_ABI_MISMATCH;
-    if(sources[n].reserved || sources[n].descriptor<0 || !sources[n].name || !sources[n].name_length || sources[n].name_length>1020)return HT_RD_INVALID_ARGUMENT;
+  // C ABI callers lend exactly count entries until this synchronous call
+  // returns. Limit the raw pointer boundary to constructing the bounded view.
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage begin
+#endif
+  const std::span<const ht_rd_file_source_v1> entries(sources,count);
+#if defined(__clang__)
+#pragma clang unsafe_buffer_usage end
+#endif
+  for(const auto& source:entries){
+    if(!compatible(&source))return HT_RD_ABI_MISMATCH;
+    if(source.reserved || source.descriptor<0 || !source.name || !source.name_length || source.name_length>1020)return HT_RD_INVALID_ARGUMENT;
   }
   const auto owner=find(handle);if(!owner)return HT_RD_INVALID_HANDLE;
-  return runtime().signaling->BlockingCall([&]{return owner->OfferFiles(sources,count);})?HT_RD_OK:HT_RD_PERMISSION_DENIED;
+  return runtime().signaling->BlockingCall([&]{return owner->OfferFiles(entries);})?HT_RD_OK:HT_RD_PERMISSION_DENIED;
 }
 ht_rd_result ht_rd_files_accept(ht_rd_handle handle,const uint8_t* id,size_t length,int32_t descriptor){
   if(!id || length!=36 || descriptor<0)return HT_RD_INVALID_ARGUMENT;
