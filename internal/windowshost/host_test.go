@@ -153,6 +153,23 @@ func TestInstallPathsACLAndPortableFallback(t *testing.T) {
 	}
 }
 
+func TestInstallPathRulesAreWindowsSpecificOnEveryPlatform(t *testing.T) {
+	for _, value := range []string{
+		`C:\Program Files\Home Tunnel\home-tunnel-service.exe`,
+		`c:/program files/Home Tunnel/home-tunnel-service.exe`,
+	} {
+		plan, err := PlanInstall(Layout{Scope: "per-machine", ServiceRequested: true, ProgramFiles: `C:/Program Files`, ExePath: value})
+		if err != nil || !plan.RegisterService || !strings.EqualFold(plan.QuotedPath, `"C:\Program Files\Home Tunnel\home-tunnel-service.exe"`) {
+			t.Fatalf("valid Windows path %q: %+v %v", value, plan, err)
+		}
+	}
+	for _, root := range []string{`Program Files`, `C:Program Files`, `/Program Files`, `\\server\Program Files`, `\\?\C:\Program Files`, `C:\Program Files:stream`, `C:\Program Files.`, `C:\Program Files `, `C:\Temp\..\Program Files`} {
+		if _, err := PlanInstall(Layout{Scope: "per-machine", ServiceRequested: true, ProgramFiles: root, ExePath: root + `\Home Tunnel\` + ServiceBinary}); !errors.Is(err, ErrRejected) {
+			t.Errorf("invalid Windows install root %q was accepted: %v", root, err)
+		}
+	}
+}
+
 func TestNativeCapabilityComesFromWorkerProbe(t *testing.T) {
 	if _, ok := NativeReport(Probe{Capture: true, SecureDesktop: true}); ok {
 		t.Fatal("secure desktop was declared without a service worker")

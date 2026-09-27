@@ -1,7 +1,7 @@
 package windowshost
 
 import (
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -36,8 +36,27 @@ func QuoteServicePath(path string) (string, error) {
 	return path, nil
 }
 
-func userWritable(path string) bool {
-	folded := strings.ToLower(filepath.Clean(path))
+// Installation plans always describe Windows paths, including when the pure
+// policy tests run on Linux or macOS. OS ACL and reparse-point checks are still
+// performed by the Windows installer before using the resulting plan.
+func cleanInstallPath(value string) (string, error) {
+	value = strings.ReplaceAll(value, `/`, `\`)
+	if len(value) < 3 || !((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) || value[1:3] != `:\` {
+		return "", ErrRejected
+	}
+	if strings.ContainsAny(value[2:], ":*?\"<>|\x00\r\n\t") || strings.Contains(value, "..") {
+		return "", ErrRejected
+	}
+	for _, component := range strings.Split(value[3:], `\`) {
+		if strings.TrimRight(component, " .") != component {
+			return "", ErrRejected
+		}
+	}
+	return strings.ReplaceAll(path.Clean(strings.ReplaceAll(value, `\`, `/`)), `/`, `\`), nil
+}
+
+func userWritable(value string) bool {
+	folded := strings.ToLower(value)
 	for _, marker := range []string{`\users\`, `\temp\`, `\appdata\`, `\public\`, `\programdata\temp\`} {
 		if strings.Contains(folded, marker) {
 			return true
@@ -54,9 +73,15 @@ func PlanInstall(layout Layout) (Plan, error) {
 	if layout.Scope != "per-machine" || !layout.ServiceRequested {
 		return plan, nil
 	}
-	cleaned := filepath.Clean(layout.ExePath)
-	program := filepath.Clean(layout.ProgramFiles)
-	expected := filepath.Join(program, "Home Tunnel", ServiceBinary)
+	cleaned, err := cleanInstallPath(layout.ExePath)
+	if err != nil {
+		return Plan{}, err
+	}
+	program, err := cleanInstallPath(layout.ProgramFiles)
+	if err != nil {
+		return Plan{}, err
+	}
+	expected := strings.TrimRight(program, `\`) + `\Home Tunnel\` + ServiceBinary
 	if !strings.EqualFold(cleaned, expected) || userWritable(cleaned) {
 		return Plan{}, ErrRejected
 	}
