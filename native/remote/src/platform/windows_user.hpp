@@ -8,6 +8,7 @@
 #endif
 #include <windows.h>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <vector>
 
@@ -39,8 +40,11 @@ inline UserIdentity token_identity(HANDLE token) {
     GetTokenInformation(token, TokenUser, nullptr, 0, &size);
     if (size < sizeof(TOKEN_USER) || size > 4096) return result;
     std::vector<unsigned char> buffer(size);
-    if (!GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) return result;
-    const auto sid = reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid;
+    if (!GetTokenInformation(token, TokenUser, buffer.data(), size, &size) ||
+        size < sizeof(TOKEN_USER) || size > buffer.size()) return result;
+    TOKEN_USER user{};
+    std::memcpy(&user, buffer.data(), sizeof(user));
+    const auto sid = user.User.Sid;
     if (!IsValidSid(sid)) return result;
     result.system = IsWellKnownSid(sid, WinLocalSystemSid) != FALSE;
     result.sid.resize(GetLengthSid(sid));

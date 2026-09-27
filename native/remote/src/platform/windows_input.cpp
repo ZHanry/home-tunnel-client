@@ -336,7 +336,7 @@ bool WindowsInputSink::renew_service_desktop(uint32_t session,uint64_t expires,b
     std::memset(adopted_grant_bytes,0,kDesktopGrantBytes);
     const uint32_t header[]={kDesktopGrantMagic,kDesktopGrantVersion,session};
     std::memcpy(adopted_grant_bytes,header,sizeof(header));
-    std::memcpy(adopted_grant_bytes+12,&expires,sizeof(expires));
+    std::memcpy(std::span(adopted_grant_bytes).subspan<12,sizeof(expires)>().data(),&expires,sizeof(expires));
     adopted_grant_ready=true;
     service_policy_enabled=enabled;
     service_bound_id=controller;service_bound_jkt=thumbprint;
