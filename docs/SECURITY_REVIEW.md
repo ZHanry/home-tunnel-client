@@ -38,6 +38,34 @@ does not suppress the rule or allow another caller to bypass the local boundary.
 credential replay prevention, API-origin/path escapes and reflected secret errors.
 Changing the callers or exposing this functionality remotely requires a fresh review.
 
+## User-selected local service diagnostic
+
+`POST /local/connection-check` is an explicit desktop-user operation that checks a
+service before publishing a tunnel. Loopback and private LAN targets are required
+features. The request originates on the user's computer under the local management
+boundary above; an enrolled device is also required. It does not originate from the
+public control center and cannot be invoked using another user's server session.
+
+The endpoint accepts at most 4 KiB of strict JSON: a hostname or IP address, a bounded
+port, a fixed transport and an HTTP/HTTPS scheme. It rejects URL syntax, credentials,
+unknown fields and extra JSON values. HTTP uses an unauthenticated HEAD request,
+ignores environment proxies, does not follow redirects, verifies TLS certificates
+and has a three-second deadline. TCP checks only whether the port accepts a
+connection. UDP remains a manual application-level check, never a synthetic pass.
+
+CodeQL alert #4 (`go/request-forgery`, the HEAD call in
+`internal/diagnostics/doctor.go`, source `0eecacc803b39f3a8d53c778c4abdc3502cd07c6`)
+was reviewed as a false positive for this deliberately authorized local diagnostic.
+The rule, queries and quality gate remain enabled. `tunnel_check_test.go` covers
+enrollment, input limits, redirect and credential behavior, UDP and TLS failures.
+`tunnel_check_trust_test.go` uses a real listening target to verify that ten hostile
+request variants cause zero target connections, followed by an authorized request
+that performs the expected HEAD. It covers rebinding, remote peers, foreign/local/
+opaque origins, cross-site metadata, missing/wrong tokens, forms and wrong methods.
+
+Public exposure, removal of desktop-session checks, ambient credentials, proxy use
+or redirect following would change this authority model and require a fresh review.
+
 ## Logging
 
 Remote API error messages and malformed-response values are not stringified into
