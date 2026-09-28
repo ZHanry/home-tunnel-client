@@ -354,6 +354,13 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 	for i := range status.Grants {
 		status.Grants[i].GrantJWS = ""
 	}
+	// The UI iterates these lists; never send null before the first refresh.
+	if status.Invites == nil {
+		status.Invites = []remotehost.AssistInvite{}
+	}
+	if status.AccessRequests == nil {
+		status.AccessRequests = []remotehost.AccessRequest{}
+	}
 	host.mu.Lock()
 	if host.lastError != "" {
 		status.ErrorCode = host.lastError

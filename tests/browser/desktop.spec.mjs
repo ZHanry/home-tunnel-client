@@ -26,6 +26,16 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/desktop-preview");
 });
 
+test("an unenrolled host with null lists offers enrollment instead of a status error", async ({page}) => {
+  // Shape returned by a real 10.0.0 worker before the host has ever enrolled.
+  await page.route("**/local/remote/state",route=>route.fulfill({json:{enrolled:false,enabled:false,running:false,endpoint_id:"",capabilities:{available:true,status:"ready",permissions:["view"]},pending:[],grants:[],invites:null,access_profile:{device_id:"",fixed_password_enabled:false,revision:0},access_requests:null,files:null,emergency_key:"X",service:{installed:false,running:false}}}));
+  await services(page,undefined);
+  await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));
+  await page.locator("#nav-remote").click();
+  await expect(page.locator("#rd-host-status")).toHaveText("远程连接已关闭");
+  await expect(page.locator("#rd-host-enroll")).toBeVisible();
+});
+
 test("remote backend stays unavailable and enrollment requires explicit server trust", async ({page}) => {
   await services(page,undefined);
   await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));

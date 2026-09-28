@@ -1320,7 +1320,9 @@
         row.append(detail, revoke); list.append(row);
       }
     }
-    function renderAccessRequests(requests = []) {
+    function renderAccessRequests(requests) {
+      // Go encodes an empty slice as null; a default parameter only covers undefined.
+      requests = requests || [];
       const list = $("rd-access-requests"); list.replaceChildren();
       if (!requests.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = msg("暂无请求"); list.append(empty); return; }
       for (const request of requests) {
@@ -1336,7 +1338,8 @@
         actions.append(approve, reject); row.append(detail, actions); list.append(row);
       }
     }
-    function renderRemoteFiles(files = {}) {
+    function renderRemoteFiles(files) {
+      files = files || {};
       const signature = JSON.stringify(files);
       if (signature === remoteFileSignature) return;
       remoteFileSignature = signature;
