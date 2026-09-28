@@ -111,7 +111,10 @@
     const item = items[0];
     lastCount = Math.max(lastCount, items.length);
     $("request").hidden = !item;
-    $("session").hidden = !!item || !state?.active_session_id || !mode;
+    // The window is sized by the host before this page has fresh state. Never leave it
+    // blank: in session mode (or once a request turned into a session) show the bar.
+    $("session").hidden = !!item || !mode || (mode === "request" && !state?.active_session_id) || (state && !state.active_session_id);
+    if (!item && $("session").hidden && mode) requestHostRecheck();
     if (item) renderRequest(item, items.length - 1, now);
     else shownKey = "";
     if (!$("session").hidden) renderSession();
@@ -164,7 +167,7 @@
   }
 
   function renderSession() {
-    const grant = (state.grants || []).find((item) => item.session_id && item.session_id === state.active_session_id);
+    const grant = (state?.grants || []).find((item) => item.session_id && item.session_id === state.active_session_id);
     const who = grant ? [grant.requester_name, grant.controller_endpoint_id].filter(Boolean).join(" · ") : "";
     $("session-who").textContent = who;
     $("session-who").title = who;
@@ -255,6 +258,16 @@
     clearTimeout(pollTimer);
     if (!mode) return;
     pollTimer = setTimeout(async () => { await refresh(); schedulePoll(); }, mode === "request" ? 1000 : 3000);
+  }
+
+  // Nothing left to show: ask the host to re-check now so it hides (or resizes) the window
+  // instead of leaving an empty card on screen until its next poll.
+  let recheckAt = 0;
+  function requestHostRecheck() {
+    const now = Date.now();
+    if (now < recheckAt) return;
+    recheckAt = now + 1500;
+    api("/local/remote/popup", { method: "POST", body: JSON.stringify({ action: "refresh" }) }).catch(() => {});
   }
 
   let lastCount = 0;

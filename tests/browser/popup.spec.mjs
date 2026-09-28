@@ -241,3 +241,17 @@ test("popup palette matches the main window", async ({ page }) => {
   }
   expect(page).toBeTruthy();
 });
+
+test("the popup never sits on screen as an empty card", async ({ page }) => {
+  // The host sizes the window before the page has state; the session bar shows straight away.
+  const state = { active_session_id: "live-2", access_requests: [], pending: [], grants: [] };
+  const calls = await openPopup(page, state, { viewport: { width: 320, height: 60 } });
+  await page.route("**/local/remote/state", () => {});
+  await page.evaluate(() => window.htPopup.show("session"));
+  await expect(page.locator("#session")).toBeVisible();
+  await page.unroute("**/local/remote/state");
+  // A request answered elsewhere leaves nothing to show: the host is asked to re-check at once.
+  await page.route("**/local/remote/state", (route) => route.fulfill({ json: { access_requests: [], pending: [], grants: [] } }));
+  await page.evaluate(() => window.htPopup.show("request"));
+  await expect.poll(() => posts(calls, "/local/remote/popup").some((call) => call.body.action === "refresh")).toBe(true);
+});
