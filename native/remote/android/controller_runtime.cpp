@@ -498,8 +498,14 @@ class Controller final : public webrtc::PeerConnectionObserver, public std::enab
       const auto* local = report.GetAs<webrtc::RTCLocalIceCandidateStats>(*pair->local_candidate_id);
       const auto* remote = report.GetAs<webrtc::RTCRemoteIceCandidateStats>(*pair->remote_candidate_id);
       auto accepted = [](const auto* item) { return item && item->protocol == "udp" && (item->candidate_type == "host" || item->candidate_type == "srflx" || item->candidate_type == "prflx") && !item->relay_protocol && !item->tcp_type; };
-      if (!accepted(local) || !accepted(remote) || (found && selected != pair->id())) { Close("RD_PATH_REJECTED"); return; }
-      found = true; selected = pair->id(); local_type = *local->candidate_type; remote_type = *remote->candidate_type;
+      if (!accepted(local) || !accepted(remote)) { Close("RD_PATH_REJECTED"); return; }
+      // Same UDP 5-tuple is the same path even if WebRTC renamed the pair
+      // (a peer-reflexive candidate replaced by its signaled candidate).
+      auto endpoint = [](const auto* item) { return item->address && item->port ? *item->address + "|" + std::to_string(*item->port) : std::string(); };
+      const auto local_end = endpoint(local), remote_end = endpoint(remote);
+      const auto key = local_end.empty() || remote_end.empty() ? pair->id() : "udp|" + local_end + "|" + remote_end;
+      if (found && selected != key) { Close("RD_PATH_REJECTED"); return; }
+      found = true; selected = key; local_type = *local->candidate_type; remote_type = *remote->candidate_type;
     }
     if (!found) { if (local_path_) Close("RD_PATH_CHANGED"); return; }
     if (!selected_pair_.empty() && selected_pair_ != selected) { Close("RD_PATH_CHANGED"); return; }

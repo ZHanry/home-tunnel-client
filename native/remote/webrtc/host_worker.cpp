@@ -600,8 +600,15 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
         (((candidate->candidate_type=="host" || candidate->candidate_type=="srflx" || candidate->candidate_type=="prflx") && !candidate->relay_protocol) ||
          (relay_allowed.load() && candidate->candidate_type=="relay" && (!candidate->relay_protocol || *candidate->relay_protocol=="udp")));};
       if(!accepted(local) || !accepted(remote)){Close("RD_PATH_REJECTED");return;}
-      if(found && selected!=pair->id()){Close("RD_PATH_REJECTED");return;}
-      found=true;selected=pair->id();local_type=*local->candidate_type;remote_type=*remote->candidate_type;
+      // Identify the path by its UDP 5-tuple, not the pair id: WebRTC replaces a
+      // peer-reflexive candidate with the signaled one for the same address (a
+      // relay candidate often arrives after its first check), which renames the
+      // pair without changing the path.
+      auto endpoint=[](const auto* candidate){return candidate->address && candidate->port?*candidate->address+"|"+std::to_string(*candidate->port):std::string();};
+      const auto local_end=endpoint(local),remote_end=endpoint(remote);
+      const auto key=local_end.empty() || remote_end.empty()?pair->id():"udp|"+local_end+"|"+remote_end;
+      if(found && selected!=key){Close("RD_PATH_REJECTED");return;}
+      found=true;selected=key;local_type=*local->candidate_type;remote_type=*remote->candidate_type;
     }
     if(!found){if(path_verified_)Close("RD_PATH_CHANGED");return;}
     if(!selected_pair_.empty() && selected_pair_!=selected){Close("RD_PATH_CHANGED");return;}

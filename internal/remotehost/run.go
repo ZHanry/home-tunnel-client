@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"strconv"
@@ -272,6 +273,13 @@ func (s *Service) handleEngine(ctx context.Context, event EngineEvent, send func
 	snapshot := *r
 	s.mu.Unlock()
 	if event.Kind == "closed" {
+		// Keep the native close reason (an RD_* code, no secrets) for diagnostics.
+		var closed struct {
+			ErrorCode string `json:"error_code"`
+		}
+		if json.Unmarshal(event.Payload, &closed) == nil && closed.ErrorCode != "" {
+			log.Printf("remote session closed by host: %s", closed.ErrorCode)
+		}
 		if snapshot.Session.LeaseSeq > 0 && !snapshot.Superseded {
 			proof, e := signJWS(s.key, "ht-rd-session+jwt", map[string]any{"type": "session.close_ack", "session_id": snapshot.Session.SessionID, "connection_epoch": snapshot.Session.ConnectionEpoch, "lease_seq": snapshot.Session.LeaseSeq, "stopped": true}, false)
 			if e != nil {

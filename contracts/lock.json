@@ -4,7 +4,7 @@
   "contract_status": "proposed",
   "frozen_tag": null,
   "published_contract_ref": null,
-  "source_revision": "fdb7541adedc44812a1b668d5e0dd4c68952faeb",
+  "source_revision": "c26faf5bfd7443bcd379b87cf2b7a8e9b563661c",
   "previous_immutable_tag": "api-v1.3.0",
   "source_tree_dirty": false,
   "api_prefix": "/api/v1",
@@ -17,11 +17,11 @@
     },
     {
       "path": "contracts/openapi.v1.json",
-      "sha256": "6e5d590ab47cfefce99a31ff884053a6899d58973dc28525d714fc24068247e3"
+      "sha256": "080e508814ce5c29c2a0c7dc847ebc11cf9e50f26a24d9e47110ce724d76676b"
     },
     {
       "path": "contracts/api.schema.json",
-      "sha256": "a691ce7131d38e5ec1ea825a15ccf35fa9fc653b110e9ecddb2a0cc79d01fe57"
+      "sha256": "c0a8714cee6bc9e5cfa8db0df8e2636c0e9f79d26ce461813482e4520f89f493"
     }
   ]
 }

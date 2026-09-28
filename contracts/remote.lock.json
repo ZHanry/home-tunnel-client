@@ -1,19 +1,19 @@
 {
   "schema_version": 1,
   "repository": "ZHanry/home-tunnel-server",
-  "source_revision": "fdb7541adedc44812a1b668d5e0dd4c68952faeb",
+  "source_revision": "c26faf5bfd7443bcd379b87cf2b7a8e9b563661c",
   "source_tree_dirty": false,
   "contract_status": "proposed",
   "frozen_tag": null,
   "published_contract_ref": null,
   "proposed_ref": "api-v1.4.0",
   "previous_immutable_tag": "api-v1.3.0",
-  "source_tree_sha256": "acf2b76f7df2f0a927f078b25f811308d3578575f16077164ef5285a8790c622",
+  "source_tree_sha256": "205d3a038ea3ec20a36021b9a84ab9e06367219422129a7f59be56af3f7d845b",
   "files": [
     {
       "source": "contracts/remote-desktop.v1.json",
       "path": "native/remote/generated/remote-desktop.v1.json",
-      "sha256": "4cd6c6944dcc9003c36c6b3a7c4bbb457fbb2801d9c27351b9ce21a373eeabcf"
+      "sha256": "78e1c1d789118b710fa87ce7f1abb9a0b0ac4fa59475a67628ac48245bf3ca4d"
     },
     {
       "source": "contracts/remote-test-vectors.json",

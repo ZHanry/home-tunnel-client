@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"strconv"
 	"strings"
@@ -590,6 +591,7 @@ func (s *Service) stopLocal(ctx context.Context, reason string) (Session, bool, 
 	if r == nil {
 		return Session{}, false, nil
 	}
+	log.Printf("remote session stopping: %s", reason)
 	s.engineMu.Lock()
 	engineError := s.config.Engine.Close(ctx, session.SessionRef, reason)
 	s.engineMu.Unlock()
