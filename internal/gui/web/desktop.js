@@ -195,9 +195,6 @@
       updateDot.hidden = !result.newer;
       $("nav-updates").setAttribute("aria-label", result.newer ? `${msg("软件更新：发现正式版 ")}${result.latest}` : msg("软件更新"));
     }
-    const remoteTabs = document.createElement("div");
-    remoteTabs.className = "remote-tabs";
-    remoteTabs.innerHTML = '<button type="button" class="active" data-remote-tab="quick">快速连接</button><button type="button" data-remote-tab="unattended">无人值守</button>';
     const remoteQuick = document.createElement("div");
     remoteQuick.className = "remote-quick";
     const remoteOverview = document.createElement("div");
@@ -209,7 +206,7 @@
     hostCard.querySelector("p.muted").textContent = "在本机批准单次授权后，绑定的会话自动启动；你可随时断开或撤销。";
     hostCard.insertAdjacentHTML("afterbegin", '<div class="remote-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></div>');
     hostCard.querySelector("h3").textContent = "允许对方连接这台电脑";
-    hostCard.querySelector("p.muted").textContent = "把设备 ID 告诉对方。每次连接都需要你在本机同意，可随时断开。";
+    hostCard.querySelector("p.muted").textContent = "把设备 ID 告诉对方。连接需要你在本机同意；设置固定密码后可无人值守连接。";
     const hostIdentity = document.createElement("div");
     hostIdentity.className = "remote-host-identity";
     hostIdentity.innerHTML = '<span>本机设备 ID</span><button type="button" id="rd-host-copy" class="secondary" disabled aria-label="复制本机设备 ID"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>';
@@ -270,16 +267,13 @@
     recentDevices.innerHTML = '<div class="recent-devices-heading"><div><h2>最近设备</h2><p>从已登记设备快速进入</p></div><button type="button" id="remote-all-devices" class="secondary">查看所有设备</button></div><div id="recent-devices-list" class="recent-devices-list"></div>';
     recentDevices.querySelector("#remote-all-devices").insertAdjacentHTML("beforeend", actionIcon("arrow"));
     remoteQuick.append(recentDevices);
-    const remoteUnattended = document.createElement("article");
-    remoteUnattended.className = "settings-card remote-unattended hidden";
-    remoteUnattended.innerHTML = '<div class="remote-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg></div><h2>连接这台电脑</h2><p>三种方式：收到连接请求后批准、设置固定密码自动连接、生成一次性临时密码。</p><div class="remote-access-identity"><span>跨账号设备 ID</span><strong id="rd-access-device-id">尚未创建</strong><button type="button" id="rd-access-create" class="secondary">创建设备 ID</button></div><div class="remote-fixed-password"><h3>固定密码</h3><p>知道设备 ID 和固定密码、且登录同一服务器的用户都可以连接。修改或关闭会撤销旧授权。</p><form id="rd-fixed-form"><label for="rd-fixed-password">新固定密码（至少 12 位）</label><div class="remote-manual-row"><input id="rd-fixed-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required><button type="submit" id="rd-fixed-save">保存密码</button></div></form><p id="rd-fixed-status" class="muted"></p><button type="button" id="rd-fixed-disable" class="danger" disabled>关闭固定密码</button></div><div class="remote-access-requests"><h3>待批准的连接请求</h3><div id="rd-access-requests"></div></div><div class="remote-hotkey-setting"><label for="rd-emergency-key">强制断开快捷键</label><select id="rd-emergency-key"><option value="X">Ctrl + Alt + Shift + X</option><option value="Q">Ctrl + Alt + Shift + Q</option><option value="F12">Ctrl + Alt + Shift + F12</option></select><p>按下后立即停止本机远控并关闭远控开关；重新启用需回到本页面。</p></div><div class="remote-unattended-binding"><h3>无人值守绑定 / Unattended binding</h3><p>默认关闭。开启需要管理员，并且只接受下面这个控制端标识和公钥指纹。</p><label for="rd-unattended-controller">控制端标识 / Controller endpoint</label><input id="rd-unattended-controller" maxlength="128" autocomplete="off"><label for="rd-unattended-thumbprint">公钥指纹 / Key thumbprint</label><input id="rd-unattended-thumbprint" maxlength="43" autocomplete="off" spellcheck="false"></div><div class="remote-unattended-actions"><span id="rd-unattended-status" class="state-badge">未启用</span><button type="button" id="rd-unattended-enable" disabled>开启高权限服务</button><button type="button" id="rd-unattended-disable" class="danger" disabled>关闭高权限服务</button></div><p id="rd-unattended-detail"></p><p id="rd-unattended-error" class="error" role="alert"></p>';
-    $("remote-page").append(remoteTabs, remoteQuick, remoteUnattended);
-    remoteTabs.querySelectorAll("button").forEach((button) => { button.onclick = () => {
-      const unattended = button.dataset.remoteTab === "unattended";
-      remoteQuick.classList.toggle("hidden", unattended);
-      remoteUnattended.classList.toggle("hidden", !unattended);
-      remoteTabs.querySelectorAll("button").forEach((tab) => tab.classList.toggle("active", tab === button));
-    }; });
+    // Unattended access is the fixed password: whoever knows the device ID and
+    // this password connects without a local prompt. There is no separate mode.
+    const remoteAccess = document.createElement("article");
+    remoteAccess.className = "settings-card remote-access-card";
+    remoteAccess.innerHTML = '<div class="remote-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg></div><div class="remote-fixed-password"><h3>固定密码（无人值守）</h3><p>设置后，对方输入设备 ID 和固定密码即可直接连接，无需你在本机同意。</p><p>仅限登录同一服务器的用户。修改或关闭固定密码会撤销旧授权。</p><p id="rd-fixed-scope" class="hidden">固定密码仅作用于已登录的桌面，不能控制锁屏、登录前或 UAC 安全桌面。</p><form id="rd-fixed-form"><label for="rd-fixed-password">新固定密码（至少 12 位）</label><div class="remote-manual-row"><input id="rd-fixed-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required><button type="submit" id="rd-fixed-save">保存密码</button></div></form><p id="rd-fixed-status" class="muted" role="status"></p><button type="button" id="rd-fixed-disable" class="danger" disabled>关闭固定密码</button></div><div id="rd-legacy-trust" class="remote-legacy-trust hidden"><p>这台电脑仍保留旧版长期授权。固定密码已可直接连接，建议关闭旧版授权。</p><button type="button" id="rd-legacy-disable" class="danger">关闭旧版长期授权</button></div><div class="remote-access-requests"><h3>待批准的连接请求</h3><div id="rd-access-requests"></div></div><div class="remote-hotkey-setting"><label for="rd-emergency-key">强制断开快捷键</label><select id="rd-emergency-key"><option value="X">Ctrl + Alt + Shift + X</option><option value="Q">Ctrl + Alt + Shift + Q</option><option value="F12">Ctrl + Alt + Shift + F12</option></select><p>按下后立即停止本机远控并关闭远控开关；重新启用需回到本页面。</p></div><p id="rd-access-error" class="error" role="alert"></p>';
+    remoteQuick.insertBefore(remoteAccess, recentDevices);
+    $("remote-page").append(remoteQuick);
     $("rd-host-copy").onclick = () => navigator.clipboard.writeText($("rd-host-code").textContent.replace(/\s/g, "")).catch(() => {});
     $("remote-all-devices").onclick = () => void showDevices();
     const updateLayout = document.createElement("div");
@@ -307,7 +301,6 @@
       "NETWORK TUNNELS / 内网穿透": ["内网穿透","NETWORK TUNNELS"],
       "REMOTE DESKTOP / 远程桌面": ["远程桌面","REMOTE DESKTOP"],
       "。请在控制端核对一致后确认。": ["。请在控制端核对一致后确认。",". Confirm the matching code on the controller."],
-      "三种方式：收到连接请求后批准、设置固定密码自动连接、生成一次性临时密码。": ["三种方式：收到连接请求后批准、设置固定密码自动连接、生成一次性临时密码。","Choose host approval, a fixed password, or a one-time password."],
       "两次新密码不一致": ["两次新密码不一致","Passwords do not match"],
       "临时协助": ["临时协助","Temporary assistance"],
       "临时密码：": ["临时密码：","One-time password: "],
@@ -328,17 +321,14 @@
       "允许远程连接 / Enable": ["允许远程连接","Enable"],
       "允许连接这台电脑，或选择一台已登记的设备。": ["允许连接这台电脑，或选择一台已登记的设备。","Allow access to this computer or choose an enrolled device."],
       "公网地址": ["公网地址","Public address"],
-      "公钥指纹 / Key thumbprint": ["公钥指纹","Key thumbprint"],
       "关闭固定密码": ["关闭固定密码","Disable fixed password"],
       "关闭远程连接": ["关闭远程连接","Disable remote access"],
       "关闭远程连接 / Disable": ["关闭远程连接","Disable"],
-      "关闭高权限服务": ["关闭高权限服务","Disable system service"],
       "内网穿透": ["内网穿透","Private tunnels"],
       "写入本机剪贴板 / Write local clipboard": ["写入本机剪贴板","Write local clipboard"],
       "切换主题": ["切换主题","Change theme"],
       "切换至浅色主题": ["切换至浅色主题","Switch to light theme"],
       "切换至深色主题": ["切换至深色主题","Switch to dark theme"],
-      "创建设备 ID": ["创建设备 ID","Create device ID"],
       "刷新状态": ["刷新状态","Refresh status"],
       "刷新设备": ["刷新设备","Refresh devices"],
       "动态码或恢复码 / MFA code": ["动态码或恢复码","MFA code"],
@@ -350,9 +340,7 @@
       "发送文件到本机 / Send files here": ["发送文件到本机","Send files here"],
       "取消此文件 / Cancel file": ["取消此文件","Cancel file"],
       "只检查 GitHub 正式 Release，不显示未公开的测试包。": ["只检查 GitHub 正式 Release，不显示未公开的测试包。","Check published GitHub releases. Private test packages are excluded."],
-      "可信设备 · ": ["可信设备 · ","Trusted device · "],
       "同账号设备未找到或当前离线": ["同账号设备未找到或当前离线","This account's device was not found or is offline"],
-      "固定密码": ["固定密码","Fixed password"],
       "固定密码已启用 · 可跨账号自动连接": ["固定密码已启用 · 可跨账号自动连接","Fixed password enabled · Other accounts can connect automatically"],
       "在本机批准单次授权后，绑定的会话自动启动；你可随时断开或撤销。": ["在本机批准单次授权后，绑定的会话自动启动；你可随时断开或撤销。","After local approval, the authorized session starts automatically. Disconnect or revoke access at any time."],
       "在线": ["在线","Online"],
@@ -361,7 +349,6 @@
       "外观": ["外观","Appearance"],
       "密码 / Password": ["密码","Password"],
       "导出诊断包 / Export bundle": ["导出诊断包","Export bundle"],
-      "尚未创建": ["尚未创建","Not created"],
       "正在生成…": ["正在生成…","Generating…"],
       "正在开启远程协助…": ["正在开启远程协助…","Turning on remote assistance…"],
       "本机设备 ID": ["本机设备 ID","This device ID"],
@@ -369,7 +356,6 @@
       "连接请求与会话": ["连接请求与会话","Requests and sessions"],
       "开启远程协助": ["开启远程协助","Turn on remote assistance"],
       "请输入当前账号密码以开启远程协助。仅需一次。": ["请输入当前账号密码以开启远程协助。仅需一次。","Enter your account password once to turn on remote assistance."],
-      "把设备 ID 告诉对方。每次连接都需要你在本机同意，可随时断开。": ["把设备 ID 告诉对方。每次连接都需要你在本机同意，可随时断开。","Share this device ID. Every connection needs your approval here, and you can disconnect at any time."],
       "输入对方的 9 位设备 ID，或选择在线设备。": ["输入对方的 9 位设备 ID，或选择在线设备。","Enter the other computer's 9-digit device ID, or pick an online device."],
       "尚未登记": ["尚未登记","Not enrolled"],
       "屏幕 / Screen": ["屏幕","Screen"],
@@ -379,22 +365,16 @@
       "已允许连接": ["已允许连接","Remote access enabled"],
       "已取消 / Cancelled": ["已取消","Cancelled"],
       "已完成 / Complete": ["已完成","Complete"],
-      "已开启": ["已开启","Enabled"],
       "已读取最新版本。输入保持不变，请核对并重新保存。": ["已读取最新版本。输入保持不变，请核对并重新保存。","The latest version was loaded. Your input was preserved; review it before saving again."],
       "应用": ["应用","Application"],
-      "开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。 / Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access.": ["开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。","Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access."],
-      "开启无人值守 / Enable unattended access": ["开启无人值守","Enable unattended access"],
-      "开启高权限服务": ["开启高权限服务","Enable system service"],
       "开始连接": ["开始连接","Connect"],
       "强制断开快捷键": ["强制断开快捷键","Emergency disconnect shortcut"],
-      "当前安装还不能控制锁屏、登录前或 UAC 安全桌面；固定密码仅作用于已登录的桌面。 / This install cannot yet control the lock screen, sign-in, or UAC desktop. A fixed password applies only to a signed-in desktop. ": ["当前安装还不能控制锁屏、登录前或 UAC 安全桌面；固定密码仅作用于已登录的桌面。","This install cannot yet control the lock screen, sign-in, or UAC desktop. A fixed password applies only to a signed-in desktop. "],
       "当前没有在线的其他设备": ["当前没有在线的其他设备","No other devices are online"],
       "当前没有更新的正式版本。": ["当前没有更新的正式版本。","You have the latest published version."],
       "当前版本": ["当前版本","Installed version"],
       "当前版本 ·": ["当前版本 ·","Installed version ·"],
       "当前连接使用的地址": ["当前连接使用的地址","Address used by this connection"],
       "待批准的连接请求": ["待批准的连接请求","Connection requests awaiting approval"],
-      "快速连接": ["快速连接","Quick connect"],
       "我已核对服务器身份，信任此密钥 / Trust this server identity": ["我已核对服务器身份，信任此密钥","Trust this server identity"],
       "我的设备": ["我的设备","My devices"],
       "打开网页远控": ["打开网页远控","Open web remote control"],
@@ -405,7 +385,6 @@
       "按名称或设备标识搜索": ["按名称或设备标识搜索","Search by device name or ID"],
       "授权与会话": ["授权与会话","Permissions and sessions"],
       "接收 / Receive": ["接收","Receive"],
-      "控制端标识 / Controller endpoint": ["控制端标识","Controller endpoint"],
       "搜索设备": ["搜索设备","Search devices"],
       "撤销": ["撤销","Revoke"],
       "撤销授权并断开 / Revoke and disconnect": ["撤销授权并断开","Revoke and disconnect"],
@@ -415,9 +394,6 @@
       "文件通过当前直连传输。请先在控制端开启文件权限；本机选择文件或保存位置，不覆盖已有文件。 / Enable file transfer on the controller, then choose files or a new destination here.": ["文件通过当前直连传输。请先在控制端开启文件权限；本机选择文件或保存位置，不覆盖已有文件。","Enable file transfer on the controller, then choose files or a new destination here."],
       "文字输入 / Text input": ["文字输入","Text input"],
       "新固定密码（至少 12 位）": ["新固定密码（至少 12 位）","New fixed password (at least 12 characters)"],
-      "无人值守": ["无人值守","Unattended access"],
-      "无人值守已绑定到登记的控制端。 / Unattended access is bound to the enrolled controller. ": ["无人值守已绑定到登记的控制端。","Unattended access is bound to the enrolled controller. "],
-      "无人值守绑定 / Unattended binding": ["无人值守绑定","Unattended binding"],
       "无法读取远控状态 / Remote status unavailable": ["无法读取远控状态","Remote status unavailable"],
       "暂无请求": ["暂无请求","No requests"],
       "更新包未通过 SHA-256 校验 / Update verification failed": ["更新包未通过 SHA-256 校验","Update verification failed"],
@@ -426,8 +402,6 @@
       "有效至 ": ["有效至 ","Expires "],
       "服务端公网端口已用完，请联系管理员扩容。": ["服务端公网端口已用完，请联系管理员扩容。","The server has no available public ports. Ask the administrator to expand the range."],
       "服务端密码与本机授权版本不一致，请重新设置": ["服务端密码与本机授权版本不一致，请重新设置","The server password and local authorization versions differ. Set the password again."],
-      "未启用": ["未启用","Disabled"],
-      "未安装系统服务，便携模式仍可在已登录桌面使用。 / No system service is installed; signed-in desktop control still works.": ["未安装系统服务，便携模式仍可在已登录桌面使用。","No system service is installed; signed-in desktop control still works."],
       "未设置固定密码": ["未设置固定密码","No fixed password set"],
       "本地目标": ["本地目标","Local target"],
       "本机 · ": ["本机 · ","This device · "],
@@ -451,19 +425,15 @@
       "生成临时密码": ["生成临时密码","Generate one-time password"],
       "由本机处理会话授权，你可以随时断开。": ["由本机处理会话授权，你可以随时断开。","Approve access on this computer and disconnect at any time."],
       "登记本机 / Enroll": ["登记本机","Enroll"],
-      "知道设备 ID 和固定密码、且登录同一服务器的用户都可以连接。修改或关闭会撤销旧授权。": ["知道设备 ID 和固定密码、且登录同一服务器的用户都可以连接。修改或关闭会撤销旧授权。","Users signed in to the same server can connect with this device ID and fixed password. Changing or disabling it revokes previous access."],
       "离线": ["离线","Offline"],
       "私有候选版本不会显示为公开更新。": ["私有候选版本不会显示为公开更新。","Private candidate builds are excluded from public updates."],
       "立即断开": ["立即断开","Disconnect now"],
       "立即断开 / Disconnect": ["立即断开","Disconnect"],
       "等待连接": ["等待连接","Waiting for a connection"],
       "等待选择 / Awaiting selection": ["等待选择","Awaiting selection"],
-      "管理员信任此设备": ["管理员信任此设备","Trust this device as administrator"],
-      "管理员批准后绑定为可信设备，持续授权最长 30 天": ["管理员批准后绑定为可信设备，持续授权最长 30 天","An administrator can trust this device for up to 30 days"],
       "粘贴设备标识": ["粘贴设备标识","Paste device ID"],
       "系统声音 / System audio": ["系统声音","System audio"],
       "给其他账号提供一次性设备 ID 和临时密码。密码 5 分钟有效，使用一次即失效。": ["给其他账号提供一次性设备 ID 和临时密码。密码 5 分钟有效，使用一次即失效。","Share this device ID and a one-time password with another account. The password expires after 5 minutes or one use."],
-      "继续设置 / Resume setup": ["继续设置","Resume setup"],
       "网页控制台": ["网页控制台","Web console"],
       "网页远控当前不可用": ["网页远控当前不可用","Web remote control is unavailable"],
       "设备 ID：": ["设备 ID：","Device ID: "],
@@ -474,7 +444,6 @@
       "读取本机剪贴板 / Read local clipboard": ["读取本机剪贴板","Read local clipboard"],
       "账号 / Account": ["账号","Account"],
       "跟随系统": ["跟随系统","Follow system"],
-      "跨账号设备 ID": ["跨账号设备 ID","Device ID for another account"],
       "软件更新": ["软件更新","Software updates"],
       "软件更新：发现正式版 ": ["软件更新：发现正式版 ","Software updates: release available "],
       "输入同账号设备标识，或选择在线设备。": ["输入同账号设备标识，或选择在线设备。","Enter a device ID from your account or choose an online device."],
@@ -490,19 +459,28 @@
       "远程连接已关闭": ["远程连接已关闭","Remote access disabled"],
       "连接其他账号": ["连接其他账号","Connect to another account"],
       "连接名称": ["连接名称","Connection name"],
-      "连接这台电脑": ["连接这台电脑","Connect to this computer"],
       "连接远程电脑": ["连接远程电脑","Connect to another computer"],
       "选择保存位置 / Choose destination": ["选择保存位置","Choose destination"],
       "选择多个文件发送 / Select files to send": ["选择多个文件发送","Select files to send"],
       "配对请求 / Pairing request": ["配对请求","Pairing request"],
       "键盘 / Keyboard": ["键盘","Keyboard"],
-      "需要本机管理员权限，并绑定确切的控制端。 / An administrator must bind the exact controller. ": ["需要本机管理员权限，并绑定确切的控制端。","An administrator must bind the exact controller. "],
       "首次启用需核对服务器身份；进行中的会话可在这里立即撤销。": ["首次启用需核对服务器身份；进行中的会话可在这里立即撤销。","Verify the server identity before first use. Revoke active sessions here at any time."],
       "首次启用需要本设备所属账号验证。密码和动态码仅用于本次登记。": ["首次启用需要本设备所属账号验证。密码和动态码仅用于本次登记。","Verify the account that owns this device before first use. The password and MFA code are used only for this enrollment."],
       "首次登录请设置新密码后继续。": ["首次登录请设置新密码后继续。","Set a new password before continuing."],
       "麦克风回传 / Microphone": ["麦克风回传","Microphone"],
-      "默认关闭。开启需要管理员，并且只接受下面这个控制端标识和公钥指纹。": ["默认关闭。开启需要管理员，并且只接受下面这个控制端标识和公钥指纹。","Off by default. Administrator approval is required. Access is limited to the controller ID and public key thumbprint below."],
       "鼠标 / Pointer": ["鼠标","Pointer"],
+      "把设备 ID 告诉对方。连接需要你在本机同意；设置固定密码后可无人值守连接。": ["把设备 ID 告诉对方。连接需要你在本机同意；设置固定密码后可无人值守连接。","Share this device ID. Connections need your approval here; set a fixed password for unattended access."],
+      "固定密码（无人值守）": ["固定密码（无人值守）","Fixed password (unattended access)"],
+      "设置后，对方输入设备 ID 和固定密码即可直接连接，无需你在本机同意。": ["设置后，对方输入设备 ID 和固定密码即可直接连接，无需你在本机同意。","Once set, anyone with the device ID and fixed password connects directly, without your approval on this computer."],
+      "仅限登录同一服务器的用户。修改或关闭固定密码会撤销旧授权。": ["仅限登录同一服务器的用户。修改或关闭固定密码会撤销旧授权。","Only users signed in to the same server can connect. Changing or disabling the fixed password revokes previous access."],
+      "固定密码仅作用于已登录的桌面，不能控制锁屏、登录前或 UAC 安全桌面。": ["固定密码仅作用于已登录的桌面，不能控制锁屏、登录前或 UAC 安全桌面。","The fixed password works on a signed-in desktop only. It cannot control the lock screen, sign-in, or UAC secure desktop."],
+      "这台电脑仍保留旧版长期授权。固定密码已可直接连接，建议关闭旧版授权。": ["这台电脑仍保留旧版长期授权。固定密码已可直接连接，建议关闭旧版授权。","This computer still has legacy long-term access. The fixed password now covers direct connections, so turn legacy access off."],
+      "关闭旧版长期授权": ["关闭旧版长期授权","Turn off legacy long-term access"],
+      "旧版长期授权 · ": ["旧版长期授权 · ","Legacy long-term access · "],
+      "本机不再提供长期授权，请让对方改用固定密码连接。": ["本机不再提供长期授权，请让对方改用固定密码连接。","Long-term access is no longer offered. Ask the other person to connect with the fixed password."],
+      "控制台地址无效": ["控制台地址无效","Invalid console address"],
+      "无法打开默认浏览器": ["无法打开默认浏览器","Cannot open the default browser"],
+      "请先登录": ["请先登录","Sign in first"],
       "<div class=\"service-list-head\"><span>连接名称</span><span>公网地址</span><span>本地目标</span><span>状态</span><span>操作</span></div>": ["<div class=\"service-list-head\"><span>连接名称</span><span>公网地址</span><span>本地目标</span><span>状态</span><span>操作</span></div>","<div class=\"service-list-head\"><span>Connection name</span><span>Public address</span><span>Local target</span><span>Status</span><span>Actions</span></div>"],
     };
     let locale = document.documentElement.lang === "en" ? "en" : "zh-CN";
@@ -681,7 +659,14 @@
       }
       void openDeviceRemote(device);
     };
-    $("remote-open-console").onclick = () => { if (consoleUrl) window.open(consoleUrl.replace(/\/$/, "") + "/admin#remote", "_blank", "noopener,noreferrer"); };
+    // The web console opens in the default browser. Go derives the address from
+    // the signed-in server, so the page cannot ask it to open another URL.
+    async function openConsole(section, errorId) {
+      $(errorId).textContent = "";
+      try { await api("/local/console/open", { method: "POST", body: JSON.stringify(section ? { section } : {}) }); }
+      catch (error) { $(errorId).textContent = msg(error.message); }
+    }
+    $("remote-open-console").onclick = () => { if (consoleUrl) void openConsole("remote", "remote-open-error"); };
     $("remote-open-assist").onclick = async () => {
       $("remote-open-error").textContent = "";
       try { await api("/local/remote/window", {method:"POST", body:JSON.stringify({assist:true})}); }
@@ -1168,7 +1153,7 @@
       $("doctor-result").textContent = result.path;
     }, "settings-error");
     $("refresh").onclick = () => runAction($("refresh"), () => showHome());
-    $("console").onclick = () => { if (consoleUrl) window.open(consoleUrl, "_blank", "noopener,noreferrer"); };
+    $("console").onclick = () => { if (consoleUrl) void openConsole("", "status"); };
     $("logout").onclick = async () => {
       if (!confirm(t("confirmLogout"))) return;
 	  resetRemoteHostUI();
@@ -1267,9 +1252,9 @@
       delete hostMfaFeedback.dataset.code; renderHostMfaFeedback();
       $("rd-host-pending").replaceChildren(); $("rd-host-grants").replaceChildren();
       $("rd-host-files").replaceChildren();
-      $("rd-unattended-error").textContent = "";
+      $("rd-access-error").textContent = "";
+      $("rd-legacy-trust").classList.add("hidden");
       for (const id of ["enable", "disable", "stop"]) $("rd-host-" + id).disabled = true;
-      for (const id of ["enable", "disable"]) $("rd-unattended-" + id).disabled = true;
     }
     const remotePermissionNames = {
       view: msg("屏幕 / Screen"), "input.keyboard": msg("键盘 / Keyboard"), "input.pointer": msg("鼠标 / Pointer"), "input.text": msg("文字输入 / Text input"),
@@ -1304,9 +1289,12 @@
         if (event.display_code) {
           const code = document.createElement("p"); code.textContent = `${msg("核对码 / Compare code: ")}${event.display_code}${msg("。请在控制端核对一致后确认。")}`; box.append(code);
         } else {
-          const mode = document.createElement("p"); mode.textContent = event.mode === "persistent" ? msg("管理员批准后绑定为可信设备，持续授权最长 30 天") : msg("仅本次会话 / This session only"); box.append(mode);
+          // Long-term trust is no longer offered here; the fixed password replaces it.
+          const longTerm = event.mode === "persistent" && event.kind === "pairing";
+          const mode = document.createElement("p"); mode.textContent = longTerm ? msg("本机不再提供长期授权，请让对方改用固定密码连接。") : msg("仅本次会话 / This session only"); box.append(mode);
           const data = {id:event.id,kind:event.kind,permissions:event.permissions,mode:event.mode,connection_epoch:event.connection_epoch,state_version:event.state_version};
-          actions.append(remoteActionButton(event.mode === "persistent" && event.kind === "pairing" ? msg("管理员信任此设备") : msg("允许以上权限 / Allow listed permissions"), "approve", data), remoteActionButton(msg("拒绝 / Reject"), "reject", data, true));
+          if (!longTerm) actions.append(remoteActionButton(msg("允许以上权限 / Allow listed permissions"), "approve", data));
+          actions.append(remoteActionButton(msg("拒绝 / Reject"), "reject", data, true));
           box.append(actions);
         }
         $("rd-host-pending").append(box);
@@ -1314,7 +1302,7 @@
       for (const grant of state.grants || []) {
         if (grant.revoked || Date.parse(grant.expires_at) <= Date.now()) continue;
         const row = document.createElement("div"), detail = document.createElement("p"); row.className = "settings-card";
-        detail.textContent = `${grant.mode === "persistent" ? msg("可信设备 · ") : msg("单次授权 · ")}${grant.controller_endpoint_id} · ${(grant.permissions || []).map(name => remotePermissionNames[name] || name).join(" · ")} · ${new Date(grant.expires_at).toLocaleString(locale)}`;
+        detail.textContent = `${grant.mode === "persistent" ? msg("旧版长期授权 · ") : msg("单次授权 · ")}${grant.controller_endpoint_id} · ${(grant.permissions || []).map(name => remotePermissionNames[name] || name).join(" · ")} · ${new Date(grant.expires_at).toLocaleString(locale)}`;
         detail.style.overflowWrap = "anywhere";
         row.append(detail, remoteActionButton(msg("撤销授权并断开 / Revoke and disconnect"), "revoke", {id:grant.id}, true)); $("rd-host-grants").append(row);
       }
@@ -1353,8 +1341,8 @@
         detail.append(name, expiry);
         const approve = document.createElement("button"), reject = document.createElement("button");
         approve.type = reject.type = "button"; approve.textContent = msg("批准本次连接"); reject.textContent = msg("拒绝"); reject.className = "danger";
-        approve.onclick = () => runAction(approve, () => remoteHostAction("approve_access_request", { id: request.id }), "rd-unattended-error");
-        reject.onclick = () => runAction(reject, () => remoteHostAction("reject_access_request", { id: request.id }), "rd-unattended-error");
+        approve.onclick = () => runAction(approve, () => remoteHostAction("approve_access_request", { id: request.id }), "rd-access-error");
+        reject.onclick = () => runAction(reject, () => remoteHostAction("reject_access_request", { id: request.id }), "rd-access-error");
         actions.append(approve, reject); row.append(detail, actions); list.append(row);
       }
     }
@@ -1412,21 +1400,10 @@
         $("rd-host-disable").classList.toggle("hidden", !state.enabled);
         $("rd-host-stop").disabled = !state.active_session_id;
         $("rd-host-stop").classList.toggle("hidden", !state.active_session_id);
-        const unattendedSupported = state.capabilities?.unattended_enabled === true;
-        const canConfigureService = state.service?.installed === true && state.service?.running === true;
-        const serviceDetail = state.service?.detail || msg("未安装系统服务，便携模式仍可在已登录桌面使用。 / No system service is installed; signed-in desktop control still works.");
-        $("rd-unattended-status").textContent = state.unattended_enabled ? msg("已开启") : msg("未启用");
-        $("rd-unattended-detail").textContent = (!unattendedSupported ? msg("当前安装还不能控制锁屏、登录前或 UAC 安全桌面；固定密码仅作用于已登录的桌面。 / This install cannot yet control the lock screen, sign-in, or UAC desktop. A fixed password applies only to a signed-in desktop. ") : state.unattended_enabled ? msg("无人值守已绑定到登记的控制端。 / Unattended access is bound to the enrolled controller. ") : msg("需要本机管理员权限，并绑定确切的控制端。 / An administrator must bind the exact controller. ")) + serviceDetail;
-        $("rd-unattended-enable").disabled = !state.enrolled || !canConfigureService || state.unattended_enabled;
-        $("rd-unattended-enable").textContent = state.error_code === "RD_SERVICE_SETUP_INCOMPLETE" ? msg("继续设置 / Resume setup") : msg("开启无人值守 / Enable unattended access");
-        if (!state.unattended_enabled && canConfigureService) {
-          $("rd-unattended-detail").textContent = msg("开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。 / Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access.");
-        }
-        $("rd-unattended-disable").disabled = !state.unattended_enabled;
-		$("rd-emergency-key").value = state.emergency_key || "X";
-        $("rd-access-device-id").textContent = access.device_id ? groupDeviceId(access.device_id) : msg("尚未创建");
-        $("rd-access-create").disabled = !state.enrolled || !state.enabled || !state.running || !!access.device_id;
-        $("rd-access-create").classList.toggle("hidden", !!access.device_id);
+        // Installs that enabled the retired long-term mode keep a way to turn it off.
+        $("rd-legacy-trust").classList.toggle("hidden", state.unattended_enabled !== true);
+        $("rd-fixed-scope").classList.toggle("hidden", state.capabilities?.unattended_enabled === true);
+        $("rd-emergency-key").value = state.emergency_key || "X";
         $("rd-fixed-save").disabled = !state.enabled || !state.running || !ready;
         const fixedActive = !!access.fixed_password_enabled && access.revision === state.fixed_revision;
         $("rd-fixed-disable").disabled = !fixedActive;
@@ -1452,21 +1429,19 @@
         $("rd-host-status").textContent = msg("无法读取远控状态 / Remote status unavailable");
         $("rd-host-status").dataset.active = "false";
         for (const id of ["enable", "disable", "stop"]) $("rd-host-" + id).disabled = id === "enable";
-        for (const id of ["enable", "disable"]) $("rd-unattended-" + id).disabled = true;
       }
       finally { remoteHostLoading = false; }
     }
     for (const action of ["enable", "disable", "stop"]) $("rd-host-" + action).onclick = () => runAction($("rd-host-" + action), () => remoteHostAction(action), "rd-host-error");
-    for (const action of ["enable", "disable"]) $("rd-unattended-" + action).onclick = () => runAction($("rd-unattended-" + action), () => remoteHostAction(action + "_unattended", action === "enable" ? {controller_endpoint_id: $("rd-unattended-controller").value, controller_thumbprint: $("rd-unattended-thumbprint").value} : {}), "rd-unattended-error");
-    $("rd-access-create").onclick = () => runAction($("rd-access-create"), () => remoteHostAction("create_access_profile"), "rd-unattended-error");
+    $("rd-legacy-disable").onclick = () => runAction($("rd-legacy-disable"), () => remoteHostAction("disable_unattended"), "rd-access-error");
     $("rd-fixed-form").onsubmit = event => {
       event.preventDefault();
       const password = $("rd-fixed-password").value;
       $("rd-fixed-password").value = "";
-      return runAction($("rd-fixed-save"), () => remoteHostAction("set_fixed_password", { fixed_password: password }), "rd-unattended-error");
+      return runAction($("rd-fixed-save"), () => remoteHostAction("set_fixed_password", { fixed_password: password }), "rd-access-error");
     };
-    $("rd-fixed-disable").onclick = () => runAction($("rd-fixed-disable"), () => remoteHostAction("disable_fixed_password"), "rd-unattended-error");
-    $("rd-emergency-key").onchange = () => runAction($("rd-emergency-key"), () => remoteHostAction("set_emergency_hotkey", { emergency_key: $("rd-emergency-key").value }), "rd-unattended-error");
+    $("rd-fixed-disable").onclick = () => runAction($("rd-fixed-disable"), () => remoteHostAction("disable_fixed_password"), "rd-access-error");
+    $("rd-emergency-key").onchange = () => runAction($("rd-emergency-key"), () => remoteHostAction("set_emergency_hotkey", { emergency_key: $("rd-emergency-key").value }), "rd-access-error");
     $("rd-assist-create").onclick = () => runAction($("rd-assist-create"), async () => {
       assistSecret = await remoteHostAction("create_invite");
       renderAssistInvites(lastAssistInvites);
@@ -1498,7 +1473,7 @@
     $("nav-tunnels").onclick = () => showHome().catch((error) => { $("status").textContent = error.message; });
     $("nav-updates").onclick = () => showUpdates().catch((error) => { $("update-page-status").textContent = error.message; });
     $("nav-settings").onclick = () => $("settings-open").click();
-    $("nav-console").onclick = () => { if (consoleUrl) window.open(consoleUrl, "_blank", "noopener,noreferrer"); };
+    $("nav-console").onclick = () => void openConsole("", $("remote-page").classList.contains("hidden") ? "status" : "remote-open-error");
     $("sidebar-locale").onclick = () => $("locale-toggle").click();
     $("sidebar-theme").onclick = () => $("theme-toggle").click();
     $("remote-refresh").onclick = () => void refreshRemoteHost();

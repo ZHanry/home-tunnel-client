@@ -121,6 +121,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/remote/action", server.remoteAction)
 	mux.HandleFunc("/local/remote/files", server.remoteFiles)
 	mux.HandleFunc("/local/remote/window", server.remoteWindow)
+	mux.HandleFunc("/local/console/open", server.openConsole)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
 	mux.HandleFunc("/local/doctor", server.doctor)
 	mux.HandleFunc("/local/device/metadata", server.deviceMetadata)

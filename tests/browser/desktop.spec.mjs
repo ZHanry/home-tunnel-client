@@ -132,35 +132,51 @@ test("local approval lists every requested permission and pairing code cannot gr
   await expect(page.locator("#rd-host-pending button")).toHaveCount(0);
 });
 
-test("unattended controls stay unavailable without a native service and can revoke local trust", async ({page}) => {
-  const state = {enrolled:true,enabled:true,running:true,unattended_enabled:false,capabilities:{available:true,unattended_enabled:false},pending:[],grants:[]};
+test("unattended access is the fixed password and no separate unattended mode remains", async ({page}) => {
+  const state = {enrolled:true,enabled:true,running:true,unattended_enabled:false,capabilities:{available:true,unattended_enabled:false},service:{installed:true,running:true},pending:[{kind:"pairing",id:"pair-long",controller_endpoint_id:"controller-a",permissions:["view"],mode:"persistent"}],grants:[],access_profile:{device_id:"123456789",fixed_password_enabled:false,revision:1}};
   const actions = [];
   await page.route("**/local/remote/state",route=>route.fulfill({json:state}));
   await page.route("**/local/remote/action",route=>{
-    const action=route.request().postDataJSON().action;actions.push(action);
-    state.unattended_enabled=action==="enable_unattended";
+    const action=route.request().postDataJSON();actions.push(action);
+    if (action.action==="disable_unattended") state.unattended_enabled=false;
+    if (action.action==="reject") state.pending=[];
     return route.fulfill({json:{ok:true}});
   });
   await services(page,undefined);
   await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));
   await page.locator("#nav-remote").click();
-  await page.locator('[data-remote-tab="unattended"]').click();
-  await expect(page.locator("#rd-unattended-enable")).toBeDisabled();
-  await expect(page.locator("#rd-unattended-detail")).toContainText("固定密码仅作用于已登录的桌面");
-  state.capabilities.unattended_enabled=true;
+  await expect(page.locator("#rd-host-code")).toHaveText("123 456 789");
+  await expect(page.locator(".remote-tabs, [data-remote-tab]")).toHaveCount(0);
+  await expect(page.locator('[id^="rd-unattended"], .remote-unattended, .remote-unattended-binding')).toHaveCount(0);
+  await expect(page.locator("#remote-page").getByText("可信设备")).toHaveCount(0);
+  await expect(page.locator(".remote-access-card h3").first()).toHaveText("固定密码（无人值守）");
+  await expect(page.locator(".remote-access-card")).toContainText("无需你在本机同意");
+  await expect(page.locator("#rd-fixed-password")).toBeVisible();
+  // The only 无人值守 copy left describes the fixed password; no other control offers it.
+  const unattendedText = await page.locator("#remote-page").evaluate(root => {
+    const found = [], walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) if (node.nodeValue.includes("无人值守") && node.parentElement.getClientRects().length) found.push(node.parentElement.closest("#remote-host-card, .remote-access-card")?.className || node.parentElement.tagName);
+    return found;
+  });
+  expect(unattendedText.length).toBeGreaterThan(0);
+  expect(unattendedText.every(owner => /remote-local-card|remote-access-card/.test(owner))).toBe(true);
+  await expect(page.locator("#remote-page button, #remote-page option, #remote-page label").filter({hasText:"无人值守"})).toHaveCount(0);
+  await expect(page.locator("#rd-fixed-scope")).toBeVisible();
+  // A controller still asking for long-term trust can only be rejected.
+  await expect(page.locator("#rd-host-pending")).toContainText("改用固定密码");
+  await expect(page.locator("#rd-host-pending button")).toHaveCount(1);
+  await page.locator("#rd-host-pending").getByRole("button",{name:"拒绝"}).click();
+  await expect.poll(()=>actions.at(-1)?.action).toBe("reject");
+  // Installs that enabled the retired mode can still turn it off.
+  await expect(page.locator("#rd-legacy-trust")).toBeHidden();
+  state.unattended_enabled=true;
   await page.evaluate(()=>refreshRemoteHost());
-  await expect(page.locator("#rd-unattended-enable")).toBeDisabled();
-  state.service={installed:true,running:false};
-  await page.evaluate(()=>refreshRemoteHost());
-  await expect(page.locator("#rd-unattended-enable")).toBeDisabled();
-  state.service.running=true;
-  await page.evaluate(()=>refreshRemoteHost());
-  await expect(page.locator("#rd-unattended-enable")).toBeEnabled();
-  await page.locator("#rd-unattended-enable").click();
-  await expect(page.locator("#rd-unattended-status")).toHaveText("已开启");
-  await page.locator("#rd-unattended-disable").click();
-  await expect(page.locator("#rd-unattended-status")).toHaveText("未启用");
-  expect(actions).toEqual(["enable_unattended","disable_unattended"]);
+  await expect(page.locator("#rd-legacy-trust")).toBeVisible();
+  await page.locator("#rd-legacy-disable").click();
+  await expect(page.locator("#rd-legacy-trust")).toBeHidden();
+  expect(actions.map(action=>action.action)).toEqual(["reject","disable_unattended"]);
+  expect(actions.some(action=>action.action==="enable_unattended")).toBe(false);
 });
 
 test("fixed password and access requests use the host settings without retaining secrets", async ({ page }) => {
@@ -184,9 +200,8 @@ test("fixed password and access requests use the host settings without retaining
   });
   await services(page, undefined);
   await page.locator("#nav-remote").click();
-  await page.locator('[data-remote-tab="unattended"]').click();
-  await expect(page.locator("#rd-access-device-id")).toHaveText("123 456 789");
-  await expect(page.locator("#rd-access-create")).toBeHidden();
+  await expect(page.locator("#rd-host-code")).toHaveText("123 456 789");
+  await expect(page.locator("#rd-fixed-status")).toContainText("未设置固定密码");
   await page.locator("#rd-fixed-password").fill("strong-fixed-password");
   await page.locator("#rd-fixed-save").click();
   await expect(page.locator("#rd-fixed-password")).toHaveValue("");
@@ -199,7 +214,6 @@ test("fixed password and access requests use the host settings without retaining
   expect(actions.map(action => action.action)).toEqual(["set_fixed_password", "approve_access_request", "set_emergency_hotkey"]);
   await page.reload();
   await page.locator("#nav-remote").click();
-  await page.locator('[data-remote-tab="unattended"]').click();
   await expect(page.locator("#rd-fixed-password")).toHaveValue("");
 });
 
@@ -670,4 +684,73 @@ test("desktop logout failure remains visible and retryable", async ({ page }) =>
   await page.locator("#logout").click();
   await expect(page.locator("#settings-error")).toContainText("退出失败");
   await expect(page.locator("#logout")).toBeEnabled();
+});
+
+test("the web console opens through the default-browser endpoint, not a window", async ({ page }) => {
+  await page.route("**/local/state", route => route.fulfill({json:{enrolled:true,agent_state:"Online",console_url:"https://server.example",connections:[]}}));
+  await page.route("**/local/devices", route => route.fulfill({json:{local_device_id:"local",items:[]}}));
+  await page.route("**/local/update", route => route.fulfill({json:{newer:false}}));
+  const requests = [];
+  let failure = false;
+  await page.route("**/local/console/open", route => {
+    requests.push(route.request().postDataJSON());
+    return failure ? route.fulfill({status:503,json:{message:"无法打开默认浏览器"}}) : route.fulfill({json:{ok:true}});
+  });
+  await page.reload();
+  await page.evaluate(() => { window.open = (...args) => { window.opened = args; return null; }; });
+  await expect(page.locator("#remote-page")).toBeVisible();
+  await page.locator("#nav-console").click();
+  await expect.poll(() => requests.length).toBe(1);
+  await page.locator("#remote-open-console").click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests).toEqual([{}, {section:"remote"}]);
+  // The page never supplies the address; Go derives it from the signed-in server.
+  expect(requests.every(body => !("url" in body))).toBe(true);
+  failure = true;
+  await page.locator("#remote-open-console").click();
+  await expect(page.locator("#remote-open-error")).toContainText("无法打开默认浏览器");
+  expect(await page.evaluate(() => window.opened)).toBeUndefined();
+});
+
+test("scrollbars are hidden while pages keep wheel and keyboard scrolling", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 720 });
+  const connections = Array.from({length:14}, (_, index) => ({id:`service-${index}`,name:`Service ${index}`,proxy_type:"http",public_url:`https://s${index}.example.test`,local_host:"127.0.0.1",local_port:3000+index,enabled:true,state:"Online",version:1}));
+  await services(page, undefined, connections);
+  const styles = await page.evaluate(() => ["html", "body", ".app-sidebar", "main", ".service-list"].map(selector => getComputedStyle(document.querySelector(selector)).scrollbarWidth));
+  expect(styles).toEqual(["none", "none", "none", "none", "none"]);
+  // No gutter is reserved, yet the document is taller than the window.
+  expect(await page.evaluate(() => window.innerWidth - document.documentElement.clientWidth)).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight > document.documentElement.clientHeight)).toBe(true);
+  await page.mouse.move(600, 400);
+  await page.mouse.wheel(0, 400);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.locator("#service-search").focus();
+  await page.locator("#service-search").evaluate(element => element.blur());
+  await page.keyboard.press("End");
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+});
+
+test("the sign-in view never scrolls at the minimum window size or common sizes", async ({ page }) => {
+  // 944x600 is the client area of the 960x640 minimum native window.
+  for (const [width, height] of [[944, 600], [1100, 720], [1280, 800], [1440, 960]]) {
+    await page.setViewportSize({ width, height });
+    await expect(page.locator("#login")).toBeVisible();
+    for (const reveal of [[], ["mfa-step"], ["mfa-step", "password-change"]]) {
+      await page.evaluate(ids => ids.forEach(id => document.getElementById(id).classList.remove("hidden")), reveal);
+      const sizes = await page.evaluate(() => {
+        const login = document.getElementById("login"), submit = document.getElementById("login-button").getBoundingClientRect();
+        return { document: [document.documentElement.scrollHeight, document.documentElement.clientHeight], body: [document.body.scrollHeight, document.body.clientHeight], login: [login.scrollHeight, login.clientHeight], submitBottom: submit.bottom, overflow: getComputedStyle(document.body).overflowY };
+      });
+      const label = `${width}x${height} ${reveal.join("+") || "base"}`;
+      expect(sizes.document[0], label).toBeLessThanOrEqual(sizes.document[1]);
+      expect(sizes.body[0], label).toBeLessThanOrEqual(sizes.body[1]);
+      expect(sizes.login[0], label).toBeLessThanOrEqual(sizes.login[1]);
+      expect(sizes.submitBottom, label).toBeLessThanOrEqual(height);
+      expect(sizes.overflow, label).toBe("hidden");
+    }
+    await page.evaluate(() => ["mfa-step", "password-change"].forEach(id => document.getElementById(id).classList.add("hidden")));
+  }
+  await page.locator("#login-button").focus();
+  await expect(page.locator("#login-button")).toBeFocused();
 });

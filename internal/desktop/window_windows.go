@@ -21,6 +21,9 @@ const (
 	swRestore     = 9
 	mbOk          = 0x00000000
 	mbIconError   = 0x00000010
+
+	minWindowWidth  uint = 960
+	minWindowHeight uint = 640
 )
 
 var (
@@ -120,6 +123,9 @@ func createNativeWindow(url string) error {
 	}
 	nativeView = view
 	nativeHWND = uintptr(view.Window())
+	// The UI is laid out to fit this outer size (about 944x600 client pixels)
+	// without scrolling the sign-in page; smaller screens keep their own limit.
+	view.SetSize(int(min(minWindowWidth, width)), int(min(minWindowHeight, height)), webview2.HintMin)
 	subclassHideOnClose(nativeHWND)
 	if emergencyHost != nil {
 		if err := registerEmergencyHotkey(emergencyHost.emergencyHotkey()); err != nil {

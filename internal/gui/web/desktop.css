@@ -27,6 +27,10 @@ html[data-theme=dark] {
   --success: #75dbb9;
 }
 body { background: var(--bg); line-height: 1.5; }
+/* Scrollbar chrome is hidden everywhere; wheel, touch and keyboard scrolling still work. */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.app-sidebar { overflow-y: auto; }
 button { border-radius: 9px; min-height: 40px; box-shadow: none; }
 button:not(.secondary):not(.danger):not(.icon):not(.chip) { box-shadow: 0 8px 18px rgba(89,90,215,.13); }
 input, select { border-radius: 9px; }
@@ -52,6 +56,30 @@ h2 { font-size: 22px; letter-spacing: -.03em; }
 .app-header .brand svg { display: none; }
 .app-header .brand::before { content: ""; width: 36px; height: 36px; background: url('/HomeTunnel.svg') center / contain no-repeat; }
 .login-layout { max-width: 1080px; gap: 70px; min-height: calc(100vh - 155px); }
+/* The sign-in view always fits the window: it never scrolls, it compacts instead. */
+html:has(#login:not(.hidden)), body:has(#login:not(.hidden)) { height: 100%; overflow: hidden; }
+body:has(#login:not(.hidden)) { display: flex; flex-direction: column; }
+body:has(#login:not(.hidden)) main { flex: 1; min-height: 0; width: 100%; display: flex; padding-top: 24px; padding-bottom: 24px; overflow: hidden; }
+#login.login-layout { width: 100%; min-height: 0; max-height: 100%; grid-template-columns: minmax(0,.9fr) minmax(0,1.1fr); }
+.login-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 14px; }
+.login-grid.hidden { display: none; }
+.login-grid > .login-span { grid-column: 1 / -1; }
+#login-error:empty { min-height: 0; margin: 0; }
+@media (max-height: 860px) {
+  body:has(#login:not(.hidden)) .app-header { padding-top: 10px; padding-bottom: 10px; }
+  body:has(#login:not(.hidden)) main { padding-top: 14px; padding-bottom: 14px; }
+  #login.login-layout { gap: 40px; }
+  .login-story h1 { font-size: clamp(30px, 3.4vw, 42px); margin-bottom: 14px; }
+  .login-story p { font-size: 14px; line-height: 1.6; }
+  .login-panel { padding: 22px 28px; }
+  .login-panel h2 { margin-bottom: 4px; font-size: 20px; }
+  .login-panel label { margin: 10px 0 5px; font-size: 12px; }
+  .login-panel input, .login-panel select, .login-panel .password-field button { min-height: 40px; padding-top: 8px; padding-bottom: 8px; }
+  .login-panel .error { margin: 8px 0 0; }
+  .login-panel .row { margin-top: 14px; }
+  .login-panel .row button { min-height: 40px; }
+  .login-panel form > p.muted { margin-bottom: 0; font-size: 12px; }
+}
 .login-story h1 { font-size: clamp(34px, 4vw, 52px); }
 .login-story p { line-height: 1.7; }
 .login-steps, .login-panel > h2 + p { display: none; }
@@ -114,10 +142,6 @@ body.workspace-active .app-header { display: none; }
 .remote-hero { margin-bottom: 22px; }
 .remote-hero h1 { margin: 0 0 5px; }
 .remote-hero p { margin-bottom: 0; }
-.remote-tabs { display: flex; gap: 26px; margin: 27px 0 20px; border-bottom: 1px solid var(--line); }
-.remote-tabs button { min-height: 42px; padding: 0 2px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); box-shadow: none !important; }
-.remote-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
-.remote-tabs span { margin-left: 5px; padding: 2px 5px; border-radius: 4px; background: var(--secondary); color: var(--accent); font-size: 10px; }
 .remote-overview { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 20px; }
 .remote-intro-card { margin: 0; min-height: 290px; display: flex; flex-direction: column; align-items: flex-start; }
 .remote-intro-card h3 { font-size: 17px; margin: 12px 0 7px; }
@@ -166,14 +190,13 @@ body.workspace-active .app-header { display: none; }
 .remote-security-card { padding-bottom: 20px; }
 #rd-host-mfa-feedback { margin: 4px 0 0; font-size: 12px; }
 #rd-host-mfa-feedback.error { color: var(--danger); }
-.remote-unattended { max-width: 790px; padding: 32px; }
-.remote-unattended h2 { margin-top: 20px; }
-.remote-unattended p { color: var(--muted); font-size: 14px; }
-.remote-unattended .state-badge { display: inline-block; }
-.remote-unattended-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0; }
-.remote-access-identity { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 24px 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 13px; background: var(--secondary); }
-.remote-access-identity span { color: var(--muted); font-size: 12px; }
-.remote-access-identity strong { margin-right: auto; font: 700 25px ui-monospace, Consolas, monospace; letter-spacing: .12em; }
+.remote-access-card { margin-top: 20px; }
+.remote-access-card .remote-fixed-password { border-top: 0; padding-top: 12px; }
+.remote-access-card p.error { color: var(--danger); }
+.remote-access-card #rd-access-error:empty { display: none; }
+.remote-legacy-trust { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 20px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--danger-bg); }
+.remote-legacy-trust p { margin: 0; color: var(--danger); font-size: 12px; }
+.remote-legacy-trust button { flex: none; }
 .remote-fixed-password, .remote-access-requests { padding: 20px 0; border-top: 1px solid var(--line); }
 .remote-fixed-password h3, .remote-access-requests h3 { margin: 0 0 6px; font-size: 17px; }
 .remote-fixed-password p { margin: 0 0 14px; font-size: 12px; }
