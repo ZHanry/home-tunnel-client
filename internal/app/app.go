@@ -34,9 +34,11 @@ type EnrollOptions struct {
 	// CommitState lets the desktop atomically reject a superseded login before
 	// credentials are saved. Headless enrollment uses the normal store directly.
 	CommitState func(model.State) error
-	// AccountSession receives the password-login account session after the
-	// state commit and owns closing it. Without it the session is closed here.
-	AccountSession func(client *api.Client, password string)
+	// PasswordLogin runs after a password login is committed. Registering the
+	// device binds the login session to it, so account-level follow-ups (remote
+	// host enrollment) need their own session; mfaUsed says whether the code
+	// was already spent and a fresh login cannot be made silently.
+	PasswordLogin func(username, password string, mfaUsed bool)
 }
 
 type RunOptions struct {
@@ -71,16 +73,8 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 		return err
 	}
 	var registration model.DeviceRegistration
-	var account *api.Client
+	passwordLogin := false
 	accountPassword := options.Password
-	defer func() {
-		if account == nil {
-			return
-		}
-		end, done := context.WithTimeout(context.Background(), 3*time.Second)
-		defer done()
-		_ = account.CloseSession(end)
-	}()
 	if options.EnrollmentCode != "" {
 		registration, err = client.EnrollWithCode(ctx, options.EnrollmentCode, options.DeviceName, state.InstallID, fingerprint)
 		if err != nil {
@@ -91,7 +85,7 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 		if err != nil {
 			return err
 		}
-		account = client
+		passwordLogin = true
 		if session.PasswordChangeRequired {
 			if options.MFACode != "" {
 				return errors.New("complete the required password change in the web console, then enroll with a fresh MFA code or an enrollment code")
@@ -136,10 +130,8 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 	if err := commit(state); err != nil {
 		return fmt.Errorf("save enrolled device credential: %w", err)
 	}
-	if account != nil && options.AccountSession != nil {
-		handoff := account
-		account = nil
-		options.AccountSession(handoff, accountPassword)
+	if passwordLogin && options.PasswordLogin != nil {
+		options.PasswordLogin(options.Username, accountPassword, options.MFACode != "")
 	}
 	return nil
 }

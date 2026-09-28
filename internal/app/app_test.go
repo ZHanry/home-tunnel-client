@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ZHanry/home-tunnel-client/internal/api"
 	"github.com/ZHanry/home-tunnel-client/internal/model"
 	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
 )
@@ -104,7 +104,7 @@ func TestSyncCapabilityUpgradeForcesAndRecordsFullSync(t *testing.T) {
 	}
 }
 
-func TestEnrollHandsOffOrClosesTheAccountSession(t *testing.T) {
+func TestEnrollKeepsTheDeviceBoundSessionAndReportsThePasswordLogin(t *testing.T) {
 	var server *httptest.Server
 	closed := 0
 	server = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -116,32 +116,32 @@ func TestEnrollHandsOffOrClosesTheAccountSession(t *testing.T) {
 		case "/api/v1/devices/register":
 			response.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(response).Encode(map[string]any{"device_id": "11111111-2222-4333-8444-555555555555", "device_credential": "credential", "config_version": 1})
-		case "/api/v1/auth/session/close":
+		case "/api/v1/auth/session/close", "/api/v1/auth/logout":
 			closed++
-			_ = json.NewEncoder(response).Encode(map[string]any{})
+			response.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(response, request)
 		}
 	}))
 	defer server.Close()
-	options := EnrollOptions{Server: server.URL, Username: "user", Password: "account-password", DeviceName: "test", HTTPClient: server.Client()}
-	options.StatePath = filepath.Join(t.TempDir(), "state.json")
-	if err := Enroll(context.Background(), options); err != nil {
-		t.Fatal(err)
+	var calls []string
+	options := EnrollOptions{Server: server.URL, Username: "user", Password: "account-password", DeviceName: "test", HTTPClient: server.Client(),
+		PasswordLogin: func(username, password string, mfaUsed bool) {
+			calls = append(calls, fmt.Sprintf("%s/%t/%t", username, password == "account-password", mfaUsed))
+		}}
+	for _, code := range []string{"", "123456"} {
+		options.MFACode = code
+		options.StatePath = filepath.Join(t.TempDir(), "state.json")
+		if err := Enroll(context.Background(), options); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if closed != 1 {
-		t.Fatalf("unclaimed account session closed %d times, want 1", closed)
+	// Registration binds the login session to the device; closing it would end
+	// the device's own session, so enrollment must leave it alone.
+	if closed != 0 {
+		t.Fatalf("device-bound session closed %d times", closed)
 	}
-	var handedPassword, token string
-	options.StatePath = filepath.Join(t.TempDir(), "state.json")
-	options.AccountSession = func(account *api.Client, password string) {
-		handedPassword = password
-		token, _ = account.AccessToken(context.Background())
-	}
-	if err := Enroll(context.Background(), options); err != nil {
-		t.Fatal(err)
-	}
-	if closed != 1 || handedPassword != "account-password" || token != "access-token" {
-		t.Fatalf("handoff closed=%d password=%t token=%q", closed, handedPassword == "account-password", token)
+	if strings.Join(calls, ",") != "user/true/false,user/true/true" {
+		t.Fatalf("password login callbacks = %v", calls)
 	}
 }

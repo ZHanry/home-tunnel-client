@@ -57,6 +57,28 @@ func keysetPin(keys remotehost.Keyset) string {
 
 // enrollAndEnable registers this computer as a remote host and turns hosting on.
 // Strangers still need local approval per connection; the grant model is unchanged.
+// enrollWithLogin enrolls through a dedicated account session. The desktop's
+// own session is bound to its device and the server refuses it for enrollment.
+func (server *Server) enrollWithLogin(ctx context.Context, host *localRemoteHost, state model.State, username, password, mfaCode, trustPin string) error {
+	client, err := api.New(state.Profile.APIBaseURL, nil)
+	if err != nil {
+		return err
+	}
+	if _, err = client.Login(ctx, username, password, mfaCode); err != nil {
+		return err
+	}
+	defer func() {
+		end, done := context.WithTimeout(context.Background(), 3*time.Second)
+		defer done()
+		_ = client.CloseSession(end)
+	}()
+	token, err := client.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	return host.enrollAndEnable(ctx, state, token, trustPin, password, mfaCode)
+}
+
 func (host *localRemoteHost) enrollAndEnable(ctx context.Context, state model.State, token, trustPin, password, mfaCode string) error {
 	host.mu.Lock()
 	host.token = token
@@ -79,34 +101,24 @@ func (host *localRemoteHost) enrollAndEnable(ctx context.Context, state model.St
 	return nil
 }
 
-// setupRemoteAfterLogin reuses the account session of a just-completed password
-// login, which the server already counts as recent verification, so signing in
-// is the only step needed before this computer can be reached by its device ID.
-func (server *Server) setupRemoteAfterLogin(ctx context.Context, account *api.Client, password string) {
-	closeAccount := func() {
-		end, done := context.WithTimeout(context.Background(), 3*time.Second)
-		defer done()
-		_ = account.CloseSession(end)
-	}
+// setupRemoteAfterLogin signs in once more with the password the user just
+// entered. A fresh login counts as recent verification on the server, so
+// signing in is the only step needed before this computer can be reached by its
+// device ID. An MFA code cannot be replayed, so those accounts confirm once in
+// the remote card instead.
+func (server *Server) setupRemoteAfterLogin(ctx context.Context, username, password string, mfaUsed bool) {
 	host, state, err := server.localRemote(ctx)
-	if err != nil || host.service.State(ctx).Enrolled {
-		closeAccount()
-		return
-	}
-	token, err := account.AccessToken(ctx)
-	if err != nil {
-		closeAccount()
+	if err != nil || mfaUsed || username == "" || password == "" || host.service.State(ctx).Enrolled {
 		return
 	}
 	host.mu.Lock()
 	host.setup = "pending"
 	host.mu.Unlock()
 	go func() {
-		defer closeAccount()
 		work, cancel := context.WithTimeout(host.ctx, 40*time.Second)
 		defer cancel()
 		host.actions.Lock()
-		err := host.enrollAndEnable(work, state, token, "", password, "")
+		err := server.enrollWithLogin(work, host, state, username, password, "", "")
 		host.actions.Unlock()
 		host.mu.Lock()
 		defer host.mu.Unlock()
@@ -538,25 +550,7 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 				err = remotehost.ErrUnavailable
 				break
 			}
-			client, clientErr := api.New(state.Profile.APIBaseURL, nil)
-			if clientErr != nil {
-				err = clientErr
-				break
-			}
-			if _, err = client.Login(ctx, body.Username, body.Password, body.MFACode); err != nil {
-				break
-			}
-			defer func() {
-				end, done := context.WithTimeout(context.Background(), 3*time.Second)
-				defer done()
-				_ = client.CloseSession(end)
-			}()
-			token, tokenErr := client.AccessToken(ctx)
-			if tokenErr != nil {
-				err = tokenErr
-				break
-			}
-			err = host.enrollAndEnable(ctx, state, token, body.TrustPin, body.Password, body.MFACode)
+			err = server.enrollWithLogin(ctx, host, state, body.Username, body.Password, body.MFACode, body.TrustPin)
 		case "enable":
 			err = host.service.SetEnabled(ctx, true)
 			if err == nil {
