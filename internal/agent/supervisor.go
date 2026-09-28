@@ -307,6 +307,7 @@ func (supervisor *Supervisor) start(configPath string, applying bool) (*processR
 	if err := command.Start(); err != nil {
 		return nil, err
 	}
+	bindAgentToSupervisor(command)
 	record := &processRecord{command: command, done: make(chan error, 1)}
 	supervisor.mu.Lock()
 	if supervisor.process != nil {
