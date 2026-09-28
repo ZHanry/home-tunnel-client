@@ -57,13 +57,20 @@ type Server struct {
 	accountMu           sync.Mutex
 	accountGeneration   uint64
 	accountCancel       context.CancelFunc
+	popupMu             sync.Mutex
+	popupShow           func(mode string, attention bool) bool
+	popupHide           func()
+	popupTracker        *approvalTracker
+	popupMode           string
+	popupAttention      bool
+	popupPoke           chan struct{}
 }
 
 func New(options Options) *Server {
 	if options.LocalToken == "" {
 		options.LocalToken = newLocalToken()
 	}
-	return &Server{options: options, parent: context.Background()}
+	return &Server{options: options, parent: context.Background(), popupTracker: newApprovalTracker(), popupPoke: make(chan struct{}, 1)}
 }
 
 func (server *Server) Attach(parent context.Context) {
@@ -121,6 +128,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/remote/action", server.remoteAction)
 	mux.HandleFunc("/local/remote/files", server.remoteFiles)
 	mux.HandleFunc("/local/remote/window", server.remoteWindow)
+	mux.HandleFunc("/local/remote/popup", server.remotePopup)
 	mux.HandleFunc("/local/console/open", server.openConsole)
 	mux.HandleFunc("/local/subdomain", server.subdomain)
 	mux.HandleFunc("/local/doctor", server.doctor)

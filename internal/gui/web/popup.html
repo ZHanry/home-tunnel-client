@@ -1,0 +1,47 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer"><link rel="icon" type="image/svg+xml" href="/HomeTunnel.svg"><title>Home Tunnel · 远程控制请求</title><script>
+    // Same theme and language preferences as the main window (shared origin storage).
+    (function () {
+      var theme = "light", preference = "system";
+      try {
+        var stored = localStorage.getItem("ht_theme");
+        if (stored === "dark" || stored === "light") { preference = stored; theme = stored; }
+        else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) theme = "dark";
+      } catch (e) {}
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.dataset.themePreference = preference;
+      document.documentElement.style.colorScheme = theme;
+      var locale = "zh-CN";
+      try {
+        var storedLocale = localStorage.getItem("ht_locale");
+        if (storedLocale === "en" || storedLocale === "zh-CN") locale = storedLocale;
+      } catch (e) {}
+      document.documentElement.lang = locale;
+    })();
+  </script><link rel="stylesheet" href="/popup.css"></head><body>
+<section id="request" class="popup-card" role="alertdialog" aria-labelledby="request-title" aria-describedby="request-who" hidden>
+  <header class="popup-head">
+    <img class="popup-logo" src="/HomeTunnel.svg" alt="" width="28" height="28">
+    <div class="popup-heading"><h1 id="request-title">远程控制请求</h1><p id="request-kind"></p></div>
+    <span id="request-countdown" class="popup-countdown" role="timer" aria-live="off"></span>
+  </header>
+  <div class="popup-body">
+    <p id="request-who" class="popup-who" data-no-translate></p>
+    <p id="request-device" class="popup-device" data-no-translate></p>
+    <p id="request-scopes" class="popup-scopes"></p>
+    <p id="request-code" class="popup-code" hidden><span id="request-code-label"></span><strong id="request-code-value" data-no-translate></strong></p>
+    <p id="request-note" class="popup-note" hidden></p>
+  </div>
+  <footer class="popup-actions">
+    <div class="popup-meta"><span id="request-queue" class="popup-queue"></span><span id="request-error" class="popup-error" role="alert"></span></div>
+    <button type="button" id="request-reject" class="popup-button danger">拒绝</button>
+    <button type="button" id="request-accept" class="popup-button primary">接受</button>
+    <button type="button" id="request-ack" class="popup-button primary" hidden>知道了</button>
+  </footer>
+</section>
+<section id="session" class="popup-bar" role="status" aria-live="polite" hidden>
+  <span class="popup-live" aria-hidden="true"></span>
+  <div class="popup-bar-text"><strong id="session-title">正在被远程控制</strong><small id="session-who" data-no-translate></small></div>
+  <button type="button" id="session-open" class="popup-button ghost">主界面</button>
+  <button type="button" id="session-stop" class="popup-button danger">断开</button>
+</section>
+<script src="/popup.js" defer></script></body></html>

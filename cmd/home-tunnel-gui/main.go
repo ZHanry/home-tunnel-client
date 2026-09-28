@@ -100,6 +100,12 @@ func main() {
 	server.SetCloseRemote(host.CloseRemote)
 	host.SetEmergencyStop(server.EmergencyStopRemote)
 	server.SetEmergencyHotkey(host.SetEmergencyHotkey)
+	if runtime.GOOS == "windows" {
+		// Incoming requests pop up above the taskbar even when the main
+		// window sits hidden in the tray.
+		server.SetApprovalPopup(host.ShowApprovalPopup, host.HideApprovalPopup)
+		go server.WatchApprovals(ctx)
+	}
 	if state, err := (statepkg.Store{Path: statePath}).Load(); err == nil && state.Enrolled() {
 		server.StartAgent(ctx)
 	}

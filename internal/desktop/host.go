@@ -10,6 +10,8 @@ type Host struct {
 	closeRemote   func()
 	emergencyStop func()
 	emergencyKey  string
+	popupShow     func(mode string, attention bool) bool
+	popupHide     func()
 }
 
 func (host *Host) setShow(show func()) {
@@ -85,4 +87,30 @@ func (host *Host) SetEmergencyHotkey(key string) error {
 	host.emergencyKey = key
 	host.mu.Unlock()
 	return nil
+}
+
+func (host *Host) setApprovalPopup(show func(string, bool) bool, hide func()) {
+	host.mu.Lock()
+	host.popupShow = show
+	host.popupHide = hide
+	host.mu.Unlock()
+}
+
+// ShowApprovalPopup shows the always-on-top approval popup in the given mode
+// ("request" or "session"). It reports false until the native window exists.
+func (host *Host) ShowApprovalPopup(mode string, attention bool) bool {
+	host.mu.Lock()
+	show := host.popupShow
+	host.mu.Unlock()
+	return show != nil && show(mode, attention)
+}
+
+// HideApprovalPopup hides the popup; it is a no-op before the window exists.
+func (host *Host) HideApprovalPopup() {
+	host.mu.Lock()
+	hide := host.popupHide
+	host.mu.Unlock()
+	if hide != nil {
+		hide()
+	}
 }

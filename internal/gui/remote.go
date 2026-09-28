@@ -386,22 +386,28 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 3*time.Second)
 	defer cancel()
+	payload, _, _ := server.remoteSnapshot(ctx)
+	writeJSON(writer, payload)
+}
+
+// remoteSnapshot is the single source of the host state shown by the main
+// window, the approval popup and the popup watcher. ok is false when there is
+// no usable host status (signed out, no backend); payload is then the
+// placeholder the UI renders.
+func (server *Server) remoteSnapshot(ctx context.Context) (payload any, status remotehost.Status, ok bool) {
 	if response, managed := server.serviceRemoteState(ctx); managed {
-		writeJSON(writer, response)
-		return
+		return response, response, true
 	}
 	host, saved, err := server.localRemote(ctx)
 	if err != nil {
 		if errors.Is(err, remotehost.ErrServiceManaged) {
 			if pending, pendingErr := server.pendingServiceState(ctx, saved); pendingErr == nil {
-				writeJSON(writer, pending)
-				return
+				return pending, pending, true
 			}
 		}
-		writeJSON(writer, map[string]any{"enrolled": false, "enabled": false, "running": false, "capabilities": remote.Unavailable(safeRemoteCode(err)), "error_code": safeRemoteCode(err), "pending": []any{}, "grants": []any{}})
-		return
+		return map[string]any{"enrolled": false, "enabled": false, "running": false, "capabilities": remote.Unavailable(safeRemoteCode(err)), "error_code": safeRemoteCode(err), "pending": []any{}, "grants": []any{}}, remotehost.Status{}, false
 	}
-	status := host.service.State(ctx)
+	status = host.service.State(ctx)
 	host.mu.Lock()
 	status.Invites = append([]remotehost.AssistInvite(nil), host.invites...)
 	refreshInvites := status.Enrolled && status.Enabled && time.Since(host.invitesAt) > 30*time.Second
@@ -466,7 +472,7 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 	host.mu.Unlock()
 	surface := windowshost.Inspect(ctx)
 	status.Service = remotehost.ServiceSurface{Installed: surface.Installed, Running: surface.Running, UnattendedEnabled: surface.UnattendedEnabled, SecureDesktop: surface.SecureDesktop, Detail: surface.Detail}
-	writeJSON(writer, status)
+	return status, status, true
 }
 
 func (server *Server) remoteTrust(writer http.ResponseWriter, request *http.Request) {
@@ -495,6 +501,8 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	request.Body = http.MaxBytesReader(writer, request.Body, 16<<10)
+	// Decisions made in either window update the popup without waiting a tick.
+	defer server.pokeApprovalWatcher()
 	var body windowshost.RemoteAction
 
 	if err := readJSON(request, &body); err != nil {

@@ -31,6 +31,11 @@ func Run(url string, host *Host, onQuit func()) error {
 		host.setShow(showNativeWindow)
 		host.setOpenRemote(openNativeRemoteWindow)
 		host.setCloseRemote(closeNativeRemoteWindow)
+		if popup, err := approvalPopupURL(url); err == nil {
+			host.setApprovalPopup(func(mode string, attention bool) bool {
+				return showNativeApprovalPopup(popup, mode, attention)
+			}, hideNativeApprovalPopup)
+		}
 	}
 	runNativeWindow()
 	doQuit()

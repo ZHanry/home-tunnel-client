@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "eslint --config eslint.browser.config.mjs internal/gui/web/desktop.js",
+    "lint": "eslint --config eslint.browser.config.mjs internal/gui/web/desktop.js internal/gui/web/popup.js",
     "test:browser": "playwright test"
   },
   "devDependencies": {
