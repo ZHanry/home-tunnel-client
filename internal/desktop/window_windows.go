@@ -159,7 +159,9 @@ func showNativeWindow() {
 
 func quitNativeWindow() {
 	if nativeView != nil {
-		nativeView.Terminate()
+		// Terminate posts WM_QUIT to the calling thread's queue. Quit requests come from
+		// the tray and the local API on other threads, so post it from the UI thread.
+		nativeView.Dispatch(nativeView.Terminate)
 	}
 }
 
