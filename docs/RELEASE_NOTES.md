@@ -1,4 +1,31 @@
-# Home Tunnel Client 9.0.0
+# Home Tunnel Client 10.0.0
+
+The GUI, CLI, managed Agent and native remote host identify as 10.0.0; upstream
+FRP keeps its independent 0.70.1 version. Existing tunnels remain compatible with
+7.0+ servers. Remote control requires a 10.0.0 server that advertises the matching
+capabilities and API contract `api-v1.4.0`.
+
+- Remote-control payloads (video, audio, input, clipboard, files) use authenticated
+  UDP P2P only. The server brokers identity, signed grants and leases, and never
+  relays payloads. When no direct UDP path exists, the session fails instead of
+  falling back to a relay or TCP.
+- Optional Windows service host, installed only through an unchecked
+  administrator task, with a durable endpoint, verified pipe peers and local
+  opt-in for secure-desktop access. Unattended access stays off after install.
+- Authorized system audio (WASAPI loopback on the ordinary desktop) with a
+  500 ms media deadline. No microphone capture.
+- Scoped file transfer for the Android controller SDK, released as sealed
+  arm64-v8a and x86_64 archives from one source lock.
+- Guided desktop publishing with local target checks, localized desktop screens
+  and system theme support.
+
+The attached acceptance summary records what was verified on these exact package
+bytes. Windows/macOS publisher-signature state is recorded per artifact; hashes
+and malware scans are not OS signatures.
+
+中文摘要：GUI、CLI、Agent 与原生被控端均为 10.0.0，FRP 保持 0.70.1。远控载荷仅走经认证的 UDP P2P，服务器不中继；无直连 UDP 路径时会话失败，不回退中继或 TCP。新增可选 Windows 服务宿主（默认不启用无人值守）、授权系统音频、Android 控制端 SDK 文件传输与桌面发布向导。实际验证范围以附带的同包验收摘要为准。
+
+## Previous release: 9.0.0
 
 The desktop uses sidebar navigation for tunnels and remote desktop, with a
 separate remote-control window. The host supports requests that require local
@@ -13,7 +40,7 @@ clipboard interoperability are unavailable or unverified. Windows executables
 are unsigned unless their attached artifact evidence says otherwise. Consult
 the exact-package native acceptance report before using remote control.
 
-## Previous release: 8.0.0
+### 8.0.0
 
 This is the 8.0.0 public release with the platform limits listed below. The existing
 7.0 API contract and tunnel behavior remain supported; the managed Agent version

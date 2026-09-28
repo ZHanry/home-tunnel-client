@@ -32,7 +32,7 @@ import (
 )
 
 var (
-	agentVersion = "9.0.0"
+	agentVersion = "10.0.0"
 	frpVersion   = "0.70.1"
 	frpCommit    = "unknown"
 )

@@ -2,7 +2,7 @@
 
 # Home Tunnel Client
 
-当前源码为 **8.0.0**。Windows 增加 UDP 直连远控、键鼠/中文输入和显式文件授权；Linux amd64 提供受权限限制的 Xorg 被控端。macOS/Wayland 被控、桌面原生观看和音频尚未提供，实际支持与验证范围见 [发行说明](docs/RELEASE_NOTES.md)。
+当前版本为 **10.0.0**。远控载荷仅走经认证的 UDP P2P，服务器不中继。Windows 提供键鼠/中文输入、显式文件授权、授权系统音频和可选系统服务（默认不启用无人值守）；Linux amd64 提供受权限限制的 Xorg 被控端。macOS/Wayland 被控和桌面原生观看尚未提供，实际支持与验证范围见 [发行说明](docs/RELEASE_NOTES.md)。
 
 **连接 Windows、macOS、Linux 与 NAS**
 
@@ -26,7 +26,7 @@
 
 ## 接入自己的服务器
 
-1. 服务端使用 **8.0.0**。桌面输入 HTTPS 地址，使用账号 + MFA 或一次性接入码；原有隧道保留对 7.0 服务端的兼容。
+1. 服务端使用 **10.0.0**（远控需要服务端公布相应能力）。桌面输入 HTTPS 地址，使用账号 + MFA 或一次性接入码；原有隧道保留对 7.0 服务端的兼容。
 2. 选择本机可访问的服务，创建 HTTP/HTTPS 或被授权的 TCP/UDP 连接。
 3. 等待在线并验证公网访问。SSH/RDP/RTSP 有预设，原始传输由应用负责认证和加密。
 
@@ -42,7 +42,7 @@ home-tunnel-client run
 
 CLI 服务安装和状态路径请按 [运维指南](docs/OPERATIONS.md)；勿直接复制示例私密路径。
 Windows 使用 DPAPI，macOS 使用 Keychain，Linux headless 明确使用 0600 文件权限。
-自有 Agent 与客户端均为 8.0.0，内置 FRP 为 0.70.1，必须使用同包 Agent。
+自有 Agent 与客户端均为 10.0.0，内置 FRP 为 0.70.1，必须使用同包 Agent。
 
 ## 开发与验证
 

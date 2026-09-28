@@ -2,7 +2,7 @@
 
 # Home Tunnel Client
 
-The current source is **8.0.0**. Windows adds direct UDP remote viewing, keyboard/Unicode input and consent-bound files. Linux amd64 provides an Xorg host with local-session permission checks. macOS/Wayland hosting, native desktop viewing and audio remain unavailable. See the [release notes](docs/RELEASE_NOTES.md) for supported and verified scope.
+The current version is **10.0.0**. Remote-control payloads use authenticated UDP P2P only and are never relayed by the server. Windows provides keyboard/Unicode input, consent-bound files, authorized system audio and an optional system service (unattended access off by default). Linux amd64 provides an Xorg host with local-session permission checks. macOS/Wayland hosting and native desktop viewing remain unavailable. See the [release notes](docs/RELEASE_NOTES.md) for supported and verified scope.
 
 **Connect Windows, macOS, Linux and NAS hosts**
 
@@ -20,7 +20,7 @@ Verify `SHA256SUMS.txt` and the release evidence before installing. Windows/macO
 currently have no publisher certificates: the packages explicitly disclose their
 unsigned state. Hashes and malware scans are not OS signatures. [Signing details](docs/PLATFORM_SECURITY.md).
 
-Use server **8.0.0**; existing tunnels remain compatible with server 7.0. Sign in with an account plus MFA, or use a ten-minute one-time
+Use server **10.0.0** (remote control requires its advertised capabilities); existing tunnels remain compatible with server 7.0. Sign in with an account plus MFA, or use a ten-minute one-time
 enrollment code. Create local HTTP services or authorized TCP/UDP connections;
 SSH/RDP/RTSP presets are available. Public ports are allocated server-side. The
 target application supplies raw transport authentication/encryption.
@@ -36,7 +36,7 @@ home-tunnel-client doctor
 ```
 
 Windows uses DPAPI, macOS uses Keychain, and Linux headless uses explicit 0600
-files. The bundled Agent also uses 8.0.0; upstream FRP stays at 0.70.1.
+files. The bundled Agent also uses 10.0.0; upstream FRP stays at 0.70.1.
 Updates require HTTPS, an exact valid checksum and complete bounded content before
 atomic promotion. Never mix Agent files between packages.
 

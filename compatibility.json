@@ -3,18 +3,17 @@
   "stage": "public-release",
   "api_major": 1,
   "contract_ref": "api-v1.4.0",
-  "support_policy": "10.0.0 development; version fields retain the historical 9.0.0 baseline. API1.4 is proposed, with no frozen tag. New remote capabilities require matching advertised server/host support and verified native packages. Windows service, secure desktop, audio, files and full remote acceptance remain pending. FRP keeps its independent upstream version.",
-  "version": "9.0.0",
+  "support_policy": "10.0.0 release. Existing 7.0+ tunnels keep API v1 compatibility. Remote control requires matching advertised server/host capabilities and signed grants; remote-control payloads use authenticated UDP P2P only and are never relayed by the server. Formal publication requires the frozen api-v1.4.0 contract and reviewed acceptance receipts bound to the candidate packages. FRP keeps its independent upstream version.",
+  "version": "10.0.0",
   "minimum_server": "7.0.0",
   "tested_combination": {
-    "server": "9.0.0",
-    "client": "9.0.0",
-    "android": "9.0.0",
-    "agent": "9.0.0"
+    "server": "10.0.0",
+    "client": "10.0.0",
+    "android": "10.0.0",
+    "agent": "10.0.0"
   },
   "contract_status": "proposed",
   "frozen_tag": null,
   "previous_immutable_tag": "api-v1.3.0",
-  "development_target": "10.0.0",
-  "tested_combination_scope": "historical-9.0.0-baseline"
+  "tested_combination_scope": "10.0.0-release-candidate"
 }

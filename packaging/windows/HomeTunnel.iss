@@ -1,9 +1,9 @@
 #define AppName "Home Tunnel"
 #ifndef AppVersion
-  #define AppVersion "9.0.0"
+  #define AppVersion "10.0.0"
 #endif
 #ifndef AppNumericVersion
-  #define AppNumericVersion "9.0.0"
+  #define AppNumericVersion "10.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "."

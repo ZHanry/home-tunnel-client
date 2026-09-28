@@ -64,12 +64,12 @@ func TestPackageAssetMatchesCurrentOS(t *testing.T) {
 
 func TestUpdateCheckUsesReleaseAsset(t *testing.T) {
 	payload, _ := json.Marshal(map[string]any{
-		"tag_name": "v9.9.9",
-		"html_url": "https://github.com/ZHanry/home-tunnel/releases/tag/v9.9.9",
+		"tag_name": "v99.0.0",
+		"html_url": "https://github.com/ZHanry/home-tunnel/releases/tag/v99.0.0",
 		"assets": []map[string]string{
-			{"name": "HomeTunnel-Setup-9.9.9-x64.exe", "browser_download_url": "https://example.com/app.zip"},
-			{"name": "home-tunnel-linux-9.9.9-" + runtime.GOARCH + ".tar.gz", "browser_download_url": "https://example.com/app.tgz"},
-			{"name": "home-tunnel-macos-9.9.9-" + runtime.GOARCH + ".tar.gz", "browser_download_url": "https://example.com/app-mac.tgz"},
+			{"name": "HomeTunnel-Setup-99.0.0-x64.exe", "browser_download_url": "https://example.com/app.zip"},
+			{"name": "home-tunnel-linux-99.0.0-" + runtime.GOARCH + ".tar.gz", "browser_download_url": "https://example.com/app.tgz"},
+			{"name": "home-tunnel-macos-99.0.0-" + runtime.GOARCH + ".tar.gz", "browser_download_url": "https://example.com/app-mac.tgz"},
 		},
 	})
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -94,7 +94,7 @@ func TestUpdateCheckUsesReleaseAsset(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["latest"] != "9.9.9" || body["newer"] != true {
+	if body["latest"] != "99.0.0" || body["newer"] != true {
 		t.Fatalf("unexpected body %#v", body)
 	}
 }
@@ -106,18 +106,18 @@ func TestDownloadUpdateVerifiesSHA256(t *testing.T) {
 	var assetName string
 	switch runtime.GOOS {
 	case "windows":
-		assetName = "HomeTunnel-Windows-9.9.9-x64.zip"
+		assetName = "HomeTunnel-Windows-99.0.0-x64.zip"
 	case "linux":
-		assetName = "home-tunnel-linux-9.9.9-" + runtime.GOARCH + ".tar.gz"
+		assetName = "home-tunnel-linux-99.0.0-" + runtime.GOARCH + ".tar.gz"
 	case "darwin":
-		assetName = "home-tunnel-macos-9.9.9-" + runtime.GOARCH + ".tar.gz"
+		assetName = "home-tunnel-macos-99.0.0-" + runtime.GOARCH + ".tar.gz"
 	default:
 		t.Skip("no packaged GUI asset")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/latest", func(writer http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"tag_name": "v9.9.9",
+			"tag_name": "v99.0.0",
 			"html_url": "https://example.com/release",
 			"assets": []map[string]string{
 				{"name": assetName, "browser_download_url": ""},
@@ -137,7 +137,7 @@ func TestDownloadUpdateVerifiesSHA256(t *testing.T) {
 		_, _ = writer.Write([]byte(digest + "  " + assetName + "\n"))
 	})
 	releaseJSON := map[string]any{
-		"tag_name": "v9.9.9",
+		"tag_name": "v99.0.0",
 		"html_url": "https://example.com/release",
 		"assets": []map[string]string{
 			{"name": assetName, "browser_download_url": upstream.URL + "/file"},
@@ -189,11 +189,11 @@ func TestDownloadUpdateRejectsBadChecksum(t *testing.T) {
 	var assetName string
 	switch runtime.GOOS {
 	case "windows":
-		assetName = "HomeTunnel-Windows-9.9.9-x64.zip"
+		assetName = "HomeTunnel-Windows-99.0.0-x64.zip"
 	case "linux":
-		assetName = "home-tunnel-linux-9.9.9-" + runtime.GOARCH + ".tar.gz"
+		assetName = "home-tunnel-linux-99.0.0-" + runtime.GOARCH + ".tar.gz"
 	case "darwin":
-		assetName = "home-tunnel-macos-9.9.9-" + runtime.GOARCH + ".tar.gz"
+		assetName = "home-tunnel-macos-99.0.0-" + runtime.GOARCH + ".tar.gz"
 	default:
 		t.Skip("no packaged GUI asset")
 	}
@@ -211,7 +211,7 @@ func TestDownloadUpdateRejectsBadChecksum(t *testing.T) {
 	})
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"tag_name": "v9.9.9",
+			"tag_name": "v99.0.0",
 			"assets": []map[string]string{
 				{"name": assetName, "browser_download_url": upstream.URL + "/file"},
 				{"name": assetName + ".sha256", "browser_download_url": upstream.URL + "/sum"},

@@ -1,5 +1,12 @@
 # Changelog
 
+## 10.0.0
+
+- Client, CLI, managed Agent and native host versions are 10.0.0; FRP stays at 0.70.1. API contract `api-v1.4.0`; existing tunnels keep 7.0+ server compatibility.
+- Remote-control payloads use authenticated UDP P2P only; the server never relays them.
+- Add the optional Windows service host (unattended access off by default), authorized system audio, Android controller SDK file transfer and sealed arm64-v8a/x86_64 SDKs, guided desktop publishing with local target checks, localization and system theme.
+- Releases are built as untagged candidates and publish only the accepted original bytes.
+
 ## 9.0.0
 
 - Rework the desktop around a sidebar and separate remote viewer; add request approval, a fixed password, a one-time password and an emergency disconnect hotkey.
