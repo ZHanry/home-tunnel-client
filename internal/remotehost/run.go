@@ -161,6 +161,11 @@ func (s *Service) Run(ctx context.Context) error {
 				if header.EndpointID != d.EndpointID || header.ConnectionID != challenge.ConnectionID {
 					return ErrAuthorization
 				}
+				if !authenticated {
+					if e = s.flushOwedAcks(ctx); e != nil {
+						return e
+					}
+				}
 				authenticated = true
 			case "auth.reauth_required":
 				if !authenticated || header.ConnectionID != challenge.ConnectionID || len(header.Nonce) != 43 {
@@ -170,7 +175,17 @@ func (s *Service) Run(ctx context.Context) error {
 					return e
 				}
 			case "error":
-				return &APIError{Status: 401, Code: "RD_SIGNAL_REJECTED"}
+				if !authenticated {
+					return &APIError{Status: 401, Code: "RD_SIGNAL_REJECTED"}
+				}
+				// A rejected message (for example a late candidate for a session the
+				// server already closed) is not fatal; the server closes the socket itself
+				// when it is, which ends this loop through the read side.
+				code := header.ErrorCode
+				if len(code) > 80 || strings.ContainsAny(code, "\r\n ") {
+					code = "RD_SIGNAL_INVALID"
+				}
+				log.Printf("remote signaling message rejected: %s", code)
 			default:
 				if !authenticated {
 					return ErrAuthorization
@@ -188,7 +203,9 @@ func (s *Service) Run(ctx context.Context) error {
 			if !open {
 				return ErrUnavailable
 			}
-			if !authenticated {
+			if !authenticated && event.Kind != "closed" {
+				// The close acknowledgement goes over HTTPS, so a native close that races a
+				// reconnect is still acknowledged; anything else waits for authentication.
 				return ErrAuthorization
 			}
 			if e = s.handleEngine(ctx, event, send); e != nil {
@@ -209,7 +226,32 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}
 }
+
+// flushOwedAcks resends close acknowledgements lost to a network failure.
+func (s *Service) flushOwedAcks(ctx context.Context) error {
+	s.mu.Lock()
+	owed := make(map[string]map[string]any, len(s.owedAcks))
+	for id, body := range s.owedAcks {
+		owed[id] = body
+	}
+	s.mu.Unlock()
+	for id, body := range owed {
+		e := s.request(ctx, "POST", "/sessions/"+url.PathEscape(id)+"/close-ack", body, "dpop", nil)
+		var rejected *APIError
+		if e != nil && !errors.As(e, &rejected) {
+			return e
+		}
+		// Accepted, or rejected because the session already ended: nothing more to send.
+		s.mu.Lock()
+		delete(s.owedAcks, id)
+		s.mu.Unlock()
+	}
+	return nil
+}
 func (s *Service) tick(ctx context.Context) error {
+	if e := s.flushOwedAcks(ctx); e != nil {
+		return e
+	}
 	s.mu.Lock()
 	r := s.active
 	if r == nil {
@@ -217,6 +259,15 @@ func (s *Service) tick(ctx context.Context) error {
 		return nil
 	}
 	expired := !r.Deadline.IsZero() && !time.Now().Before(r.Deadline)
+	if expired && r.Closing {
+		// Stop already ran and the lease is over, so the server has expired the
+		// session itself; waiting longer for a native close would keep the host busy.
+		s.active = nil
+		delete(s.pending, r.Session.SessionID)
+		s.mu.Unlock()
+		log.Printf("remote session released after lease expiry")
+		return nil
+	}
 	renew := r.Started && !r.Closing && time.Since(r.LastRenew) >= 240*time.Second
 	snapshot := *r
 	s.mu.Unlock()
@@ -267,6 +318,10 @@ func (s *Service) handleEngine(ctx context.Context, event EngineEvent, send func
 	r := s.active
 	if r == nil || event.SessionID != r.Session.SessionID || event.ConnectionEpoch != r.Session.ConnectionEpoch {
 		s.mu.Unlock()
+		if event.Kind == "closed" {
+			// A late close for a session already released after lease expiry.
+			return nil
+		}
 		return ErrAuthorization
 	}
 	closing := r.Closing
@@ -285,7 +340,18 @@ func (s *Service) handleEngine(ctx context.Context, event EngineEvent, send func
 			if e != nil {
 				return e
 			}
-			if e = s.request(ctx, "POST", "/sessions/"+url.PathEscape(snapshot.Session.SessionID)+"/close-ack", map[string]any{"connection_epoch": snapshot.Session.ConnectionEpoch, "lease_seq": snapshot.Session.LeaseSeq, "signed_proof": proof}, "dpop", nil); e != nil {
+			body := map[string]any{"connection_epoch": snapshot.Session.ConnectionEpoch, "lease_seq": snapshot.Session.LeaseSeq, "signed_proof": proof}
+			if e = s.request(ctx, "POST", "/sessions/"+url.PathEscape(snapshot.Session.SessionID)+"/close-ack", body, "dpop", nil); e != nil {
+				var rejected *APIError
+				if !errors.As(e, &rejected) {
+					s.mu.Lock()
+					s.owedAcks[snapshot.Session.SessionID] = body
+					if s.active == r {
+						s.active = nil
+					}
+					delete(s.pending, snapshot.Session.SessionID)
+					s.mu.Unlock()
+				}
 				return e
 			}
 		}

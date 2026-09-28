@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"path/filepath"
 	"runtime"
@@ -247,14 +248,53 @@ func (host *localRemoteHost) start() {
 	}
 	go func() {
 		defer release()
-		err := host.service.Run(host.ctx)
-		host.mu.Lock()
-		defer host.mu.Unlock()
-		host.running = false
-		if err != nil && host.ctx.Err() == nil {
-			host.lastError = safeRemoteCode(err)
+		// Signaling drops on network changes and server restarts; keep the host
+		// reachable like other remote desktop tools instead of waiting for a restart.
+		delay := remoteRetryMin / 2
+		for {
+			started := time.Now()
+			err := host.service.Run(host.ctx)
+			stop := host.ctx.Err() != nil || errors.Is(err, remotehost.ErrLocalApproval)
+			if !stop {
+				status := host.service.State(host.ctx)
+				stop = !status.Enrolled || !status.Enabled
+			}
+			host.mu.Lock()
+			if err != nil && host.ctx.Err() == nil {
+				host.lastError = safeRemoteCode(err)
+			}
+			if stop {
+				host.running = false
+				host.mu.Unlock()
+				return
+			}
+			host.mu.Unlock()
+			delay = nextRemoteRetry(delay, time.Since(started))
+			log.Printf("remote host offline: %s; reconnecting in %s", safeRemoteCode(err), delay)
+			select {
+			case <-host.ctx.Done():
+				host.mu.Lock()
+				host.running = false
+				host.mu.Unlock()
+				return
+			case <-time.After(delay):
+			}
 		}
 	}()
+}
+
+const (
+	remoteRetryMin = 2 * time.Second
+	remoteRetryMax = time.Minute
+)
+
+// nextRemoteRetry doubles the wait after quick failures and starts over after
+// a connection that stayed up for a while.
+func nextRemoteRetry(previous, uptime time.Duration) time.Duration {
+	if uptime >= remoteRetryMax {
+		return remoteRetryMin
+	}
+	return min(previous*2, remoteRetryMax)
 }
 
 // Stop local input/media before potentially slow tunnel or server logout.

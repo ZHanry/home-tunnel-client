@@ -610,8 +610,11 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
       if(found && selected!=key){Close("RD_PATH_REJECTED");return;}
       found=true;selected=key;local_type=*local->candidate_type;remote_type=*remote->candidate_type;
     }
-    if(!found){if(path_verified_)Close("RD_PATH_CHANGED");return;}
-    if(!selected_pair_.empty() && selected_pair_!=selected){Close("RD_PATH_CHANGED");return;}
+    // A sample without a nominated pair happens while ICE switches pairs; real loss
+    // surfaces through the connection state (RD_NO_DIRECT_PATH). A switch to another
+    // pair that passed the same candidate policy keeps the session, as the browser
+    // may move a relayed call between equivalent pairs after it connects.
+    if(!found)return;
     selected_pair_=selected;local_type_=local_type;remote_type_=remote_type;path_verified_=true;
     for(const auto* stream:report.GetStatsOfType<webrtc::RTCOutboundRtpStreamStats>()){
       if(stream->kind!="video" || !stream->codec_id)continue;const auto* codec=report.GetAs<webrtc::RTCCodecStats>(*stream->codec_id);

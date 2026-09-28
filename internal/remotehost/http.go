@@ -77,6 +77,9 @@ type Service struct {
 	// republished is set once this process has re-sent capabilities, so an
 	// upgraded host advertises new transports without being toggled off and on.
 	republished atomic.Bool
+	// owedAcks holds close acknowledgements that failed on the network; the
+	// server keeps the session slot until one arrives, so they are resent.
+	owedAcks map[string]map[string]any
 }
 
 func New(config Config) (*Service, error) {
@@ -130,7 +133,7 @@ func New(config Config) (*Service, error) {
 			}
 		}
 	}
-	return &Service{config: config, origin: origin, http: &client, key: key, disabled: !saved.Enabled, pending: map[string]Session{}, autoApproving: map[string]int64{}, autoAttempted: map[string]int64{}, assistInvites: assists, assistRevoked: map[string]bool{}, autoPairing: map[string]bool{}, autoPairAttempted: map[string]bool{}, approvals: make(chan ApprovalEvent, 8)}, nil
+	return &Service{config: config, origin: origin, http: &client, key: key, disabled: !saved.Enabled, pending: map[string]Session{}, autoApproving: map[string]int64{}, autoAttempted: map[string]int64{}, assistInvites: assists, assistRevoked: map[string]bool{}, autoPairing: map[string]bool{}, autoPairAttempted: map[string]bool{}, owedAcks: map[string]map[string]any{}, approvals: make(chan ApprovalEvent, 8)}, nil
 }
 func (s *Service) Approvals() <-chan ApprovalEvent { return s.approvals }
 

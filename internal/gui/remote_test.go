@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ZHanry/home-tunnel-client/internal/model"
 	"github.com/ZHanry/home-tunnel-client/internal/remote"
@@ -163,5 +164,23 @@ func TestRemoteStateIsReadAfterAccountLock(t *testing.T) {
 	s.remoteMu.Unlock()
 	if observed := <-result; observed.DeviceID != "device-b" {
 		t.Fatal("remote manager used account state read before the account lock")
+	}
+}
+
+func TestNextRemoteRetryBacksOffAndResets(t *testing.T) {
+	delay := remoteRetryMin / 2
+	var got []time.Duration
+	for range 7 {
+		delay = nextRemoteRetry(delay, time.Second)
+		got = append(got, delay)
+	}
+	want := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, time.Minute}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("retry %d = %s, want %s", i, got[i], want[i])
+		}
+	}
+	if next := nextRemoteRetry(time.Minute, 10*time.Minute); next != remoteRetryMin {
+		t.Fatalf("after a long connection = %s, want %s", next, remoteRetryMin)
 	}
 }

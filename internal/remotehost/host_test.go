@@ -581,3 +581,56 @@ func TestDirectSDPRequiresNativeFingerprintAndUDP(t *testing.T) {
 		t.Fatal("LAN UDP rejected")
 	}
 }
+
+func TestOwedCloseAckIsResentUntilServerAnswers(t *testing.T) {
+	var acks atomic.Int64
+	var status atomic.Int64
+	status.Store(http.StatusNoContent)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !strings.HasSuffix(request.URL.Path, "/close-ack") || request.Header.Get("DPoP") == "" {
+			t.Errorf("unexpected request %s", request.URL.Path)
+		}
+		acks.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(int(status.Load()))
+		if status.Load() >= 300 {
+			_, _ = writer.Write([]byte(`{"error_code":"RD_STATE_CONFLICT"}`))
+		}
+	}))
+	defer server.Close()
+	s, err := New(Config{Origin: server.URL, Store: testStore(t), AllowInsecureLoopback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.token = onlineToken{Token: "local-test-token", Nonce: strings.Repeat("a", 43), ExpiresAt: time.Now().Add(5 * time.Minute)}
+	body := map[string]any{"connection_epoch": 1, "lease_seq": 1, "signed_proof": "fixture"}
+	s.owedAcks["a"] = body
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err = s.flushOwedAcks(cancelled); err == nil || len(s.owedAcks) != 1 {
+		t.Fatalf("network failure dropped the owed ack: %v", err)
+	}
+	if err = s.flushOwedAcks(context.Background()); err != nil || len(s.owedAcks) != 0 || acks.Load() != 1 {
+		t.Fatalf("accepted ack not cleared: %v %d", err, acks.Load())
+	}
+	status.Store(http.StatusConflict)
+	s.owedAcks["b"] = body
+	if err = s.flushOwedAcks(context.Background()); err != nil || len(s.owedAcks) != 0 {
+		t.Fatalf("rejected ack kept retrying: %v", err)
+	}
+}
+func TestTickReleasesClosingSessionAfterLeaseExpiry(t *testing.T) {
+	s, err := New(Config{Origin: "https://console.example.com", Store: testStore(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := randomID()
+	s.active = &runningSession{Session: Session{ID: id, SessionRef: SessionRef{SessionID: id, ConnectionEpoch: 1}}, Deadline: time.Now().Add(-time.Second), Closing: true}
+	s.pending[id] = s.active.Session
+	if err = s.tick(context.Background()); err != nil || s.active != nil || len(s.pending) != 0 {
+		t.Fatalf("expired closing session still holds the host: %v", err)
+	}
+	if err = s.handleEngine(context.Background(), EngineEvent{Kind: "closed", SessionRef: SessionRef{SessionID: id, ConnectionEpoch: 1}}, nil); err != nil {
+		t.Fatalf("late native close treated as a violation: %v", err)
+	}
+}
