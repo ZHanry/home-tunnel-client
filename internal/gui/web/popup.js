@@ -13,7 +13,7 @@
     "请核对配对码": ["请核对配对码", "Compare the pairing code"],
     "远程设备": ["远程设备", "Remote device"],
     "请求权限：": ["请求权限：", "Requested: "],
-    "仅允许本次连接，可随时在主界面断开。": ["仅允许本次连接，可随时在主界面断开。", "Allows this connection only. You can disconnect at any time."],
+    "接受后对方可查看屏幕、操作键鼠、同步剪贴板、传文件和听系统声音；仅限本次连接，可随时断开。": ["接受后对方可查看屏幕、操作键鼠、同步剪贴板、传文件和听系统声音；仅限本次连接，可随时断开。", "They can view the screen, use the keyboard and mouse, sync the clipboard, transfer files and hear system audio. This connection only; you can disconnect at any time."],
     "本机不再提供长期授权，请让对方改用固定密码连接。": ["本机不再提供长期授权，请让对方改用固定密码连接。", "Long-term access is no longer offered. Ask the other person to connect with the fixed password."],
     "核对码": ["核对码", "Code"],
     "请在控制端核对一致后确认。": ["请在控制端核对一致后确认。", "Confirm on the controller once the codes match."],
@@ -144,7 +144,7 @@
     $("request-code-value").textContent = code;
     const note = item.longTerm ? msg("本机不再提供长期授权，请让对方改用固定密码连接。")
       : code ? msg("请在控制端核对一致后确认。")
-        : item.type === "access" && !scopes.length ? msg("仅允许本次连接，可随时在主界面断开。") : "";
+        : item.type === "access" && !scopes.length ? msg("接受后对方可查看屏幕、操作键鼠、同步剪贴板、传文件和听系统声音；仅限本次连接，可随时断开。") : "";
     $("request-note").hidden = !note;
     $("request-note").textContent = note;
     $("request-queue").textContent = others > 0 ? queueText(others) : "";

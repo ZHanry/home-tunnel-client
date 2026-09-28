@@ -123,9 +123,15 @@ func canAutoApprove(grant LocalGrant, session Session, unattendedEnabled bool, b
 	return grant.Mode == "one_session" && grant.OneSessionRequestID == session.SessionRequestID &&
 		(grant.SessionID == "" || grant.SessionID == session.SessionID)
 }
+
+// assistScope is what a device-ID connection the host already accepted (request, fixed or
+// temporary password) may use, as in mainstream remote tools. Received files still need a
+// destination chosen on this computer; the microphone always needs its own approval.
+var assistScope = []string{"view", "input.keyboard", "input.pointer", "input.text", "clipboard.read", "clipboard.write", "files.send", "files.receive", "audio.system"}
+
 func canAutoApproveAssist(inviteExpires time.Time, request transcript, now time.Time) bool {
 	return request.AssistInviteID != "" && request.Mode == "one_session" && inviteExpires.After(now) &&
-		subset([]string{"view", "input.keyboard", "input.pointer", "input.text", "clipboard.read", "clipboard.write"}, request.Scope)
+		subset(assistScope, request.Scope)
 }
 
 func (s *Service) autoApprovePairing(ctx context.Context, request transcript, event ApprovalEvent) {

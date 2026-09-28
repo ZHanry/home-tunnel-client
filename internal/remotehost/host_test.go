@@ -403,16 +403,16 @@ func TestAssistInviteAutoApprovalIncludesInputAndClipboardButNotFilesOrAudio(t *
 	if !canAutoApproveAssist(expires, request, time.Now()) {
 		t.Fatal("locally generated assistance did not authorize standard permissions")
 	}
-	for _, permission := range []string{"clipboard.read", "clipboard.write"} {
+	for _, permission := range []string{"clipboard.read", "clipboard.write", "files.send", "files.receive", "audio.system"} {
 		request.Scope = []string{"view", permission}
 		if !canAutoApproveAssist(expires, request, time.Now()) {
 			t.Fatalf("assistance did not authorize %s", permission)
 		}
 	}
-	for _, permission := range []string{"files.send", "audio.system"} {
-		request.Scope = []string{"view", permission}
+	for _, scope := range [][]string{{"view", "audio.microphone"}, {"input.pointer"}, {"view", "view"}} {
+		request.Scope = scope
 		if canAutoApproveAssist(expires, request, time.Now()) {
-			t.Fatalf("assistance silently authorized %s", permission)
+			t.Fatalf("assistance silently authorized %v", scope)
 		}
 	}
 	request.Scope = []string{"view", "input.pointer"}
