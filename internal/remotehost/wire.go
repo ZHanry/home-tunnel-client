@@ -12,6 +12,14 @@ func validBindingID(value string) bool {
 	return true
 }
 
+// relayWire advertises UDP relay only to servers that announced it, so older
+// servers with a strict capability schema never see the field.
+func relayWire(wire map[string]any, relay bool) map[string]any {
+	if relay && wire["status"] != "unavailable" {
+		wire["transports"] = []string{"udp_direct", "udp_relay"}
+	}
+	return wire
+}
 func wireCapabilities(caps Capabilities, enabled, discovered bool) map[string]any {
 	if !enabled {
 		return map[string]any{"permissions": []string{"view"}, "unattended_enabled": false, "displays": []Display{}, "codecs": []string{}, "status": "unavailable"}

@@ -72,7 +72,7 @@ func (s *Service) SetUnattendedEnabled(ctx context.Context, enabled bool) error 
 		"endpoint_id":        d.EndpointID,
 		"local_enabled":      true,
 		"capability_version": d.CapabilityVersion + 1,
-		"capabilities":       wireCapabilities(caps, true, s.discovered.Load()),
+		"capabilities":       relayWire(wireCapabilities(caps, true, s.discovered.Load()), s.relay.Load()),
 	}
 	proof, err := signJWS(s.key, "ht-rd-capabilities+jwt", payload, false)
 	if err != nil {

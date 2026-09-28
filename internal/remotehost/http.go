@@ -73,6 +73,7 @@ type Service struct {
 	approvals         chan ApprovalEvent
 	running           bool
 	discovered        atomic.Bool
+	relay             atomic.Bool
 }
 
 func New(config Config) (*Service, error) {
@@ -455,7 +456,11 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 		return ErrLocalApproval
 	}
 	caps.UnattendedEnabled = caps.UnattendedEnabled && d.UnattendedEnabled
-	wire := wireCapabilities(caps, enabled, s.discovered.Load())
+	if enabled {
+		// Learn whether the server offers relay before advertising it.
+		_, _ = s.serverSTUN(ctx)
+	}
+	wire := relayWire(wireCapabilities(caps, enabled, s.discovered.Load()), enabled && s.relay.Load())
 	payload := map[string]any{"endpoint_id": d.EndpointID, "local_enabled": enabled, "capability_version": d.CapabilityVersion + 1, "capabilities": wire}
 	proof, e := signJWS(s.key, "ht-rd-capabilities+jwt", payload, false)
 	if e != nil {

@@ -246,11 +246,16 @@ bool set_description(webrtc::PeerConnectionInterface& peer,std::unique_ptr<webrt
   if(local)peer.SetLocalDescription(observer.get(),value.release());else peer.SetRemoteDescription(observer.get(),value.release());
   return done.wait_for(4s)==std::future_status::ready && done.get();
 }
+// Set once per worker from the Go host's negotiated start request: the server
+// only offers UDP TURN when both peers understand relay candidates.
+std::atomic<bool> relay_allowed{false};
 bool direct_candidate(std::string_view value){
   if(value.empty())return true;if(value.size()>1024 || value.find_first_of("\r\n")!=std::string_view::npos)return false;
   std::unique_ptr<webrtc::IceCandidate> candidate(webrtc::CreateIceCandidate("0",0,std::string(value),nullptr));if(!candidate)return false;
   const auto& c=candidate->candidate();
-  if(c.protocol()!="udp" || c.type()==webrtc::IceCandidateType::kRelay || c.address().port()<1)return false;
+  if(c.protocol()!="udp" || c.address().port()<1)return false;
+  if(c.type()==webrtc::IceCandidateType::kRelay)
+    return relay_allowed.load() && !c.address().ipaddr().IsNil() && !c.address().IsLoopbackIP() && !c.address().IsAnyIP();
   if(!c.address().ipaddr().IsNil())return true;
   // Browser host candidates commonly use mDNS. Allow only a bounded .local
   // name; WebRTC resolves it, and selected-pair statistics remain authoritative.
@@ -300,7 +305,35 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
     config.tcp_candidate_policy=webrtc::PeerConnectionInterface::kTcpCandidatePolicyDisabled;
     config.bundle_policy=webrtc::PeerConnectionInterface::kBundlePolicyMaxBundle;
     config.certificates.push_back(identity_->certificate());
-    if(request.isMember("stun_urls")){
+    relay_allowed=request["allow_relay"].isBool() && request["allow_relay"].asBool();
+    if(relay_allowed && request.isMember("ice_servers")){
+      // Negotiated relay: STUN entries plus UDP TURN with short-lived REST credentials.
+      if(!request["ice_servers"].isArray() || request["ice_servers"].empty() || request["ice_servers"].size()>2)return false;
+      bool turn_seen=false;
+      for(const auto& entry:request["ice_servers"]){
+        if(!entry.isObject() || !entry["urls"].isArray() || entry["urls"].empty() || entry["urls"].size()>4)return false;
+        webrtc::PeerConnectionInterface::IceServer server;bool turn=false,stun=false;
+        for(const auto& url:entry["urls"]){
+          if(!url.isString())return false;const auto text=url.asString();
+          if(text.size()>260 || text.find_first_of("@/\\# \r\n\t")!=std::string::npos)return false;
+          if(text.starts_with("stun:") && text.find('?')==std::string::npos)stun=true;
+          else if(text.starts_with("turn:") && text.ends_with("?transport=udp") && text.find('?')==text.size()-14)turn=true;
+          else return false;
+          server.urls.push_back(text);
+        }
+        if(turn==stun)return false;
+        if(turn){
+          if(!entry["username"].isString() || !entry["credential"].isString())return false;
+          const auto user=entry["username"].asString(),secret=entry["credential"].asString();
+          if(user.empty() || secret.empty() || user.size()>256 || secret.size()>256 || (user+secret).find_first_of(std::string("\r\n\0",3))!=std::string::npos)return false;
+          server.username=user;server.password=secret;turn_seen=true;
+        }
+        config.servers.push_back(server);
+      }
+      if(!turn_seen)return false;
+    }
+    else if(request.isMember("stun_urls")){
+      relay_allowed=false;
       if(!request["stun_urls"].isArray() || request["stun_urls"].size()>4)return false;
       for(const auto& url:request["stun_urls"]){
         if(!url.isString())return false;const auto text=url.asString();
@@ -308,6 +341,7 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
         webrtc::PeerConnectionInterface::IceServer server;server.urls.push_back(text);config.servers.push_back(server);
       }
     }
+    else relay_allowed=false;
     auto connection=factory_.CreatePeerConnectionOrError(config,webrtc::PeerConnectionDependencies(this));if(!connection.ok())return false;
     connection_=connection.MoveValue();source_=webrtc::make_ref_counted<ScreenSource>();auto track=factory_.CreateVideoTrack(source_,"desktop");
     if(!connection_->AddTrack(track,{"home-tunnel-desktop"}).ok())return false;
@@ -562,8 +596,9 @@ class HostSession : public webrtc::PeerConnectionObserver,public std::enable_sha
       if(!pair || pair->state!="succeeded" || pair->nominated!=true || transport->dtls_state!="connected" || !pair->local_candidate_id || !pair->remote_candidate_id)continue;
       const auto* local=report.GetAs<webrtc::RTCLocalIceCandidateStats>(*pair->local_candidate_id);
       const auto* remote=report.GetAs<webrtc::RTCRemoteIceCandidateStats>(*pair->remote_candidate_id);
-      auto accepted=[](const auto* candidate){return candidate && candidate->protocol=="udp" &&
-        (candidate->candidate_type=="host" || candidate->candidate_type=="srflx" || candidate->candidate_type=="prflx") && !candidate->relay_protocol && !candidate->tcp_type;};
+      auto accepted=[](const auto* candidate){return candidate && candidate->protocol=="udp" && !candidate->tcp_type &&
+        (((candidate->candidate_type=="host" || candidate->candidate_type=="srflx" || candidate->candidate_type=="prflx") && !candidate->relay_protocol) ||
+         (relay_allowed.load() && candidate->candidate_type=="relay" && (!candidate->relay_protocol || *candidate->relay_protocol=="udp")));};
       if(!accepted(local) || !accepted(remote)){Close("RD_PATH_REJECTED");return;}
       if(found && selected!=pair->id()){Close("RD_PATH_REJECTED");return;}
       found=true;selected=pair->id();local_type=*local->candidate_type;remote_type=*remote->candidate_type;

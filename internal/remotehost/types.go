@@ -51,10 +51,17 @@ type PreparedSession struct {
 	DTLSFingerprintSHA256 string          `json:"dtls_fingerprint_sha256"`
 	HostNonce             []byte          `json:"host_nonce"`
 }
+type ICEServer struct {
+	URLs       []string `json:"urls"`
+	Username   string   `json:"username,omitempty"`
+	Credential string   `json:"credential,omitempty"`
+}
 type StartRequest struct {
 	SessionRef
 	DisplayID            string          `json:"display_id"`
 	STUNURLs             []string        `json:"stun_urls"`
+	ICEServers           []ICEServer     `json:"ice_servers,omitempty"`
+	AllowRelay           bool            `json:"allow_relay,omitempty"`
 	SessionRequestID     string          `json:"session_request_id"`
 	GrantID              string          `json:"grant_id"`
 	GrantVersion         int64           `json:"grant_version"`

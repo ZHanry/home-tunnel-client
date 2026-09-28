@@ -332,7 +332,7 @@ func (s *Service) handleEngine(ctx context.Context, event EngineEvent, send func
 		if event.SignalType != "peer.answer" && event.SignalType != "peer.candidates" && event.SignalType != "peer.candidates_done" {
 			return ErrAuthorization
 		}
-		if e := validateSignalPayload(event.SignalType, event.Payload, snapshot.Prepared.DTLSFingerprintSHA256); e != nil {
+		if e := validateSignalPayload(event.SignalType, event.Payload, snapshot.Prepared.DTLSFingerprintSHA256, snapshot.Relay); e != nil {
 			return e
 		}
 		s.mu.Lock()
@@ -365,7 +365,7 @@ func (s *Service) handleEngine(ctx context.Context, event EngineEvent, send func
 		return ErrAuthorization
 	}
 }
-func validateSignalPayload(kind string, raw json.RawMessage, fingerprint string) error {
+func validateSignalPayload(kind string, raw json.RawMessage, fingerprint string, relay bool) error {
 	if len(raw) > 32768 {
 		return ErrAuthorization
 	}
@@ -383,7 +383,7 @@ func validateSignalPayload(kind string, raw json.RawMessage, fingerprint string)
 		}
 		found := false
 		for _, line := range strings.Split(strings.ReplaceAll(payload.SDP, "\r\n", "\n"), "\n") {
-			if strings.HasPrefix(line, "a=candidate:") && !directCandidate(strings.TrimPrefix(line, "a=")) {
+			if strings.HasPrefix(line, "a=candidate:") && !peerCandidate(strings.TrimPrefix(line, "a="), relay) {
 				return ErrAuthorization
 			}
 			if strings.HasPrefix(line, "m=") {
@@ -417,11 +417,27 @@ func validateSignalPayload(kind string, raw json.RawMessage, fingerprint string)
 		return ErrAuthorization
 	}
 	for _, candidate := range payload.Candidates {
-		if len(candidate.Candidate) > 1024 || !directCandidate(candidate.Candidate) {
+		if len(candidate.Candidate) > 1024 || !peerCandidate(candidate.Candidate, relay) {
 			return ErrAuthorization
 		}
 	}
 	return nil
+}
+
+// peerCandidate also admits UDP TURN relay candidates for negotiated relay sessions.
+func peerCandidate(candidate string, relay bool) bool {
+	parts := strings.Fields(candidate)
+	if relay && len(parts) >= 8 && parts[7] == "relay" && parts[6] == "typ" && strings.EqualFold(parts[2], "udp") && strings.HasPrefix(parts[0], "candidate:") {
+		for _, part := range parts[8:] {
+			if part == "tcptype" {
+				return false
+			}
+		}
+		port, e := strconv.Atoi(parts[5])
+		ip := net.ParseIP(parts[4])
+		return e == nil && port >= 1 && port <= 65535 && ip != nil && !ip.IsLoopback() && !ip.IsUnspecified() && !ip.IsMulticast() && !ip.IsLinkLocalUnicast()
+	}
+	return directCandidate(candidate)
 }
 func directCandidate(candidate string) bool {
 	if candidate == "" {

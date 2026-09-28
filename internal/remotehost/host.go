@@ -72,6 +72,7 @@ type runningSession struct {
 	Sequence     uint64
 	PeerMaximum  uint64
 	PeerSeen     map[uint64]bool
+	Relay        bool
 	PeerQueue    []queuedPeer
 	PeerFlushing bool
 	Proofs       map[string]bool
@@ -452,11 +453,19 @@ func (s *Service) approveSession(ctx context.Context, id string, epoch, version 
 	d = s.config.Store.snapshot()
 	request := StartRequest{SessionRef: authorized.SessionRef, DisplayID: authorized.DisplayID, SessionRequestID: authorized.SessionRequestID, GrantID: grant.ID, GrantVersion: grant.Version, RestoreEpoch: checked.Ticket.RestoreEpoch, UserTokenVersion: checked.Ticket.UserVersion, Origin: s.origin, OwnerUserID: d.OwnerUserID, HostEndpointID: d.EndpointID, ControllerEndpointID: authorized.ControllerEndpointID, HostPublicJWK: authorized.HostPublicJWK, ControllerPublicJWK: authorized.ControllerPublicJWK, TicketJWS: authorized.TicketJWS, LeaseJWS: authorized.LeaseJWS, GrantJWS: authorized.GrantJWS, InitialTrustPin: d.InitialTrust, ServerKeyset: d.Keyset, LocalPermissions: append([]string(nil), grant.Permissions...), LocalGrantRevoked: d.Grants[grant.ID].Revoked, Prepared: prepared}
 	request.STUNURLs = stunURLs
+	servers, relay, e := s.iceServers(startCtx, authorized.SessionID, stunURLs)
+	if e != nil {
+		return e
+	}
+	if relay {
+		request.ICEServers, request.AllowRelay = servers, true
+	}
 	s.engineMu.Lock()
 	s.mu.Lock()
 	stale = s.active != running || running.Closing || generation != s.generation || s.disabled
 	if !stale {
 		running.Session, running.Prepared, running.Ticket = authorized, prepared, checked.Ticket
+		running.Relay = relay
 		running.Deadline, running.LastRenew = checked.Deadline, checked.LastRenew
 	}
 	s.mu.Unlock()

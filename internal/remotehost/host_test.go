@@ -566,10 +566,10 @@ func TestDirectSDPRequiresNativeFingerprintAndUDP(t *testing.T) {
 	fingerprint := strings.Repeat("AB", 32)
 	sdp := "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:sha-256 " + fingerprint + "\r\n"
 	raw, _ := json.Marshal(map[string]string{"type": "answer", "sdp": sdp})
-	if e := validateSignalPayload("peer.answer", raw, fingerprint); e != nil {
+	if e := validateSignalPayload("peer.answer", raw, fingerprint, false); e != nil {
 		t.Fatal(e)
 	}
-	if validateSignalPayload("peer.answer", raw, strings.Repeat("CD", 32)) == nil {
+	if validateSignalPayload("peer.answer", raw, strings.Repeat("CD", 32), false) == nil {
 		t.Fatal("native fingerprint substitution accepted")
 	}
 	for _, candidate := range []string{"candidate:1 1 tcp 123 192.168.1.1 5000 typ host", "candidate:1 1 udp 123 127.0.0.1 5000 typ host", "candidate:1 1 udp 123 192.168.1.1 5000 typ relay"} {
