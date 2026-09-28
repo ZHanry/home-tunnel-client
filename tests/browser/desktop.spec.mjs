@@ -34,25 +34,49 @@ test("an unenrolled host with null lists offers enrollment instead of a status e
   await page.locator("#nav-remote").click();
   await expect(page.locator("#rd-host-status")).toHaveText("远程连接已关闭");
   await expect(page.locator("#rd-host-enroll")).toBeVisible();
+  await expect(page.locator("#rd-host-enable")).toBeHidden();
+  await expect(page.locator(".remote-security-card")).toBeHidden();
+  await expect(page.getByText("授权与会话")).toHaveCount(0);
 });
 
-test("remote backend stays unavailable and enrollment requires explicit server trust", async ({page}) => {
+test("the host card shows a grouped 9-digit device ID and controllers accept spaced input", async ({page}) => {
+  const state={enrolled:true,enabled:true,running:true,setup:"pending",capabilities:{available:true,status:"ready"},pending:[],grants:[],access_profile:{device_id:"",fixed_password_enabled:false,revision:0}};
+  await page.route("**/local/remote/state",route=>route.fulfill({json:state}));
   await services(page,undefined);
   await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));
+  await page.locator("#nav-remote").click();
+  await expect(page.locator("#rd-host-status")).toHaveText("正在开启远程协助…");
+  await expect(page.locator("#rd-host-enroll")).toBeHidden();
+  state.setup=""; state.access_profile.device_id="482913570";
+  await page.evaluate(()=>refreshRemoteHost());
+  await expect(page.locator("#rd-host-code")).toHaveText("482 913 570");
+  await expect(page.locator("#rd-host-status")).toHaveText("已允许连接");
+  await expect(page.locator("#rd-host-copy")).toBeEnabled();
+  await page.evaluate(()=>{ navigator.clipboard.writeText=async text=>{ window.copied=text; }; });
+  await page.locator("#rd-host-copy").click();
+  await expect.poll(()=>page.evaluate(()=>window.copied)).toBe("482913570");
+  const opened=[];
+  await page.route("**/local/remote/window",route=>{ opened.push(route.request().postDataJSON()); return route.fulfill({json:{ok:true}}); });
+  await page.locator("#remote-device-id").fill(" 123 456-789 ");
+  await page.locator("#remote-connect-form button").click();
+  await expect.poll(()=>opened[0]).toEqual({assist:true,access_id:"123456789"});
+});
+
+test("remote backend stays unavailable and the upgrade path needs only the account password", async ({page}) => {
+  await services(page,undefined);
+  await page.route("**/local/device/metadata",route=>route.fulfill({json:{tags:[],metadata_version:1}}));
+  await page.evaluate(()=>localStorage.setItem("ht_username","alice"));
   await page.locator("#nav-remote").click();
   await expect(page.locator("#rd-host-status")).toContainText("没有可用的远控后端");
   await expect(page.locator("#rd-host-enable")).toBeDisabled();
   await expect(page.locator("#rd-host-enroll")).toBeHidden();
   await page.route("**/local/remote/state",route=>route.fulfill({json:{enrolled:false,enabled:false,capabilities:{available:true,permissions:["view"]},pending:[],grants:[]}}));
-  await page.route("**/local/remote/trust",route=>route.fulfill({json:{origin:"https://server.example",server_instance_id:"server-one",active_kid:"public-key",trust_pin:"a".repeat(64)}}));
   await page.evaluate(()=>refreshRemoteHost());
   await expect(page.locator("#rd-host-enroll")).toBeVisible();
-  await page.locator("#rd-host-user").fill("alice"); await page.locator("#rd-host-password").fill("temporary-password");
-  await expect(page.locator("#rd-host-enroll-submit")).toBeDisabled();
-  await page.locator("#rd-host-trust-load").click();
-  await expect(page.locator("#rd-host-trust")).toContainText("https://server.example");
-  await expect(page.locator("#rd-host-enroll-submit")).toBeDisabled();
-  await page.locator("#rd-host-trust-confirm").check();
+  await expect(page.locator("#remote-host-card #rd-host-enroll")).toBeVisible();
+  await expect(page.locator("#rd-host-user")).toHaveValue("alice");
+  await page.locator("#rd-host-password").fill("temporary-password");
+  await expect(page.locator("#rd-host-enroll-submit")).toBeEnabled();
   await expect(page.locator("#rd-host-mfa")).toBeHidden();
   const attempts=[];
   await page.route("**/local/remote/action",route=>{
@@ -69,10 +93,11 @@ test("remote backend stays unavailable and enrollment requires explicit server t
   await expect(page.locator("#rd-host-mfa")).toHaveAttribute("aria-invalid", "false");
   const mfaBox = await page.locator("#rd-host-mfa").boundingBox();
   const hintBox = await page.locator("#rd-host-mfa-feedback").boundingBox();
-  const trustBox = await page.locator("#rd-host-trust-load").boundingBox();
-  expect(hintBox.y).toBeGreaterThan(mfaBox.y + mfaBox.height + 4);
-  expect(trustBox.y).toBeGreaterThan(hintBox.y + hintBox.height + 12);
+  const submitBox = await page.locator("#rd-host-enroll-submit").boundingBox();
+  expect(hintBox.y).toBeGreaterThan(mfaBox.y + mfaBox.height);
+  expect(submitBox.y).toBeGreaterThan(hintBox.y + hintBox.height);
   expect(attempts[0].mfa_code).toBe("");
+  expect(attempts[0].trust_pin).toBe("");
   await page.locator("#rd-host-password").fill("temporary-password");
   await page.locator("#rd-host-mfa").fill("123456");
   await page.locator("#rd-host-enroll-submit").click();
@@ -85,7 +110,6 @@ test("remote backend stays unavailable and enrollment requires explicit server t
   await page.locator("#rd-host-enroll-submit").click();
   await expect.poll(()=>attempts.length).toBe(3);
   expect(attempts[1].action).toBe("enroll");
-  expect(attempts[1].trust_pin).toBe("a".repeat(64));
   expect(attempts[1].mfa_code).toBe("123456");
   await expect(page.locator("#rd-host-password")).toHaveValue("");
   await expect(page.locator("#rd-host-mfa")).toHaveValue("");
@@ -161,7 +185,8 @@ test("fixed password and access requests use the host settings without retaining
   await services(page, undefined);
   await page.locator("#nav-remote").click();
   await page.locator('[data-remote-tab="unattended"]').click();
-  await expect(page.locator("#rd-access-device-id")).toHaveText("123456789");
+  await expect(page.locator("#rd-access-device-id")).toHaveText("123 456 789");
+  await expect(page.locator("#rd-access-create")).toBeHidden();
   await page.locator("#rd-fixed-password").fill("strong-fixed-password");
   await page.locator("#rd-fixed-save").click();
   await expect(page.locator("#rd-fixed-password")).toHaveValue("");

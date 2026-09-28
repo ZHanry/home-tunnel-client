@@ -24,6 +24,7 @@ type Status struct {
 	FixedRevision     int64           `json:"fixed_revision"`
 	EmergencyKey      string          `json:"emergency_key"`
 	ErrorCode         string          `json:"error_code,omitempty"`
+	Setup             string          `json:"setup,omitempty"`
 	Files             FileState       `json:"files"`
 	Service           ServiceSurface  `json:"service"`
 }

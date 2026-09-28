@@ -33,12 +33,16 @@ type localRemoteHost struct {
 	actions                    sync.Mutex
 	token, trustPin, lastError string
 	running                    bool
-	pending                    map[string]remotehost.ApprovalEvent
-	invites                    []remotehost.AssistInvite
-	invitesAt                  time.Time
-	accessProfile              remotehost.AccessProfile
-	accessRequests             []remotehost.AccessRequest
-	accessAt                   time.Time
+	// trustFirstUse accepts the self-verified keyset served by the origin the
+	// user just signed in to; an explicit trustPin is not required then.
+	trustFirstUse  bool
+	setup          string
+	pending        map[string]remotehost.ApprovalEvent
+	invites        []remotehost.AssistInvite
+	invitesAt      time.Time
+	accessProfile  remotehost.AccessProfile
+	accessRequests []remotehost.AccessRequest
+	accessAt       time.Time
 }
 
 func remoteIdentity(state model.State) string {
@@ -49,6 +53,69 @@ func keysetPin(keys remotehost.Keyset) string {
 	raw, _ := json.Marshal(keys)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+// enrollAndEnable registers this computer as a remote host and turns hosting on.
+// Strangers still need local approval per connection; the grant model is unchanged.
+func (host *localRemoteHost) enrollAndEnable(ctx context.Context, state model.State, token, trustPin, password, mfaCode string) error {
+	host.mu.Lock()
+	host.token = token
+	host.trustPin = trustPin
+	host.trustFirstUse = trustPin == ""
+	host.mu.Unlock()
+	err := host.service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: state.DeviceID, Name: app.DefaultDeviceName(), Platform: runtime.GOOS, Password: password, MFACode: mfaCode})
+	host.mu.Lock()
+	host.token = ""
+	host.trustPin = ""
+	host.trustFirstUse = false
+	host.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err = host.service.SetEnabled(ctx, true); err != nil {
+		return err
+	}
+	host.start()
+	return nil
+}
+
+// setupRemoteAfterLogin reuses the account session of a just-completed password
+// login, which the server already counts as recent verification, so signing in
+// is the only step needed before this computer can be reached by its device ID.
+func (server *Server) setupRemoteAfterLogin(ctx context.Context, account *api.Client, password string) {
+	closeAccount := func() {
+		end, done := context.WithTimeout(context.Background(), 3*time.Second)
+		defer done()
+		_ = account.CloseSession(end)
+	}
+	host, state, err := server.localRemote(ctx)
+	if err != nil || host.service.State(ctx).Enrolled {
+		closeAccount()
+		return
+	}
+	token, err := account.AccessToken(ctx)
+	if err != nil {
+		closeAccount()
+		return
+	}
+	host.mu.Lock()
+	host.setup = "pending"
+	host.mu.Unlock()
+	go func() {
+		defer closeAccount()
+		work, cancel := context.WithTimeout(host.ctx, 40*time.Second)
+		defer cancel()
+		host.actions.Lock()
+		err := host.enrollAndEnable(work, state, token, "", password, "")
+		host.actions.Unlock()
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		host.setup = ""
+		if err != nil && host.ctx.Err() == nil {
+			host.setup = "failed"
+			host.lastError = safeRemoteCode(err)
+		}
+	}()
 }
 
 func (server *Server) localRemote(ctx context.Context) (*localRemoteHost, model.State, error) {
@@ -98,7 +165,7 @@ func (server *Server) localRemote(ctx context.Context) (*localRemoteHost, model.
 		InitialTrust: func(_ context.Context, origin string, keys remotehost.Keyset) error {
 			host.mu.Lock()
 			defer host.mu.Unlock()
-			if host.ctx.Err() != nil || origin != strings.TrimRight(state.Profile.PublicBaseURL, "/") || host.trustPin == "" || host.trustPin != keysetPin(keys) {
+			if host.ctx.Err() != nil || origin != strings.TrimRight(state.Profile.PublicBaseURL, "/") || !host.trustFirstUse && (host.trustPin == "" || host.trustPin != keysetPin(keys)) {
 				return remotehost.ErrLocalApproval
 			}
 			return nil
@@ -207,6 +274,7 @@ func (server *Server) stopRemote(disable bool) {
 	host.mu.Lock()
 	host.token = ""
 	host.trustPin = ""
+	host.trustFirstUse = false
 	clear(host.pending)
 	host.invites = nil
 	host.invitesAt = time.Time{}
@@ -328,6 +396,7 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 	status.AccessProfile = host.accessProfile
 	status.AccessRequests = append([]remotehost.AccessRequest(nil), host.accessRequests...)
 	refreshAccess := status.Enrolled && status.Enabled && time.Since(host.accessAt) > 5*time.Second
+	status.Setup = host.setup
 	host.mu.Unlock()
 	if refreshInvites {
 		if invites, listErr := host.service.ListAssistInvites(ctx); listErr == nil {
@@ -340,6 +409,10 @@ func (server *Server) remoteState(writer http.ResponseWriter, request *http.Requ
 	}
 	if refreshAccess {
 		profile, profileErr := host.service.AccessProfile(ctx, false)
+		// Every running host gets its 9-digit device ID without an extra click.
+		if profileErr == nil && profile.DeviceID == "" && status.Running {
+			profile, profileErr = host.service.AccessProfile(ctx, true)
+		}
 		requests, requestErr := host.service.ListAccessRequests(ctx)
 		if profileErr == nil && requestErr == nil {
 			host.mu.Lock()
@@ -456,7 +529,7 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 		}
 		switch body.Action {
 		case "enroll":
-			if len(body.TrustPin) != 64 || body.Username == "" || body.Password == "" {
+			if body.TrustPin != "" && len(body.TrustPin) != 64 || body.Username == "" || body.Password == "" {
 				err = remotehost.ErrLocalApproval
 				break
 			}
@@ -483,15 +556,7 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 				err = tokenErr
 				break
 			}
-			host.mu.Lock()
-			host.token = token
-			host.trustPin = body.TrustPin
-			host.mu.Unlock()
-			err = host.service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: state.DeviceID, Name: app.DefaultDeviceName(), Platform: runtime.GOOS, Password: body.Password, MFACode: body.MFACode})
-			host.mu.Lock()
-			host.token = ""
-			host.trustPin = ""
-			host.mu.Unlock()
+			err = host.enrollAndEnable(ctx, state, token, body.TrustPin, body.Password, body.MFACode)
 		case "enable":
 			err = host.service.SetEnabled(ctx, true)
 			if err == nil {

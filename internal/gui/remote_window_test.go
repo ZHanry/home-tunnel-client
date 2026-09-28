@@ -22,13 +22,21 @@ func TestRemoteWindowURLBindsServerAndDevice(t *testing.T) {
 	if parsed.Scheme != "https" || parsed.Host != "console.example.com" || parsed.Path != "/admin" || parsed.Fragment != "remote" || parsed.Query().Get("remoteDevice") != deviceID || parsed.Query().Has("unused") {
 		t.Fatalf("unexpected remote URL: %s", address)
 	}
-	assistance, err := remoteAssistanceURL("https://console.example.com")
+	assistance, err := remoteAssistanceURL("https://console.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	parsed, err = url.Parse(assistance)
 	if err != nil || parsed.Query().Get("remoteAssist") != "1" || parsed.Query().Has("remoteDevice") || parsed.Fragment != "remote" {
 		t.Fatalf("unexpected assistance URL: %s", assistance)
+	}
+	assistance, err = remoteAssistanceURL("https://console.example.com", "123456789")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = url.Parse(assistance)
+	if err != nil || parsed.Query().Get("remoteAssist") != "1" || parsed.Query().Get("remoteAccessId") != "123456789" {
+		t.Fatalf("unexpected prefilled assistance URL: %s", assistance)
 	}
 	for _, base := range []string{"javascript:alert(1)", "https://user:password@console.example.com", "//console.example.com"} {
 		if _, err := remoteWindowURL(base, deviceID); err == nil {
@@ -48,6 +56,10 @@ func TestRemoteWindowRequiresValidDeviceAndLogin(t *testing.T) {
 		{`{"device_id":"12345678-1234-1234-1234-123456789abc","assist":true}`, http.StatusBadRequest},
 		{`{"device_id":"12345678-1234-1234-1234-123456789abc"}`, http.StatusUnauthorized},
 		{`{"assist":true}`, http.StatusUnauthorized},
+		{`{"assist":true,"access_id":"123456789"}`, http.StatusUnauthorized},
+		{`{"assist":true,"access_id":"12345678x"}`, http.StatusBadRequest},
+		{`{"assist":true,"access_id":"123 456 789"}`, http.StatusBadRequest},
+		{`{"device_id":"12345678-1234-1234-1234-123456789abc","access_id":"123456789"}`, http.StatusBadRequest},
 	} {
 		recorder := httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, trustedLocalRequest(http.MethodPost, "/local/remote/window", strings.NewReader(test.body)))

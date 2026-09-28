@@ -145,6 +145,12 @@ body.workspace-active .app-header { display: none; }
 .remote-host-identity { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; }
 .remote-host-identity button { display: grid; place-items: center; min-width: 30px; min-height: 30px; padding: 0; background: transparent; color: var(--muted); }
 .remote-host-identity svg { width: 15px; height: 15px; }
+.remote-host-code { display: block; margin: 4px 0 16px; color: var(--fg); font: 700 30px/1.15 ui-monospace, Consolas, monospace; letter-spacing: .08em; white-space: nowrap; }
+.remote-host-enroll { display: grid; gap: 6px; margin: 0 0 16px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.remote-host-enroll p { margin: 0 0 4px; font-size: 12px; }
+.remote-host-enroll label { margin: 4px 0 0; font-size: 12px; }
+.remote-host-enroll button[type=submit] { justify-self: start; margin-top: 8px; }
+.remote-local-card #rd-host-error:empty { display: none; }
 .remote-assist-card { grid-column: 1 / -1; }
 .remote-assist-card p { color: var(--muted); font-size: 12px; }
 .remote-assist-secret { display: grid; gap: 7px; margin: 16px 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--secondary); color: var(--secondary-fg); }
@@ -152,17 +158,14 @@ body.workspace-active .app-header { display: none; }
 .remote-assist-secret button { justify-self: start; }
 .remote-assist-invite { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .remote-assist-invite span { overflow-wrap: anywhere; }
-.remote-local-card #rd-host-detail { min-height: 0; margin: 0 0 15px; padding: 0; background: transparent; color: var(--fg); font-family: ui-monospace, Consolas, monospace; font-size: 17px; font-weight: 700; letter-spacing: .04em; overflow-wrap: anywhere; }
+.remote-local-card #rd-host-detail { min-height: 0; margin: -8px 0 12px; padding: 0; background: transparent; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .remote-local-card > .row { display: flex; align-items: center; margin-top: 0; padding-top: 15px; border-top: 1px solid var(--line); }
 .remote-local-card > .row button { font-size: 11px; padding: 8px 10px; }
 .remote-security-card { margin-top: 20px; }
 .remote-security-card > p { font-size: 12px; }
-.remote-security-card:has(#rd-host-enroll.hidden) { padding-bottom: 20px; }
-.remote-enrollment-trust { margin: 20px 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
-.remote-enrollment-trust pre:empty { display: none; }
-.remote-enrollment-trust label.check { margin-bottom: 0; }
-.remote-security-card #rd-host-mfa-feedback { margin: 8px 0 0; font-size: 12px; }
-.remote-security-card #rd-host-mfa-feedback.error { color: var(--danger); }
+.remote-security-card { padding-bottom: 20px; }
+#rd-host-mfa-feedback { margin: 4px 0 0; font-size: 12px; }
+#rd-host-mfa-feedback.error { color: var(--danger); }
 .remote-unattended { max-width: 790px; padding: 32px; }
 .remote-unattended h2 { margin-top: 20px; }
 .remote-unattended p { color: var(--muted); font-size: 14px; }

@@ -270,6 +270,7 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 		EnrollmentCode: body.EnrollmentCode,
 		DeviceName:     app.DefaultDeviceName(),
 		CommitState:    func(state model.State) error { return server.commitEnrollment(ctx, generation, state) },
+		AccountSession: func(account *api.Client, password string) { server.setupRemoteAfterLogin(ctx, account, password) },
 	}); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return

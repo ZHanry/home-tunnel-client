@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ZHanry/home-tunnel-client/internal/api"
 	"github.com/ZHanry/home-tunnel-client/internal/model"
 	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
 )
@@ -100,5 +101,47 @@ func TestSyncCapabilityUpgradeForcesAndRecordsFullSync(t *testing.T) {
 	}
 	if got := state.SyncRequestConfigVersion(); got != 8 {
 		t.Fatalf("upgraded state requested config version %d, want 8", got)
+	}
+}
+
+func TestEnrollHandsOffOrClosesTheAccountSession(t *testing.T) {
+	var server *httptest.Server
+	closed := 0
+	server = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/public/config":
+			_ = json.NewEncoder(response).Encode(map[string]any{"public_base_url": server.URL, "tunnel_domain": "tunnel.example.com", "frps_host": "frps.example.com", "frps_port": 7000})
+		case "/api/v1/auth/login":
+			_ = json.NewEncoder(response).Encode(map[string]any{"access_token": "access-token", "refresh_token": "refresh-token", "access_expires_at": time.Now().Add(time.Hour)})
+		case "/api/v1/devices/register":
+			response.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(response).Encode(map[string]any{"device_id": "11111111-2222-4333-8444-555555555555", "device_credential": "credential", "config_version": 1})
+		case "/api/v1/auth/session/close":
+			closed++
+			_ = json.NewEncoder(response).Encode(map[string]any{})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	options := EnrollOptions{Server: server.URL, Username: "user", Password: "account-password", DeviceName: "test", HTTPClient: server.Client()}
+	options.StatePath = filepath.Join(t.TempDir(), "state.json")
+	if err := Enroll(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+	if closed != 1 {
+		t.Fatalf("unclaimed account session closed %d times, want 1", closed)
+	}
+	var handedPassword, token string
+	options.StatePath = filepath.Join(t.TempDir(), "state.json")
+	options.AccountSession = func(account *api.Client, password string) {
+		handedPassword = password
+		token, _ = account.AccessToken(context.Background())
+	}
+	if err := Enroll(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+	if closed != 1 || handedPassword != "account-password" || token != "access-token" {
+		t.Fatalf("handoff closed=%d password=%t token=%q", closed, handedPassword == "account-password", token)
 	}
 }

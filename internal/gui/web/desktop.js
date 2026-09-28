@@ -202,39 +202,44 @@
     remoteQuick.className = "remote-quick";
     const remoteOverview = document.createElement("div");
     remoteOverview.className = "remote-overview";
-    remoteOverview.innerHTML = '<article class="settings-card remote-intro-card remote-connect-card"><div class="remote-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></div><h3>连接远程电脑</h3><p>输入同账号设备标识，或选择在线设备。</p><form id="remote-connect-form" class="remote-manual"><label for="remote-device-id">设备标识</label><div class="remote-manual-row"><input id="remote-device-id" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴设备标识" maxlength="36" required><button type="submit">开始连接</button></div></form><div id="remote-connect-list" class="remote-connect-list"></div><div class="remote-connect-actions"><button type="button" id="remote-open-assist" class="secondary">连接其他账号</button><button type="button" id="remote-open-console" class="secondary">打开网页远控</button></div></article>';
+    remoteOverview.innerHTML = '<article class="settings-card remote-intro-card remote-connect-card"><div class="remote-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></div><h3>连接远程电脑</h3><p>输入对方的 9 位设备 ID，或选择在线设备。</p><form id="remote-connect-form" class="remote-manual"><label for="remote-device-id">设备 ID</label><div class="remote-manual-row"><input id="remote-device-id" type="text" autocomplete="off" spellcheck="false" placeholder="123 456 789" maxlength="40" required><button type="submit">开始连接</button></div></form><div id="remote-connect-list" class="remote-connect-list"></div><div class="remote-connect-actions"><button type="button" id="remote-open-assist" class="secondary">连接其他账号</button><button type="button" id="remote-open-console" class="secondary">打开网页远控</button></div></article>';
     remoteOverview.querySelector("#remote-open-console").insertAdjacentHTML("beforeend", actionIcon("external"));
     const hostCard = $("remote-host-card");
     hostCard.classList.add("remote-local-card");
     hostCard.querySelector("p.muted").textContent = "在本机批准单次授权后，绑定的会话自动启动；你可随时断开或撤销。";
     hostCard.insertAdjacentHTML("afterbegin", '<div class="remote-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg></div>');
     hostCard.querySelector("h3").textContent = "允许对方连接这台电脑";
-    hostCard.querySelector("p.muted").textContent = "由本机处理会话授权，你可以随时断开。";
+    hostCard.querySelector("p.muted").textContent = "把设备 ID 告诉对方。每次连接都需要你在本机同意，可随时断开。";
     const hostIdentity = document.createElement("div");
     hostIdentity.className = "remote-host-identity";
-    hostIdentity.innerHTML = '<span>本机设备标识</span><button type="button" id="rd-host-copy" class="secondary" disabled aria-label="复制本机设备标识"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>';
+    hostIdentity.innerHTML = '<span>本机设备 ID</span><button type="button" id="rd-host-copy" class="secondary" disabled aria-label="复制本机设备 ID"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>';
     hostCard.querySelector("#rd-host-detail").before(hostIdentity);
+    const hostCode = document.createElement("strong");
+    hostCode.id = "rd-host-code";
+    hostCode.className = "remote-host-code";
+    hostCode.setAttribute("data-no-translate", "");
+    hostIdentity.after(hostCode);
     const remoteAssistCard = document.createElement("article");
     remoteAssistCard.className = "settings-card remote-assist-card";
     remoteAssistCard.innerHTML = '<div class="remote-card-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a4 4 0 0 1 8 0v2M8 14h8"/></svg></div><h3>临时协助</h3><p>给其他账号提供一次性设备 ID 和临时密码。密码 5 分钟有效，使用一次即失效。</p><button type="button" id="rd-assist-create" disabled>生成临时密码</button><div id="rd-assist-secret" class="remote-assist-secret hidden"></div><div id="rd-assist-list"></div><p id="rd-assist-error" class="error" role="alert"></p>';
     const remoteSecurity = document.createElement("article");
     remoteSecurity.className = "settings-card remote-security-card";
-    remoteSecurity.innerHTML = '<h3>授权与会话</h3><p>首次启用需核对服务器身份；进行中的会话可在这里立即撤销。</p>';
-    for (const id of ["rd-host-enroll", "rd-host-pending", "rd-host-grants", "rd-host-files", "rd-host-error"]) remoteSecurity.append($(id));
-    const hostMfaField = remoteSecurity.querySelector("#rd-host-mfa");
-    const hostMfaLabel = remoteSecurity.querySelector('label[for="rd-host-mfa"]');
+    remoteSecurity.innerHTML = '<h3>连接请求与会话</h3>';
+    for (const id of ["rd-host-pending", "rd-host-grants", "rd-host-files"]) remoteSecurity.append($(id));
+    // Signing in already grants remote access. This short form only appears for
+    // installs that signed in before the host could be registered automatically.
+    const hostEnroll = $("rd-host-enroll");
+    hostEnroll.classList.add("remote-host-enroll");
+    hostCard.querySelector(".row").before(hostEnroll);
+    hostCard.append($("rd-host-error"));
+    const hostMfaField = hostEnroll.querySelector("#rd-host-mfa");
+    const hostMfaLabel = hostEnroll.querySelector('label[for="rd-host-mfa"]');
     const hostMfaFeedback = document.createElement("p");
     hostMfaFeedback.id = "rd-host-mfa-feedback";
     hostMfaFeedback.className = "muted hidden";
     hostMfaFeedback.setAttribute("role", "status");
     hostMfaField.setAttribute("aria-describedby", hostMfaFeedback.id);
     hostMfaField.after(hostMfaFeedback);
-    const hostTrustSection = document.createElement("div");
-    hostTrustSection.className = "remote-enrollment-trust";
-    hostTrustSection.setAttribute("role", "group");
-    hostTrustSection.setAttribute("aria-labelledby", "rd-host-trust-load");
-    remoteSecurity.querySelector("#rd-host-enroll-submit").before(hostTrustSection);
-    hostTrustSection.append(remoteSecurity.querySelector("#rd-host-trust-load"), remoteSecurity.querySelector("#rd-host-trust"), remoteSecurity.querySelector("#rd-host-trust-confirm").closest("label"));
     function renderHostMfaFeedback() {
       const code = hostMfaFeedback.dataset.code;
       const invalid = code === "RD_MFA_INVALID";
@@ -246,7 +251,7 @@
     }
     hostMfaField.classList.add("hidden");
     hostMfaLabel.classList.add("hidden");
-    remoteSecurity.querySelector("#rd-host-user").addEventListener("input", () => {
+    hostEnroll.querySelector("#rd-host-user").addEventListener("input", () => {
       hostMfaField.value = "";
       hostMfaField.classList.add("hidden");
       hostMfaLabel.classList.add("hidden");
@@ -275,7 +280,7 @@
       remoteUnattended.classList.toggle("hidden", !unattended);
       remoteTabs.querySelectorAll("button").forEach((tab) => tab.classList.toggle("active", tab === button));
     }; });
-    $("rd-host-copy").onclick = () => navigator.clipboard.writeText($("rd-host-detail").textContent).catch(() => {});
+    $("rd-host-copy").onclick = () => navigator.clipboard.writeText($("rd-host-code").textContent.replace(/\s/g, "")).catch(() => {});
     $("remote-all-devices").onclick = () => void showDevices();
     const updateLayout = document.createElement("div");
     updateLayout.className = "update-layout";
@@ -357,6 +362,15 @@
       "密码 / Password": ["密码","Password"],
       "导出诊断包 / Export bundle": ["导出诊断包","Export bundle"],
       "尚未创建": ["尚未创建","Not created"],
+      "正在生成…": ["正在生成…","Generating…"],
+      "正在开启远程协助…": ["正在开启远程协助…","Turning on remote assistance…"],
+      "本机设备 ID": ["本机设备 ID","This device ID"],
+      "设备 ID": ["设备 ID","Device ID"],
+      "连接请求与会话": ["连接请求与会话","Requests and sessions"],
+      "开启远程协助": ["开启远程协助","Turn on remote assistance"],
+      "请输入当前账号密码以开启远程协助。仅需一次。": ["请输入当前账号密码以开启远程协助。仅需一次。","Enter your account password once to turn on remote assistance."],
+      "把设备 ID 告诉对方。每次连接都需要你在本机同意，可随时断开。": ["把设备 ID 告诉对方。每次连接都需要你在本机同意，可随时断开。","Share this device ID. Every connection needs your approval here, and you can disconnect at any time."],
+      "输入对方的 9 位设备 ID，或选择在线设备。": ["输入对方的 9 位设备 ID，或选择在线设备。","Enter the other computer's 9-digit device ID, or pick an online device."],
       "尚未登记": ["尚未登记","Not enrolled"],
       "屏幕 / Screen": ["屏幕","Screen"],
       "工作空间": ["工作空间","Workspace"],
@@ -648,6 +662,13 @@
     $("rd-host-stop").textContent = msg("立即断开");
     $("remote-connect-form").onsubmit = (event) => {
       event.preventDefault();
+      $("remote-open-error").textContent = "";
+      // A 9-digit device ID reaches any account's host; spaces and dashes are grouping only.
+      const code = $("remote-device-id").value.replace(/[\s-]/g, "");
+      if (/^[0-9]{9}$/.test(code)) {
+        api("/local/remote/window", {method:"POST", body:JSON.stringify({assist:true, access_id:code})}).catch(error => { $("remote-open-error").textContent = error.message; });
+        return;
+      }
       const id = $("remote-device-id").value.trim().toLowerCase();
       const device = accountDevices.find((item) => item.id?.toLowerCase() === id);
       if (!device || device.id === localDeviceID || device.status !== "active" || !device.online) {
@@ -1233,18 +1254,17 @@
       }
       }, "edit-error");
     };
-    let remoteHostLoading = false, remoteHostTrust = null, remoteHostListSignature = "", remoteFileSignature = "", remoteHostGeneration = 0, assistSecret = null, lastAssistInvites = [];
+    let remoteHostLoading = false, remoteHostListSignature = "", remoteFileSignature = "", remoteHostGeneration = 0, assistSecret = null, lastAssistInvites = [];
     let remoteHostAbort = new AbortController();
     function resetRemoteHostUI() {
       remoteHostGeneration++; remoteHostAbort.abort(); remoteHostAbort = new AbortController();
-      remoteHostTrust = null; remoteHostListSignature = ""; remoteFileSignature = "";
+      remoteHostListSignature = ""; remoteFileSignature = "";
       assistSecret = null; lastAssistInvites = [];
       $("rd-assist-secret").replaceChildren(); $("rd-assist-list").replaceChildren(); $("rd-assist-error").textContent = "";
       $("rd-assist-create").disabled = true;
-      $("rd-host-password").value = ""; $("rd-host-mfa").value = ""; $("rd-host-trust").textContent = "";
+      $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
       hostMfaField.classList.add("hidden"); hostMfaLabel.classList.add("hidden");
       delete hostMfaFeedback.dataset.code; renderHostMfaFeedback();
-      $("rd-host-trust-confirm").checked = false; $("rd-host-enroll-submit").disabled = true;
       $("rd-host-pending").replaceChildren(); $("rd-host-grants").replaceChildren();
       $("rd-host-files").replaceChildren();
       $("rd-unattended-error").textContent = "";
@@ -1369,6 +1389,7 @@
         container.append(row);
       }
     }
+    const groupDeviceId = id => String(id).replace(/(\d{3})(?=\d)/g, "$1 ");
     async function refreshRemoteHost() {
       if (remoteHostLoading || !$("rd-host-status") || !$("login").classList.contains("hidden")) return;
       remoteHostLoading = true;
@@ -1377,13 +1398,20 @@
         const state = await api("/local/remote/state", {signal:remoteHostAbort.signal});
         if (generation !== remoteHostGeneration || !$("login").classList.contains("hidden")) return;
         const ready = state.capabilities?.available === true;
-        $("rd-host-status").textContent = !ready ? msg("此安装包没有可用的远控后端") : state.active_session_id ? msg("远程会话进行中") : state.enabled ? msg("已允许连接") : msg("远程连接已关闭");
+        const settingUp = state.setup === "pending";
+        const access = state.access_profile || {};
+        $("rd-host-status").textContent = !ready ? msg("此安装包没有可用的远控后端") : settingUp ? msg("正在开启远程协助…") : state.active_session_id ? msg("远程会话进行中") : state.enabled ? msg("已允许连接") : msg("远程连接已关闭");
         $("rd-host-status").dataset.active = String(ready && !!(state.active_session_id || state.enabled && state.running && !state.error_code));
-        $("rd-host-detail").textContent = state.endpoint_id || state.error_code || msg("尚未登记");
-        $("rd-host-copy").disabled = !state.endpoint_id;
-        $("rd-host-enable").disabled = !ready || !state.enrolled || state.enabled && state.running;
+        $("rd-host-code").textContent = access.device_id ? groupDeviceId(access.device_id) : state.enrolled && state.enabled ? msg("正在生成…") : "— — —";
+        $("rd-host-detail").textContent = state.error_code && !settingUp ? state.error_code : "";
+        $("rd-host-copy").disabled = !access.device_id;
+        $("rd-host-enable").disabled = !ready || !state.enrolled || settingUp || state.enabled && state.running;
+        // Show only the action that applies now: turn on, turn off, or end the live session.
+        $("rd-host-enable").classList.toggle("hidden", ready && (!state.enrolled || state.enabled && state.running));
         $("rd-host-disable").disabled = !state.enabled;
+        $("rd-host-disable").classList.toggle("hidden", !state.enabled);
         $("rd-host-stop").disabled = !state.active_session_id;
+        $("rd-host-stop").classList.toggle("hidden", !state.active_session_id);
         const unattendedSupported = state.capabilities?.unattended_enabled === true;
         const canConfigureService = state.service?.installed === true && state.service?.running === true;
         const serviceDetail = state.service?.detail || msg("未安装系统服务，便携模式仍可在已登录桌面使用。 / No system service is installed; signed-in desktop control still works.");
@@ -1395,10 +1423,10 @@
           $("rd-unattended-detail").textContent = msg("开启后，系统服务将接管本机远控，并绑定指定控制端。Windows 会请求管理员确认；服务实际验证通过后才会开启。 / Setup transfers this host to the system service and binds the selected controller. Windows will request administrator approval, then verify the service before enabling access.");
         }
         $("rd-unattended-disable").disabled = !state.unattended_enabled;
-        const access = state.access_profile || {};
 		$("rd-emergency-key").value = state.emergency_key || "X";
-        $("rd-access-device-id").textContent = access.device_id || msg("尚未创建");
+        $("rd-access-device-id").textContent = access.device_id ? groupDeviceId(access.device_id) : msg("尚未创建");
         $("rd-access-create").disabled = !state.enrolled || !state.enabled || !state.running || !!access.device_id;
+        $("rd-access-create").classList.toggle("hidden", !!access.device_id);
         $("rd-fixed-save").disabled = !state.enabled || !state.running || !ready;
         const fixedActive = !!access.fixed_password_enabled && access.revision === state.fixed_revision;
         $("rd-fixed-disable").disabled = !fixedActive;
@@ -1406,7 +1434,8 @@
         renderAccessRequests(state.access_requests);
         $("rd-assist-create").disabled = !state.enabled || !state.running || !state.enrolled || !ready;
         if (!state.enabled) assistSecret = null;
-        $("rd-host-enroll").classList.toggle("hidden", !ready || state.enrolled);
+        $("rd-host-enroll").classList.toggle("hidden", !ready || state.enrolled || settingUp);
+        if (!$("rd-host-user").value) $("rd-host-user").value = localStorage.getItem("ht_username") || "";
         if (state.enrolled || !ready) {
           $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
           hostMfaField.classList.add("hidden"); hostMfaLabel.classList.add("hidden");
@@ -1415,7 +1444,7 @@
         renderRemoteApprovals(state);
         renderAssistInvites(state.invites);
         renderRemoteFiles(state.files);
-        remoteSecurity.classList.toggle("hidden", !ready || state.enrolled && !$("rd-host-pending").childElementCount && !$("rd-host-grants").childElementCount && !$("rd-host-files").childElementCount && !$("rd-host-error").textContent);
+        remoteSecurity.classList.toggle("hidden", !ready || !$("rd-host-pending").childElementCount && !$("rd-host-grants").childElementCount && !$("rd-host-files").childElementCount);
         const count = (state.pending || []).filter(event => !event.display_code).length + (state.access_requests || []).length;
         $("settings-open").textContent = t("settings") + (count ? ` · ${count}${msg(" 待批准 / pending")}` : "");
       } catch {
@@ -1442,21 +1471,11 @@
       assistSecret = await remoteHostAction("create_invite");
       renderAssistInvites(lastAssistInvites);
     }, "rd-assist-error");
-    $("rd-host-trust-load").onclick = () => runAction($("rd-host-trust-load"), async () => {
-      remoteHostTrust = null; $("rd-host-trust-confirm").checked = false; $("rd-host-enroll-submit").disabled = true;
-      const generation = remoteHostGeneration;
-      const trust = await api("/local/remote/trust", {signal:remoteHostAbort.signal});
-      if (generation !== remoteHostGeneration || !$("login").classList.contains("hidden")) return;
-      remoteHostTrust = trust;
-      $("rd-host-trust").textContent = `${trust.origin}${msg("\n实例 / Instance: ")}${trust.server_instance_id}${msg("\n密钥指纹 / Key: ")}${trust.active_kid}`;
-    }, "rd-host-error");
-    $("rd-host-trust-confirm").onchange = () => { $("rd-host-enroll-submit").disabled = !remoteHostTrust || !$("rd-host-trust-confirm").checked; };
     $("rd-host-enroll").onsubmit = event => {
       event.preventDefault();
-      if (!remoteHostTrust || !$("rd-host-trust-confirm").checked) return;
       return runAction($("rd-host-enroll-submit"), async () => {
         $("rd-host-error").textContent = "";
-        const body = {username:$("rd-host-user").value,password:$("rd-host-password").value,mfa_code:$("rd-host-mfa").value,trust_pin:remoteHostTrust.trust_pin};
+        const body = {username:$("rd-host-user").value,password:$("rd-host-password").value,mfa_code:$("rd-host-mfa").value,trust_pin:""};
         $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
         try { await remoteHostAction("enroll", body); }
         catch (error) {

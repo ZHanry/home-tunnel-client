@@ -34,6 +34,9 @@ type EnrollOptions struct {
 	// CommitState lets the desktop atomically reject a superseded login before
 	// credentials are saved. Headless enrollment uses the normal store directly.
 	CommitState func(model.State) error
+	// AccountSession receives the password-login account session after the
+	// state commit and owns closing it. Without it the session is closed here.
+	AccountSession func(client *api.Client, password string)
 }
 
 type RunOptions struct {
@@ -68,6 +71,16 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 		return err
 	}
 	var registration model.DeviceRegistration
+	var account *api.Client
+	accountPassword := options.Password
+	defer func() {
+		if account == nil {
+			return
+		}
+		end, done := context.WithTimeout(context.Background(), 3*time.Second)
+		defer done()
+		_ = account.CloseSession(end)
+	}()
 	if options.EnrollmentCode != "" {
 		registration, err = client.EnrollWithCode(ctx, options.EnrollmentCode, options.DeviceName, state.InstallID, fingerprint)
 		if err != nil {
@@ -78,6 +91,7 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 		if err != nil {
 			return err
 		}
+		account = client
 		if session.PasswordChangeRequired {
 			if options.MFACode != "" {
 				return errors.New("complete the required password change in the web console, then enroll with a fresh MFA code or an enrollment code")
@@ -88,6 +102,7 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 			if err := client.ChangePassword(ctx, options.Password, options.NewPassword, options.MFACode); err != nil {
 				return fmt.Errorf("change initial password: %w", err)
 			}
+			accountPassword = options.NewPassword
 			session, err = client.Login(ctx, options.Username, options.NewPassword)
 			if err != nil {
 				return fmt.Errorf("sign in after password change: %w", err)
@@ -120,6 +135,11 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 	}
 	if err := commit(state); err != nil {
 		return fmt.Errorf("save enrolled device credential: %w", err)
+	}
+	if account != nil && options.AccountSession != nil {
+		handoff := account
+		account = nil
+		options.AccountSession(handoff, accountPassword)
 	}
 	return nil
 }

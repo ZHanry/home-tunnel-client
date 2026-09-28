@@ -9,23 +9,31 @@ import (
 )
 
 var remoteDeviceID = regexp.MustCompile(`^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$`)
+var remoteAccessID = regexp.MustCompile(`^[0-9]{9}$`)
 
 func remoteWindowURL(base, deviceID string) (string, error) {
 	return remoteViewURL(base, "remoteDevice", deviceID)
 }
 
-func remoteAssistanceURL(base string) (string, error) {
-	return remoteViewURL(base, "remoteAssist", "1")
+func remoteAssistanceURL(base, accessID string) (string, error) {
+	if accessID == "" {
+		return remoteViewURL(base, "remoteAssist", "1")
+	}
+	return remoteViewURL(base, "remoteAssist", "1", "remoteAccessId", accessID)
 }
 
-func remoteViewURL(base, queryKey, queryValue string) (string, error) {
+func remoteViewURL(base string, query ...string) (string, error) {
 	address, err := url.Parse(base)
 	if err != nil || address.Host == "" || address.User != nil || (address.Scheme != "http" && address.Scheme != "https") {
 		return "", url.InvalidHostError(base)
 	}
 	address.Path = "/admin"
 	address.RawPath = ""
-	address.RawQuery = url.Values{queryKey: {queryValue}}.Encode()
+	values := url.Values{}
+	for i := 0; i+1 < len(query); i += 2 {
+		values.Set(query[i], query[i+1])
+	}
+	address.RawQuery = values.Encode()
 	address.ForceQuery = false
 	address.Fragment = "remote"
 	address.RawFragment = ""
@@ -41,8 +49,9 @@ func (server *Server) remoteWindow(writer http.ResponseWriter, request *http.Req
 	var body struct {
 		DeviceID string `json:"device_id"`
 		Assist   bool   `json:"assist"`
+		AccessID string `json:"access_id"`
 	}
-	if err := readJSON(request, &body); err != nil || (body.Assist && body.DeviceID != "") || (!body.Assist && !remoteDeviceID.MatchString(body.DeviceID)) {
+	if err := readJSON(request, &body); err != nil || (body.Assist && body.DeviceID != "") || (!body.Assist && (body.AccessID != "" || !remoteDeviceID.MatchString(body.DeviceID))) || (body.AccessID != "" && !remoteAccessID.MatchString(body.AccessID)) {
 		writeError(writer, http.StatusBadRequest, "设备标识无效")
 		return
 	}
@@ -85,7 +94,7 @@ func (server *Server) remoteWindow(writer http.ResponseWriter, request *http.Req
 	}
 	var address string
 	if body.Assist {
-		address, err = remoteAssistanceURL(state.Profile.PublicBaseURL)
+		address, err = remoteAssistanceURL(state.Profile.PublicBaseURL, body.AccessID)
 	} else {
 		address, err = remoteWindowURL(state.Profile.PublicBaseURL, body.DeviceID)
 	}
