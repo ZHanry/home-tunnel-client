@@ -1,6 +1,15 @@
 package remotehost
 
-import "testing"
+import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
 
 func TestRelayCandidatesNeedNegotiatedRelay(t *testing.T) {
 	relay := "candidate:2 1 udp 41885439 158.180.81.141 49170 typ relay raddr 0.0.0.0 rport 0"
@@ -51,5 +60,35 @@ func TestRelayWireOnlyWhenServerOffersRelay(t *testing.T) {
 	}
 	if _, ok := relayWire(map[string]any{"status": "unavailable"}, true)["transports"]; ok {
 		t.Fatal("transports advertised while unavailable")
+	}
+}
+
+func TestRunRepublishesCapabilitiesOncePerProcess(t *testing.T) {
+	s, _, _ := authorityFixture(t)
+	s.token = onlineToken{Token: "fixture", Nonce: strings.Repeat("n", 43), ExpiresAt: time.Now().Add(time.Hour)}
+	keyset := s.config.Store.snapshot().Keyset
+	var mu sync.Mutex
+	puts := 0
+	s.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(request.URL.Path, "/server-keys"):
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(keyset)), Header: make(http.Header)}, nil
+		case request.Method == "PUT" && strings.HasSuffix(request.URL.Path, "/capabilities"):
+			mu.Lock()
+			puts++
+			mu.Unlock()
+		}
+		return fixtureResponse(map[string]any{}), nil
+	})
+	for range 2 {
+		// The realtime dial fails in tests; only the capability refresh matters.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = s.Run(ctx)
+		cancel()
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if puts != 1 {
+		t.Fatalf("capabilities published %d times, want 1", puts)
 	}
 }

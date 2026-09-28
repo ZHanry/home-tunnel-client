@@ -45,6 +45,12 @@ func (s *Service) Run(ctx context.Context) error {
 	if changed {
 		return ErrLocalApproval
 	}
+	if !s.republished.Load() {
+		// Best effort: a failed refresh leaves the previous capabilities in place.
+		if s.SetEnabled(ctx, true) == nil {
+			s.republished.Store(true)
+		}
+	}
 	connection, e := realtime.DialRemote(ctx, s.origin, s.config.TLSConfig)
 	if e != nil {
 		return e

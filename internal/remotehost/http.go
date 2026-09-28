@@ -74,6 +74,9 @@ type Service struct {
 	running           bool
 	discovered        atomic.Bool
 	relay             atomic.Bool
+	// republished is set once this process has re-sent capabilities, so an
+	// upgraded host advertises new transports without being toggled off and on.
+	republished atomic.Bool
 }
 
 func New(config Config) (*Service, error) {
