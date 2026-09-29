@@ -330,6 +330,13 @@ def verify_remote_evidence(directory, version, revision):
     """Refuse a core-only package, stale native report or changed signed worker."""
     worker, server = verify_remote_build(directory, version, revision)
     acceptance = json.loads((directory / "windows-remote-native-acceptance.json").read_text(encoding="utf-8"))
+    if acceptance.get('status') == 'waived':
+        # An owner waiver is recorded as not verified, never as a pass; it still binds the shipped worker.
+        from client_release_candidate import verify_waiver
+        verify_waiver(acceptance.get('waiver'), 'windows-remote-native-acceptance')
+        if acceptance.get('worker_sha256') != worker['sha256']:
+            raise SystemExit('Native acceptance waiver must identify the final distributed worker bytes')
+        return
     if acceptance.get('status') != 'passed' or acceptance.get('input', {}).get('status') != 'passed':
         raise SystemExit('Real native video and input acceptance must both pass')
     if any(acceptance['input'].get(check) is not True for check in ('keyboard_down_up', 'unicode_text', 'pointer_down_up',
@@ -493,6 +500,33 @@ def public_asset_names(component, version):
             for platform in ("linux", "macos") for arch in ("amd64", "arm64")]
     return [f"home-tunnel-server-{version}.tar.gz", "compose.release.yaml"]
 
+def waiver_notes(directory):
+    """Disclose every owner waiver in stable release notes; a waiver is not a pass."""
+    from client_release_candidate import ACCEPTANCE, GATES, read_json, verify_waiver
+    path = directory / ACCEPTANCE
+    if not path.is_file():
+        return ''
+    record = read_json(path)
+    lines = []
+    for gate in GATES:
+        if record.get('coverage', {}).get(gate, {}).get('status') != 'waived':
+            continue
+        receipt = read_json(directory / f'client-acceptance-{gate}.json')
+        waiver = verify_waiver(receipt.get('waiver'), gate)
+        cases = ', '.join(f'`{name}`' for name, value in receipt.get('cases', {}).items() if value == 'waived')
+        lines.append(f"- `{gate}`: {waiver['reason'].strip()} Waived cases: {cases}.")
+    native = directory / 'windows-remote-native-acceptance.json'
+    if native.is_file():
+        report = read_json(native)
+        if report.get('status') == 'waived':
+            waiver = verify_waiver(report.get('waiver'), 'windows-remote-native-acceptance')
+            lines.append(f"- `windows-remote-native-acceptance`: {waiver['reason'].strip()}")
+    if not lines:
+        return ''
+    return ("\n## Not verified (owner waivers)\n\n"
+            "The product owner approved shipping without verifying the items below. "
+            "They were not tested and are not claimed as passed.\n\n" + '\n'.join(lines) + '\n')
+
 def publish(stable=False):
     directory=ROOT/'release'
     stable = re.fullmatch(r"v\d+\.\d+\.\d+", TAG) is not None
@@ -520,7 +554,8 @@ def publish(stable=False):
     summary=(ROOT/'docs/RELEASE_NOTES.md').read_text(encoding='utf-8')
     run_url=f"https://github.com/{REPO}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     notes.write_text(summary + "\n\n## Downloads\n\n" + downloads + "\n\n```text\n" + checksums + "```\n" + f"\n\nSource: `{SHA}`. [Build, verification and signing evidence]({run_url}).\n\n" +
-        "Packages and durable verification evidence are covered by SHA256SUMS.txt and its Sigstore bundle.\n",encoding='utf-8')
+        "Packages and durable verification evidence are covered by SHA256SUMS.txt and its Sigstore bundle.\n" +
+        (waiver_notes(directory) if stable and COMPONENT == 'client' else ''),encoding='utf-8')
     created=False
     try:
         run('gh','release','create',TAG,'--repo',REPO,'--verify-tag','--target',SHA,'--draft','--title',title,'--notes-file',str(notes))

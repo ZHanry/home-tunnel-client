@@ -153,6 +153,79 @@ class ReleasePolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, 'Packaged native worker'):
                 module.verify_remote_evidence(directory, '6.0.1', 'revision')
 
+    def waived_native_report(self, directory, provenance, **changes):
+        waiver = {'approved_by': 'owner', 'approved_at': '2026-09-29T00:40:00Z',
+                  'reason': 'Owner shipped 10.0.0 without the native VM acceptance run.', 'disclosed_in': 'docs/RELEASE_NOTES.md'}
+        report = {'status': 'waived', 'worker_sha256': provenance['worker']['sha256'], 'waiver': waiver}
+        for key, value in changes.items():
+            if value is None:
+                waiver.pop(key, None); report.pop(key, None)
+            elif key in waiver:
+                waiver[key] = value
+            else:
+                report[key] = value
+        (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(report))
+        return report
+
+    def test_waived_native_acceptance_requires_valid_owner_waiver_and_final_worker(self):
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            provenance, _ = self.remote_fixture(directory)
+            self.waived_native_report(directory, provenance)
+            module.verify_remote_evidence(directory, '6.0.1', 'revision')
+            for changes in ({'worker_sha256': 'f' * 64}, {'worker_sha256': None}, {'approved_by': 'maintainer'},
+                            {'approved_at': future}, {'reason': ''}, {'disclosed_in': None}, {'waiver': None}):
+                with self.subTest(changes=changes):
+                    self.waived_native_report(directory, provenance, **changes)
+                    with self.assertRaises(SystemExit):
+                        module.verify_remote_evidence(directory, '6.0.1', 'revision')
+            # A waiver still cannot bless a rebuilt or re-signed worker.
+            self.waived_native_report(directory, provenance)
+            with zipfile.ZipFile(directory / 'HomeTunnel-Windows-6.0.1-x64.zip', 'w') as bundle:
+                bundle.writestr('home_tunnel_remote_host.exe', b'rebuilt or newly signed bytes')
+            with self.assertRaisesRegex(SystemExit, 'Packaged native worker'):
+                module.verify_remote_evidence(directory, '6.0.1', 'revision')
+
+    def test_other_native_statuses_keep_the_strict_acceptance_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            _, report = self.remote_fixture(directory)
+            for status in ('skipped', 'failed', 'accepted_with_waivers', None):
+                altered = dict(report, status=status)
+                (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(altered))
+                with self.subTest(status=status), self.assertRaisesRegex(SystemExit, 'must both pass'):
+                    module.verify_remote_evidence(directory, '6.0.1', 'revision')
+
+    def test_stable_notes_disclose_every_owner_waiver(self):
+        import client_release_candidate as policy
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.assertEqual(module.waiver_notes(directory), '')
+            waiver = {'approved_by': 'owner', 'approved_at': '2026-09-29T00:40:00Z', 'disclosed_in': 'docs/RELEASE_NOTES.md'}
+            coverage = {gate: {'status': 'passed', 'evidence': f'client-acceptance-{gate}.json'} for gate in policy.GATES}
+            for gate in ('stability', 'desktop_service'):
+                coverage[gate]['status'] = 'waived'
+                cases = {name: 'waived' for name in policy.GATES[gate]}
+                if gate == 'desktop_service':
+                    cases['boot_without_login'] = 'passed'
+                (directory / f'client-acceptance-{gate}.json').write_text(json.dumps(
+                    {'gate': gate, 'status': 'waived', 'cases': cases, 'waiver': dict(waiver, reason=f'{gate} removed.')}))
+            (directory / policy.ACCEPTANCE).write_text(json.dumps({'status': 'accepted_with_waivers', 'coverage': coverage}))
+            (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(
+                {'status': 'waived', 'waiver': dict(waiver, reason='Native VM run not performed.')}))
+            notes = module.waiver_notes(directory)
+            self.assertIn('## Not verified (owner waivers)', notes)
+            self.assertIn('- `stability`: stability removed. Waived cases: `thirty_connections`', notes)
+            self.assertIn('`lock_screen`', notes)
+            self.assertNotIn('`boot_without_login`', notes)
+            self.assertIn('Native VM run not performed.', notes)
+            self.assertNotIn('udp_network', notes)
+            (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps({'status': 'passed'}))
+            coverage = {gate: dict(item, status='passed') for gate, item in coverage.items()}
+            (directory / policy.ACCEPTANCE).write_text(json.dumps({'status': 'passed', 'coverage': coverage}))
+            self.assertEqual(module.waiver_notes(directory), '')
+
     def sdk_fixture(self, directory):
         provenance, _ = self.remote_fixture(directory)
         spec = importlib.util.spec_from_file_location('sdk_notice_policy', module.ROOT / 'scripts/build-remote-android-webrtc.py')

@@ -5,25 +5,56 @@ FRP keeps its independent 0.70.1 version. Existing tunnels remain compatible wit
 7.0+ servers. Remote control requires a 10.0.0 server that advertises the matching
 capabilities and API contract `api-v1.4.0`.
 
-- Remote-control payloads (video, audio, input, clipboard, files) use authenticated
-  UDP P2P only. The server brokers identity, signed grants and leases, and never
-  relays payloads. When no direct UDP path exists, the session fails instead of
-  falling back to a relay or TCP.
-- Optional Windows service host, installed only through an unchecked
-  administrator task, with a durable endpoint, verified pipe peers and local
-  opt-in for secure-desktop access. Unattended access stays off after install.
+- Remote-control payloads (video, audio, input, clipboard, files) use authenticated,
+  end-to-end DTLS-encrypted UDP. Direct P2P is preferred. When it fails, a browser
+  viewer can reach a 10.0.0 host through the server's optional UDP TURN relay,
+  which cannot read the payload. There is no TCP fallback.
+- Hosting is on after sign-in. Stranger connections pop up a bottom-right,
+  always-on-top approval card that does not steal focus, and a "being remotely
+  controlled · disconnect" bar appears while connected. A fixed password skips
+  approval. The device ID is shown as a grouped 9-digit number, and a one-time
+  temporary password uses the same ID.
+- Accepting a request or a temporary password allows screen, input, clipboard,
+  files and system audio for that connection only. The microphone is never
+  auto-approved.
+- The managed Agent runs in a kill-on-close job, so it exits with the GUI. Quitting
+  from the tray or the local API now exits reliably.
 - Authorized system audio (WASAPI loopback on the ordinary desktop) with a
   500 ms media deadline. No microphone capture.
-- Scoped file transfer for the Android controller SDK, released as sealed
-  arm64-v8a and x86_64 archives from one source lock.
 - Guided desktop publishing with local target checks, localized desktop screens
   and system theme support.
 
-The attached acceptance summary records what was verified on these exact package
-bytes. Windows/macOS publisher-signature state is recorded per artifact; hashes
-and malware scans are not OS signatures.
+Lock screen, pre-login and UAC secure-desktop control are not available; unattended
+access is the fixed password on the signed-in desktop. Windows/macOS executables
+carry no publisher signature; hashes and malware scans are not OS signatures.
 
-中文摘要：GUI、CLI、Agent 与原生被控端均为 10.0.0，FRP 保持 0.70.1。远控载荷仅走经认证的 UDP P2P，服务器不中继；无直连 UDP 路径时会话失败，不回退中继或 TCP。新增可选 Windows 服务宿主（默认不启用无人值守）、授权系统音频、Android 控制端 SDK 文件传输与桌面发布向导。实际验证范围以附带的同包验收摘要为准。
+**Verification scope.** A Web viewer controlled this client's Windows host through
+the 10.0.0 production server, over both direct UDP and the TURN relay. These
+worked: screen, keyboard, mouse, Chinese text, clipboard in both directions, file
+transfer from viewer to host (SHA-256 checked), system audio, the approval popup,
+quit and agent cleanup.
+
+The following were not verified and are listed as owner waivers in the attached
+acceptance record:
+
+- file transfer from host to viewer
+- fixed-password mode on the final build
+- Android and Windows-to-Windows controllers
+- multiple monitors and DPI
+- the tunnel runtime matrix
+- the 2-hour and 24-hour soaks
+- the NAT, IPv6 and fault matrix
+- performance comparison
+- 9→10 installer upgrade
+- Linux and macOS runtime
+
+中文摘要：GUI、CLI、Agent 与原生被控端均为 10.0.0，FRP 保持 0.70.1。
+
+- 远控载荷走端到端 DTLS 加密的 UDP，优先直连。直连失败时，浏览器控制端可经服务器可选的 UDP TURN 中继连接 10.0.0 被控端，中继无法读取内容，也不回退 TCP。
+- 登录即开启被控。陌生连接在右下角弹出审批框，连接后显示"正在被远程控制 · 断开"条。
+- 一次性临时密码使用固定设备 ID。接受连接后本次放行画面、键鼠、剪贴板、文件和系统声音，不含麦克风。
+- 不支持锁屏、登录前与 UAC 安全桌面控制。
+- 实测范围见上文；未测项目在验收记录中标为负责人豁免。
 
 ## Previous release: 9.0.0
 

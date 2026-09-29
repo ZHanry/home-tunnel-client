@@ -52,10 +52,29 @@ def fixture(directory):
     return candidate
 
 
-def acceptance_fixture(directory, candidate, candidate_sha):
+WAIVER = {"approved_by": "owner", "approved_at": "2026-09-29T00:40:00Z",
+          "reason": "Owner removed this feature from 10.0.0; not verified.", "disclosed_in": "docs/RELEASE_NOTES.md"}
+
+
+def waived_receipt(expected, gate, cases):
+    """A waiver is not a pass: no environment, measurements or raw evidence are claimed."""
+    return {**expected, "gate": gate, "status": "waived", "reviewed_by": "unit-test-only",
+            "cases": {name: "waived" for name in cases}, "waiver": dict(WAIVER)}
+
+
+def rewrite_receipt(directory, record, gate, receipt):
+    name = f"client-acceptance-{gate}.json"
+    write_json(directory / name, receipt)
+    record["files"][name] = {"sha256": policy.digest(directory / name), "bytes": (directory / name).stat().st_size}
+
+
+def acceptance_fixture(directory, candidate, candidate_sha, waived=()):
     directory.mkdir()
     expected = policy.acceptance_bindings(candidate, candidate_sha)
     for gate, cases in policy.GATES.items():
+        if gate in waived:
+            write_json(directory / f"client-acceptance-{gate}.json", waived_receipt(expected, gate, cases))
+            continue
         metrics = {}
         if gate == "gemini_screenshots":
             metrics = {"applicable": 2, "reviewed": 2, "approved": 2, "blocking": 0, "major": 0, "actual_images_read": True}
@@ -67,15 +86,17 @@ def acceptance_fixture(directory, candidate, candidate_sha):
         elif gate == "performance":
             metrics = {"baseline": {"version": "9.0.0", "revision": "c" * 40, "package_sha256": "d" * 64},
                        "fixed_workload": "policy fixture", "measurements": {n: {"baseline": 1, "candidate": 1} for n in cases}}
-        receipt = {**expected, "gate": gate, "environment": {"fixture": True}, "reviewed_by": "unit-test-only",
+        receipt = {**expected, "gate": gate, "status": "passed", "environment": {"fixture": True}, "reviewed_by": "unit-test-only",
             "cases": {name: "passed" for name in cases}, "metrics": metrics,
             "raw_evidence": [{"location": "unit-test-fixture", "sha256": "e" * 64}]}
         write_json(directory / f"client-acceptance-{gate}.json", receipt)
     for name in ("windows-remote-native-acceptance.json", "windows-final-defender-scan.json"):
         write_json(directory / name, {"fixture": True})
     acceptance = {**expected, "schema_version": 1, "acceptance_complete": True,
+        "status": "accepted_with_waivers" if waived else "passed",
         "files": {p.name: {"sha256": policy.digest(p), "bytes": p.stat().st_size} for p in directory.iterdir()},
-        "coverage": {g: {"status": "passed", "evidence": f"client-acceptance-{g}.json"} for g in policy.GATES}}
+        "coverage": {g: {"status": "waived" if g in waived else "passed", "evidence": f"client-acceptance-{g}.json"}
+                     for g in policy.GATES}}
     write_json(directory / policy.ACCEPTANCE, acceptance)
     return acceptance
 
@@ -142,6 +163,104 @@ class ClientCandidateTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     policy.verify_acceptance(record, root / "acceptance", candidate, sha)
 
+    def test_owner_waived_gates_are_accepted_but_never_reported_as_passed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); candidate = fixture(root / "candidate"); sha = policy.digest(root / "candidate" / policy.MANIFEST)
+            waived = ("stability", "udp_network", "tunnel_management", "desktop_service")
+            record = acceptance_fixture(root / "acceptance", candidate, sha, waived=waived)
+            policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+            self.assertEqual(record["status"], "accepted_with_waivers")
+            expected = policy.acceptance_bindings(candidate, sha)
+            # A partially waived gate keeps its passed cases, and those still need raw evidence.
+            receipt = waived_receipt(expected, "desktop_service", policy.GATES["desktop_service"])
+            receipt["cases"]["boot_without_login"] = "passed"
+            rewrite_receipt(root / "acceptance", record, "desktop_service", receipt)
+            with self.assertRaisesRegex(SystemExit, "hashed evidence"):
+                policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+            receipt["raw_evidence"] = [{"location": "unit-test-fixture", "sha256": "e" * 64}]
+            rewrite_receipt(root / "acceptance", record, "desktop_service", receipt)
+            policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+            # Waived measurements are never evaluated, so they cannot be claimed.
+            receipt = waived_receipt(expected, "stability", policy.GATES["stability"])
+            receipt["metrics"] = {"online_seconds": 0}
+            rewrite_receipt(root / "acceptance", record, "stability", receipt)
+            policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+
+    def test_windows_security_cannot_be_waived(self):
+        self.assertEqual(policy.WAIVABLE_GATES, set(policy.GATES) - {"windows_security"})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); candidate = fixture(root / "candidate"); sha = policy.digest(root / "candidate" / policy.MANIFEST)
+            record = acceptance_fixture(root / "acceptance", candidate, sha, waived=("windows_security",))
+            with self.assertRaisesRegex(SystemExit, "cannot be waived: windows_security"):
+                policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+
+    def test_waiver_requires_owner_reason_disclosure_and_a_past_approval(self):
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        changes = [("reason", None), ("reason", ""), ("reason", "   "), ("disclosed_in", None), ("disclosed_in", 7),
+                   ("approved_by", "maintainer"), ("approved_by", None), ("approved_at", future),
+                   ("approved_at", "2026-09-29T00:40:00"), ("approved_at", None)]
+        for key, value in changes:
+            with self.subTest(key=key, value=value), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); candidate = fixture(root / "candidate"); sha = policy.digest(root / "candidate" / policy.MANIFEST)
+                record = acceptance_fixture(root / "acceptance", candidate, sha, waived=("stability",))
+                receipt = policy.read_json(root / "acceptance" / "client-acceptance-stability.json")
+                if value is None:
+                    del receipt["waiver"][key]
+                else:
+                    receipt["waiver"][key] = value
+                rewrite_receipt(root / "acceptance", record, "stability", receipt)
+                with self.assertRaises(SystemExit):
+                    policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+        for waiver in (None, "owner", []):
+            with self.subTest(waiver=waiver), self.assertRaises(SystemExit):
+                policy.verify_waiver(waiver, "fixture")
+        self.assertEqual(policy.verify_waiver(dict(WAIVER), "fixture"), WAIVER)
+
+    def test_manifest_status_must_disclose_waivers_exactly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); candidate = fixture(root / "candidate"); sha = policy.digest(root / "candidate" / policy.MANIFEST)
+            record = acceptance_fixture(root / "acceptance", candidate, sha, waived=("stability",))
+            for status in ("passed", None, "waived"):
+                with self.subTest(status=status), self.assertRaisesRegex(SystemExit, "status must be accepted_with_waivers"):
+                    policy.verify_acceptance(dict(record, status=status), root / "acceptance", candidate, sha)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); candidate = fixture(root / "candidate"); sha = policy.digest(root / "candidate" / policy.MANIFEST)
+            record = acceptance_fixture(root / "acceptance", candidate, sha)
+            with self.assertRaisesRegex(SystemExit, "status must be passed"):
+                policy.verify_acceptance(dict(record, status="accepted_with_waivers"), root / "acceptance", candidate, sha)
+            for status in ("failed", "skipped", None):
+                altered = copy.deepcopy(record); altered["coverage"]["stability"]["status"] = status
+                with self.subTest(coverage=status), self.assertRaisesRegex(SystemExit, "neither passed nor waived"):
+                    policy.verify_acceptance(altered, root / "acceptance", candidate, sha)
+
+    def test_waived_receipt_cannot_hide_failures_or_disagree_with_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); candidate = fixture(root / "candidate"); sha = policy.digest(root / "candidate" / policy.MANIFEST)
+            record = acceptance_fixture(root / "acceptance", candidate, sha, waived=("stability",))
+            original = policy.read_json(root / "acceptance" / "client-acceptance-stability.json")
+            all_passed = dict(original, cases={name: "passed" for name in policy.GATES["stability"]},
+                              raw_evidence=[{"location": "unit-test-fixture", "sha256": "e" * 64}])
+            for label, receipt in (("failed case", dict(original, cases=dict(original["cases"], recovery="failed"))),
+                                   ("skipped case", dict(original, cases=dict(original["cases"], recovery="skipped"))),
+                                   ("no waived case", all_passed),
+                                   ("status passed", dict(original, status="passed")),
+                                   ("no status", {k: v for k, v in original.items() if k != "status"}),
+                                   ("no waiver", {k: v for k, v in original.items() if k != "waiver"}),
+                                   ("no reviewer", dict(original, reviewed_by="")),
+                                   ("wrong gate", dict(original, gate="performance"))):
+                rewrite_receipt(root / "acceptance", record, "stability", receipt)
+                with self.subTest(label=label), self.assertRaises(SystemExit):
+                    policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); candidate = fixture(root / "candidate"); sha = policy.digest(root / "candidate" / policy.MANIFEST)
+            record = acceptance_fixture(root / "acceptance", candidate, sha)
+            receipt = policy.read_json(root / "acceptance" / "client-acceptance-stability.json")
+            for label, altered in (("waived case in passed gate", dict(receipt, cases=dict(receipt["cases"], recovery="waived"))),
+                                   ("waived receipt under passed coverage", dict(receipt, status="waived", waiver=dict(WAIVER)))):
+                rewrite_receipt(root / "acceptance", record, "stability", altered)
+                with self.subTest(label=label), self.assertRaises(SystemExit):
+                    policy.verify_acceptance(record, root / "acceptance", candidate, sha)
+
     def test_download_checks_exact_successful_run_artifact_and_digest(self):
         run = {"repository": {"full_name": policy.REPOSITORY}, "path": policy.CALLER, "event": "workflow_dispatch",
                "head_sha": "a" * 40, "id": 123, "status": "completed", "conclusion": "success", "run_attempt": 1}
@@ -205,6 +324,23 @@ class ClientCandidateTests(unittest.TestCase):
             self.assertIs(policy.read_json(root / "release" / policy.ACCEPTANCE)["acceptance_complete"], True)
             with self.assertRaisesRegex(SystemExit, "new directory"):
                 stage.stage(source, root / "release", "a" * 40, "10.0.0")
+
+    def test_staging_carries_owner_waivers_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); source = root / "download"; source.mkdir()
+            candidate = fixture(source / "candidate"); sha = policy.digest(source / "candidate" / policy.MANIFEST)
+            acceptance_fixture(source / "acceptance", candidate, sha, waived=("stability", "udp_network"))
+            write_json(source / "client-candidate-download.json", {"source_revision": candidate["revision"],
+                "signatures_verified": True, "run_attestations_verified": True, "acceptance_revision": "b" * 40,
+                "candidate_sha256": sha})
+            write_json(source / "acceptance/client-acceptance-origin.json", {"fixture": True})
+            (source / "verification").mkdir()
+            for name in [policy.MANIFEST, *candidate["packages"]]:
+                write_json(source / "verification" / (name + ".verification.json"), {"fixture": True})
+            stage.stage(source, root / "release", "a" * 40, "10.0.0")
+            for path in (source / "acceptance").iterdir():
+                self.assertEqual((root / "release" / path.name).read_bytes(), path.read_bytes())
+            self.assertEqual(policy.read_json(root / "release" / policy.ACCEPTANCE)["status"], "accepted_with_waivers")
 
 
 if __name__ == "__main__":

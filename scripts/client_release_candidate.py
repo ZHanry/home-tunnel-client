@@ -2,6 +2,8 @@
 
 Receipt validation checks the recorded evidence contract. A maintainer must review
 the raw VM logs, captures and measurements before committing a passed receipt.
+An owner waiver records that a gate or case was not verified; it is never a pass
+and carries no measured results.
 """
 from datetime import datetime, timezone, timedelta
 import hashlib
@@ -33,6 +35,8 @@ GATES = {
     "other_desktop_builds": ("linux_amd64", "linux_arm64", "macos_amd64", "macos_arm64"),
     "windows_security": ("final_bytes_rescan", "installer_lifecycle", "installed_payload_hashes"),
 }
+# windows_security is backed by the real CI installer smoke and final Defender rescan; it must pass.
+WAIVABLE_GATES = frozenset(GATES) - {"windows_security"}
 
 
 def digest(path):
@@ -92,6 +96,18 @@ def timestamp(value):
     raise SystemExit("Evidence timestamp must include a timezone")
 
 
+def verify_waiver(waiver, label):
+    """An owner waiver must say who approved skipping what, when, why and where it is disclosed."""
+    if not isinstance(waiver, dict) or waiver.get("approved_by") != "owner":
+        raise SystemExit("Waiver must be approved by the owner: " + label)
+    if timestamp(waiver.get("approved_at")) > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise SystemExit("Waiver approval time is in the future: " + label)
+    for key in ("reason", "disclosed_in"):
+        if not isinstance(waiver.get(key), str) or not waiver[key].strip():
+            raise SystemExit(f"Waiver {key} is missing: {label}")
+    return waiver
+
+
 def verify_candidate(record, directory, revision, version):
     expected = {"schema_version": 1, "repository": REPOSITORY, "revision": revision, "version": version,
         "verification_stage": "candidate", "tag_published": False, "acceptance_complete": False, "source_modified": False}
@@ -129,7 +145,7 @@ def verify_candidate(record, directory, revision, version):
 
 
 def acceptance_bindings(candidate, candidate_sha):
-    return {"repository": REPOSITORY, "status": "passed", "revision": candidate["revision"],
+    return {"repository": REPOSITORY, "revision": candidate["revision"],
         "candidate_sha256": candidate_sha, "packages": candidate["packages"], "server": candidate["server"]}
 
 
@@ -143,21 +159,49 @@ def verify_acceptance(record, directory, candidate, candidate_sha):
     if set(record.get("files", {})) != names or set(record.get("coverage", {})) != set(GATES):
         raise SystemExit("Every required client acceptance receipt must be present")
     verify_files(record["files"], directory)
+    statuses = {}
+    for gate in GATES:
+        coverage = record["coverage"][gate]
+        status = coverage.get("status") if isinstance(coverage, dict) else None
+        if status not in ("passed", "waived") or coverage != {"status": status, "evidence": f"client-acceptance-{gate}.json"}:
+            raise SystemExit("Acceptance gate neither passed nor waived: " + gate)
+        if status == "waived" and gate not in WAIVABLE_GATES:
+            raise SystemExit("Acceptance gate cannot be waived: " + gate)
+        statuses[gate] = status
+    overall = "passed" if all(s == "passed" for s in statuses.values()) else "accepted_with_waivers"
+    if record.get("status") != overall:
+        raise SystemExit("Acceptance status must be " + overall)
     for gate, required_cases in GATES.items():
-        name = f"client-acceptance-{gate}.json"
-        if record["coverage"][gate] != {"status": "passed", "evidence": name}:
-            raise SystemExit("Acceptance gate not passed: " + gate)
+        name, status = f"client-acceptance-{gate}.json", statuses[gate]
         receipt = read_json(local_file(directory, name))
         if (any(receipt.get(k) != v for k, v in expected.items()) or receipt.get("gate") != gate or
-                not isinstance(receipt.get("environment"), dict) or not receipt["environment"] or not receipt.get("reviewed_by")):
-            raise SystemExit("Receipt source, package, environment or reviewer missing: " + gate)
+                receipt.get("status") != status or not isinstance(receipt.get("reviewed_by"), str) or
+                not receipt["reviewed_by"].strip()):
+            raise SystemExit("Receipt source, package, status or reviewer missing: " + gate)
         cases = receipt.get("cases", {})
-        if not isinstance(cases, dict) or not set(required_cases) <= cases.keys() or any(v != "passed" for v in cases.values()):
+        if (not isinstance(cases, dict) or not set(required_cases) <= cases.keys() or
+                any(v not in ("passed", "waived") for v in cases.values())):
             raise SystemExit("Required cases are missing, failed or skipped: " + gate)
+        environment = receipt.get("environment")
+        if status == "passed":
+            if any(v != "passed" for v in cases.values()):
+                raise SystemExit("A passed gate cannot contain waived cases: " + gate)
+            if not isinstance(environment, dict) or not environment:
+                raise SystemExit("Receipt test environment missing: " + gate)
+        else:
+            if "waived" not in cases.values():
+                raise SystemExit("A waived gate must name its waived cases: " + gate)
+            verify_waiver(receipt.get("waiver"), gate)
+            if environment is not None and not isinstance(environment, dict):
+                raise SystemExit("Receipt test environment is malformed: " + gate)
         raw = receipt.get("raw_evidence", [])
-        if (not isinstance(raw, list) or not raw or any(not r.get("location") or
-                not re.fullmatch(r"[0-9a-f]{64}", str(r.get("sha256", ""))) for r in raw)):
+        if (not isinstance(raw, list) or ("passed" in cases.values() and not raw) or
+                any(not isinstance(r, dict) or not r.get("location") or
+                    not re.fullmatch(r"[0-9a-f]{64}", str(r.get("sha256", ""))) for r in raw)):
             raise SystemExit("Receipt must locate original hashed evidence: " + gate)
+        if status == "waived":
+            # A waiver carries no measured results; nothing here is a pass.
+            continue
         metrics = receipt.get("metrics", {})
         if gate == "gemini_screenshots":
             total = metrics.get("applicable")
