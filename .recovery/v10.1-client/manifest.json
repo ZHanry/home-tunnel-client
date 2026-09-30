@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "repository": "ZHanry/home-tunnel-client",
+  "branch": "codex/windows-v10-1",
+  "expected_parent": "4c2cbfcc896d5939fa6641e2fff3ad8f0b80eb62",
+  "server_revision": "a3ed77d12c77d241c835f6a836208733838e0de0",
+  "patch_sha256": "5f95f117aec220da13c584be1e8c5256df82e8496f0ac41be590b6a402aed2e4",
+  "files": [
+    {
+      "path": "compatibility.json",
+      "before_sha256": "0f353ecab7f82f2c6afadc07251ff8c6f362368eac663cb84b272e72e511b44f",
+      "after_sha256": "3cd6a7388685a0fa24ad3c9ad03185857c2c16c6e97efa973d9d1e6597a302a3",
+      "after_bytes": 1186
+    },
+    {
+      "path": "contracts/api.schema.json",
+      "before_sha256": "c0a8714cee6bc9e5cfa8db0df8e2636c0e9f79d26ce461813482e4520f89f493",
+      "after_sha256": "da9ac1a82d69d86c65131dc55750d904f96acc73aeb56f326269600ef723c154",
+      "after_bytes": 199322
+    },
+    {
+      "path": "contracts/lock.json",
+      "before_sha256": "bb43f88dd218c39c5d04f8cea51b25839d92f76619540e1ff5c7399b27a78f6d",
+      "after_sha256": "9ca17f7e31613478654d5f28326ffc99b8dd1b94ab30378e08951e643b4c6dfa",
+      "after_bytes": 885
+    },
+    {
+      "path": "contracts/openapi.v1.json",
+      "before_sha256": "080e508814ce5c29c2a0c7dc847ebc11cf9e50f26a24d9e47110ce724d76676b",
+      "after_sha256": "ea22c18e354e5c7af2bc74688db147e8944a901a1e880b99d98ef2c967e10160",
+      "after_bytes": 1014931
+    },
+    {
+      "path": "contracts/remote.lock.json",
+      "before_sha256": "ff81fd58ad6ae93d5e76e5a1c0888560122bbe3bd09e583ce18db66ff50355a6",
+      "after_sha256": "f411447d80340ae2287f7081a42dd76f30c606384279912af188e200945ce3f4",
+      "after_bytes": 1316
+    },
+    {
+      "path": "internal/gui/web/desktop.js",
+      "before_sha256": "410e0c308627dcbab96b3df180c7ad3cd9c54a8c97ea149bf02687b4eeb1cdb1",
+      "after_sha256": "9ac06aadb3c8b58aad30693e7a0bbb94fa3a2616e74e4c80895365e624071897",
+      "after_bytes": 121458
+    },
+    {
+      "path": "tests/remote-native/server-lock.json",
+      "before_sha256": "7e5dce44e3ef2c159d44a3699b956dfa6ce629c1144c7b57998b97541a37d121",
+      "after_sha256": "1249695eb38a7af86f66ea4b2a0260e9072dc7bd25e3c046982a3c1669f637e4",
+      "after_bytes": 129
+    }
+  ]
+}
