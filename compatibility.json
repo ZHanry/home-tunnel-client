@@ -2,7 +2,7 @@
   "component": "client",
   "stage": "public-release",
   "api_major": 1,
-  "contract_ref": "api-v1.4.0",
+  "contract_ref": "api-v1.5.0",
   "support_policy": "10.1.0 candidate. Existing 7.0+ tunnels keep API v1 compatibility. Native remote sign-in handoff and current-device rename require Server 10.1.0 and the additive API 1.5.0 contract. Remote-control payloads use authenticated end-to-end DTLS UDP, preferring direct P2P with optional server UDP TURN and no TCP fallback. Formal publication requires a frozen API contract and reviewed acceptance receipts bound to these exact candidate packages. The release notes identify verified and unverified coverage. FRP keeps its independent upstream version.",
   "version": "10.1.0",
   "minimum_server": "7.0.0",
@@ -12,9 +12,9 @@
     "android": "10.0.0",
     "agent": "10.0.0"
   },
-  "contract_status": "frozen",
-  "frozen_tag": "api-v1.4.0",
-  "previous_immutable_tag": "api-v1.3.0",
+  "contract_status": "proposed",
+  "frozen_tag": null,
+  "previous_immutable_tag": "api-v1.4.0",
   "tested_combination_scope": "historical 10.0.0 candidate only; 10.1.0 final-artifact acceptance pending",
   "target_combination": {
     "server": "10.1.0",
