@@ -10,7 +10,7 @@ This work addresses the five reported Windows desktop issues. Version 10.1.0 is 
 4. Settings contains update controls and the server address. Device name editing belongs to My Devices. Device tags, appearance options and the return-to-local-services button are removed from Settings.
 5. Sign-in has wider fields and more spacing, scrolls at small sizes, and retains actionable retry and keyboard behavior.
 
-Server 10.1.0 is required for the new handoff and current-device rename. An older server must produce a clear upgrade message. API 1.5.0 is additive and must be reviewed and frozen before formal publication; API 1.4.0 remains unchanged.
+Server 10.1.0 is required for the new handoff and current-device rename. An older server must produce a clear upgrade message. API 1.5.0 is additive and is imported from the verified immutable api-v1.5.0 tag with exact source and SHA-256 locks; API 1.4.0 remains unchanged. Contract freeze does not establish final-package acceptance.
 
 ## Evidence boundaries
 
