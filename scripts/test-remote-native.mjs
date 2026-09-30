@@ -392,7 +392,8 @@ try {
       report.checks.website_native_input = true;
       await page.evaluate(() => document.querySelector('.remote-dialog [data-release]').click());
     }
-    await page.locator('.remote-dialog [data-close]').click();
+    stage = 'website_shutdown';
+    await page.locator('.remote-dialog [data-disconnect]').click();
     await until(async () => (await rpc('state')).session_idle, 'E2E_WEBSITE_SESSION_DID_NOT_CLOSE', 10000);
     report.checks.clean_session_shutdown = true;
   } else {

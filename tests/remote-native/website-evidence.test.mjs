@@ -1,6 +1,7 @@
 // Predicate tests only. These fixtures cannot establish native media success.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { verifiedWebsiteMedia, websiteInputGranted, collectFailureMedia } from './website-evidence.mjs';
 
 const measured = { viewer_live: true, video_paused: false, media_mask_hidden: true, host_udp_verified: true,
@@ -38,4 +39,9 @@ test('website failures retain website stats rather than missing harness globals'
   }), snapshot);
   assert.deepEqual(await collectFailureMedia(page, 'website', measured, async () => undefined), measured);
   assert.deepEqual(await collectFailureMedia(page, 'website', measured, async () => { throw new Error('closed'); }), measured);
+});
+test('popout shutdown uses the real disconnect control and requires native idle', () => {
+  const runner = readFileSync(new URL('../../scripts/test-remote-native.mjs', import.meta.url), 'utf8');
+  assert.match(runner, /stage = 'website_shutdown';\s+await page\.locator\('\.remote-dialog \[data-disconnect\]'\)\.click\(\);\s+await until\(async \(\) => \(await rpc\('state'\)\)\.session_idle/);
+  assert.doesNotMatch(runner, /page\.locator\('\.remote-dialog \[data-close\]'\)\.click/);
 });
