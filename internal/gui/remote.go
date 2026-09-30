@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/ZHanry/home-tunnel-client/internal/api"
-	"github.com/ZHanry/home-tunnel-client/internal/app"
 	"github.com/ZHanry/home-tunnel-client/internal/model"
 	"github.com/ZHanry/home-tunnel-client/internal/remote"
 	"github.com/ZHanry/home-tunnel-client/internal/remotehost"
@@ -86,7 +85,7 @@ func (host *localRemoteHost) enrollAndEnable(ctx context.Context, state model.St
 	host.trustPin = trustPin
 	host.trustFirstUse = trustPin == ""
 	host.mu.Unlock()
-	err := host.service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: state.DeviceID, Name: app.DefaultDeviceName(), Platform: runtime.GOOS, Password: password, MFACode: mfaCode})
+	err := host.service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: state.DeviceID, Name: localDeviceName(state), Platform: runtime.GOOS, Password: password, MFACode: mfaCode})
 	host.mu.Lock()
 	host.token = ""
 	host.trustPin = ""

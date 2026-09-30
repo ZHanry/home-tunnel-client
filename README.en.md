@@ -27,9 +27,12 @@ enrollment code. Create local HTTP services or authorized TCP/UDP connections;
 SSH/RDP/RTSP presets are available. Public ports are allocated server-side. The
 target application supplies raw transport authentication/encryption.
 
-This device session manages only the current host. Edit tags/favorites in settings
-and select up to 50 local connections for batch pause/resume with individual
-results. Use Web/Android for account-wide management.
+This device session manages only the current host. The 10.1.0 candidate moves
+current-device rename to My Devices and combines server details and updates in
+Settings, without device tags or appearance controls. Select up to 50 local
+connections for batch pause/resume with individual results. Use Web/Android for
+account-wide management. Native remote sign-in reuse and rename require Server
+10.1.0. This candidate is not released; see [verification scope](docs/V10_1_CANDIDATE.md).
 
 ```sh
 home-tunnel-client enroll --server https://console.your-domain.net \

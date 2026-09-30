@@ -26,7 +26,6 @@ const (
 	wmDisplayChange   = 0x007E
 	swShowNoActivate  = 4
 	swpNoActivate     = 0x0010
-	swpShowWindow     = 0x0040
 	spiGetWorkArea    = 0x0030
 	spiSetWorkArea    = 0x002F
 	idcArrow          = 32512
@@ -132,7 +131,7 @@ func hideNativeApprovalPopup() {
 }
 
 // ensureApprovalPopup creates the hidden window and its WebView2 once. The
-// page loads while hidden and is shown after navigation completes, so the
+// page loads while hidden and is shown after its rendered-content handshake, so the
 // user never sees an empty white frame.
 func ensureApprovalPopup(address string) bool {
 	if popupHWND != 0 {
@@ -146,7 +145,8 @@ func ensureApprovalPopup(address string) bool {
 	className, _ := windows.UTF16PtrFromString(popupClassName)
 	if !popupRegister {
 		cursor, _, _ := procLoadCursor.Call(0, idcArrow)
-		class := wndClassEx{WndProc: popupWndProc, Instance: instance, Cursor: windows.Handle(cursor), ClassName: className}
+		// COLOR_WINDOW + 1 supplies an opaque system brush while WebView2 paints.
+		class := wndClassEx{WndProc: popupWndProc, Instance: instance, Cursor: windows.Handle(cursor), Background: windows.Handle(6), ClassName: className}
 		class.Size = uint32(unsafe.Sizeof(class))
 		if atom, _, _ := procRegisterClassEx.Call(uintptr(unsafe.Pointer(&class))); atom == 0 {
 			popupFailed = true
@@ -166,11 +166,21 @@ func ensureApprovalPopup(address string) bool {
 		procDwmSetAttribute.Call(hwnd, dwmCornerPref, uintptr(unsafe.Pointer(&preference)), unsafe.Sizeof(preference))
 	}
 	view := edge.NewChromium()
-	view.MessageCallback = func(string) {}
-	view.NavigationCompletedCallback = func(*edge.ICoreWebView2, *edge.ICoreWebView2NavigationCompletedEventArgs) {
-		popupLoaded = true
-		if popupMode != "" {
-			applyApprovalPopup()
+	view.MessageCallback = func(message string) {
+		switch message {
+		case "ht-popup:ready":
+			popupLoaded = true
+			if popupMode != "" {
+				applyApprovalPopup()
+			}
+		case "ht-popup:rendered:request", "ht-popup:rendered:session":
+			if popupLoaded && message == "ht-popup:rendered:"+popupMode {
+				revealApprovalPopup()
+			}
+		case "ht-popup:empty:request", "ht-popup:empty:session":
+			if message == "ht-popup:empty:"+popupMode {
+				procShowWindow.Call(popupHWND, swHide)
+			}
 		}
 	}
 	popupHWND, popupView = hwnd, view
@@ -190,12 +200,19 @@ func ensureApprovalPopup(address string) bool {
 		_ = settings.PutIsStatusBarEnabled(false)
 		_ = settings.PutAreBrowserAcceleratorKeysEnabled(false)
 	}
+	// Never use a transparent WebView backing surface for the approval window.
+	if controller := view.GetController().GetICoreWebView2Controller2(); controller != nil {
+		_ = controller.PutDefaultBackgroundColor(edge.COREWEBVIEW2_COLOR{A: 255, R: 255, G: 255, B: 255})
+	}
 	view.Resize()
 	view.Navigate(address)
 	return true
 }
 
 func applyApprovalPopup() {
+	// A mode change may temporarily have no matching JS state. Stay hidden until
+	// the content acknowledgement rather than displaying an empty surface.
+	procShowWindow.Call(popupHWND, swHide)
 	width, height := popupSize(popupMode)
 	dpi := uint32(96)
 	if procGetDpiForSystem.Find() == nil {
@@ -206,10 +223,16 @@ func applyApprovalPopup() {
 	bounds := popupBounds(workArea(), scaleForDPI(width, dpi), scaleForDPI(height, dpi), scaleForDPI(popupMargin, dpi))
 	hwndTopmost := ^uintptr(0)
 	procSetWindowPos.Call(popupHWND, hwndTopmost, uintptr(bounds.Left), uintptr(bounds.Top),
-		uintptr(bounds.Right-bounds.Left), uintptr(bounds.Bottom-bounds.Top), swpNoActivate|swpShowWindow)
-	procShowWindow.Call(popupHWND, swShowNoActivate)
+		uintptr(bounds.Right-bounds.Left), uintptr(bounds.Bottom-bounds.Top), swpNoActivate)
 	popupView.Resize()
 	popupView.Eval(fmt.Sprintf("window.htPopup&&window.htPopup.show(%q)", popupMode))
+}
+
+// Revealing is a separate step: popup.js acknowledges that its mode has real
+// content. Navigation completion alone does not mean deferred scripts painted.
+func revealApprovalPopup() {
+	procShowWindow.Call(popupHWND, swShowNoActivate)
+	popupView.Resize()
 	if popupFlash {
 		popupFlash = false
 		// A tool window has no taskbar button; flash the main window's one
@@ -253,6 +276,9 @@ func popupWindowProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		// Alt+F4 only hides the popup; the request stays in the main window.
 		popupMode = ""
 		procShowWindow.Call(hwnd, swHide)
+		if popupLoaded {
+			popupView.Eval("window.htPopup&&window.htPopup.hide()")
+		}
 		return 0
 	}
 	ret, _, _ := procDefWindowProc.Call(hwnd, msg, wParam, lParam)

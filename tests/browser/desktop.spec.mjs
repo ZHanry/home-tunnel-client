@@ -356,7 +356,7 @@ test("English navigation and live locale changes preserve user names and drafts"
     }
     return found;
   });
-  for (const tab of ["remote", "devices", "tunnels", "settings", "updates"]) {
+  for (const tab of ["remote", "devices", "tunnels", "settings"]) {
     await page.locator("#nav-" + tab).click();
     await expect.poll(untranslated).toEqual([]);
   }
@@ -370,14 +370,13 @@ test("English navigation and live locale changes preserve user names and drafts"
   await page.locator("#nav-tunnels").click();
   await expect(page.locator(".service-identity strong")).toHaveText("在线");
   await page.locator("#nav-settings").click();
-  await expect(page.locator("#device-tags")).toHaveValue("home");
-  await page.locator("#device-tags").fill("home, draft");
+  await expect(page.locator("#device-tags, #theme-preference, #settings-back, #nav-updates")).toHaveCount(0);
   await page.locator("#sidebar-locale").click();
-  await expect(page.locator("#device-tags")).toHaveValue("home, draft");
+  await expect(page.locator("#settings-update h2")).toHaveText("软件更新");
 });
 
 test("system theme follows the OS and persists while explicit light mode stays fixed", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("ht_theme", "system"));
+  await page.addInitScript(() => { if (!localStorage.getItem("ht_theme")) localStorage.setItem("ht_theme", "system"); });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.route("**/local/device/metadata", route => route.fulfill({ json: { tags: [], metadata_version: 1 } }));
   await services(page, undefined);
@@ -388,13 +387,14 @@ test("system theme follows the OS and persists while explicit light mode stays f
   await page.reload();
   expect(await page.evaluate(() => localStorage.getItem("ht_theme"))).toBe("system");
   await page.locator("#nav-settings").click();
-  await page.locator("#theme-preference").selectOption("light");
+  await page.locator("#sidebar-theme").click();
+  await page.locator("#sidebar-theme").click();
   await page.emulateMedia({ colorScheme: "dark" });
   await expect.poll(() => page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(true);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   expect(await page.evaluate(() => localStorage.getItem("ht_theme"))).toBe("light");
-  await page.locator("#theme-preference").selectOption("system");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 
 test("batch selection confirms the affected names and preserves each result", async ({page}) => {
@@ -411,20 +411,20 @@ test("batch selection confirms the affected names and preserves each result", as
   expect(body).toEqual({enabled:false,items:[{id:"one",expected_version:3},{id:"two",expected_version:4}]});
 });
 
-test("device tags use a version and retain the draft on conflict", async ({page}) => {
-  await services(page,undefined);
-  let body;
-  await page.route("**/local/device/metadata",route=>{
-    if(route.request().method()==="PATCH") {body=route.request().postDataJSON();return route.fulfill({status:409,json:{message:"Metadata changed; refresh before retrying"}});}
-    return route.fulfill({json:{id:"local",tags:["home"],favorite:false,metadata_version:4}});
-  });
+test("settings include updates and the server on first navigation without metadata", async ({page}) => {
+  await page.route("**/local/state", route => route.fulfill({json:{enrolled:true,console_url:"https://console.example.test",device_name:"My PC",version:"10.1.0",connections:[]}}));
+  await page.route("**/local/devices", route => route.fulfill({json:{local_device_id:"local",items:[]}}));
+  await page.route("**/local/update", route => route.fulfill({json:{current:"10.1.0",newer:false}}));
+  let metadataCalls = 0;
+  await page.route("**/local/device/metadata", route => { ++metadataCalls; return route.fulfill({json:{}}); });
+  await page.reload();
+  await expect(page.locator("#remote-page")).toBeVisible();
   await page.locator("#nav-settings").click();
-  await expect(page.locator("#device-tags")).toHaveValue("home");
-  await page.locator("#device-tags").fill("home, nas");await page.locator("#device-favorite").check();
-  await page.locator("#metadata-save").click();
-  await expect(page.locator("#settings-error")).toContainText("Metadata changed");
-  await expect(page.locator("#device-tags")).toHaveValue("home, nas");
-  expect(body).toEqual({tags:["home","nas"],favorite:true,expected_metadata_version:4});
+  await expect(page.locator("#settings-server")).toHaveText("https://console.example.test");
+  await expect(page.locator("#settings-update")).toBeVisible();
+  await expect(page.locator("#update-current-version")).toHaveText("10.1.0");
+  await expect(page.locator("#device-tags, #device-favorite, #metadata-save, #theme-preference, #settings-back, #nav-updates")).toHaveCount(0);
+  expect(metadataCalls).toBe(0);
 });
 
 test("RTSP preset creates TCP with an automatic port and no required web subdomain", async ({page}) => {
@@ -606,10 +606,10 @@ test("a slow device request cannot restore an old navigation highlight", async (
   await expect(page.locator("#nav-tunnels")).toHaveClass(/active/);
 });
 
-test("updates page shows the installed version without inventing a release", async ({page}) => {
+test("settings show the installed version without inventing a release", async ({page}) => {
   await services(page,undefined);
   await page.route("**/local/update", route => route.fulfill({json:{current:"8.0.0",newer:false}}));
-  await page.locator("#nav-updates").click();
+  await page.locator("#nav-settings").click();
   await expect(page.locator("#update-version-badge")).toHaveText("8.0.0");
   await expect(page.locator("#update-page-status")).toContainText("当前没有更新的正式版本");
   await expect(page.locator(".update-logo svg")).toHaveCount(1);
@@ -617,7 +617,7 @@ test("updates page shows the installed version without inventing a release", asy
   await page.route("**/local/update", route => route.fulfill({json:{current:"8.0.0",latest:"8.2.0",newer:true,url:"https://github.com/ZHanry/home-tunnel-client/releases/tag/8.2.0"}}));
   await page.locator("#update-check").click();
   await expect(page.locator(".nav-update-dot")).toBeVisible();
-  await expect(page.locator("#nav-updates")).toHaveAttribute("aria-label", /8\.2\.0/);
+  await expect(page.locator("#nav-settings")).toHaveAttribute("aria-label", /8\.2\.0/);
 });
 
 test("desktop login fields have names and theme uses a readable button foreground", async ({
@@ -731,26 +731,147 @@ test("scrollbars are hidden while pages keep wheel and keyboard scrolling", asyn
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
 });
 
-test("the sign-in view never scrolls at the minimum window size or common sizes", async ({ page }) => {
-  // 944x600 is the client area of the 960x640 minimum native window.
-  for (const [width, height] of [[944, 600], [1100, 720], [1280, 800], [1440, 960]]) {
+test("spacious sign-in stays usable in short, narrow and MFA recovery windows", async ({ page }) => {
+  for (const [width, height] of [[390, 600], [944, 600], [1100, 720], [1280, 800], [1440, 960]]) {
     await page.setViewportSize({ width, height });
-    await expect(page.locator("#login")).toBeVisible();
     for (const reveal of [[], ["mfa-step"], ["mfa-step", "password-change"]]) {
       await page.evaluate(ids => ids.forEach(id => document.getElementById(id).classList.remove("hidden")), reveal);
-      const sizes = await page.evaluate(() => {
-        const login = document.getElementById("login"), submit = document.getElementById("login-button").getBoundingClientRect();
-        return { document: [document.documentElement.scrollHeight, document.documentElement.clientHeight], body: [document.body.scrollHeight, document.body.clientHeight], login: [login.scrollHeight, login.clientHeight], submitBottom: submit.bottom, overflow: getComputedStyle(document.body).overflowY };
-      });
-      const label = `${width}x${height} ${reveal.join("+") || "base"}`;
-      expect(sizes.document[0], label).toBeLessThanOrEqual(sizes.document[1]);
-      expect(sizes.body[0], label).toBeLessThanOrEqual(sizes.body[1]);
-      expect(sizes.login[0], label).toBeLessThanOrEqual(sizes.login[1]);
-      expect(sizes.submitBottom, label).toBeLessThanOrEqual(height);
-      expect(sizes.overflow, label).toBe("hidden");
+      const sizes = await page.evaluate(() => ({ width:document.documentElement.clientWidth, scrollWidth:document.documentElement.scrollWidth, input:document.getElementById("server").getBoundingClientRect().toJSON(), password:document.getElementById("password").getBoundingClientRect().toJSON(), overflow:getComputedStyle(document.body).overflowY }));
+      expect(sizes.scrollWidth).toBeLessThanOrEqual(sizes.width);
+      expect(sizes.input.height).toBeGreaterThanOrEqual(48);
+      expect(sizes.input.width).toBeGreaterThanOrEqual(230);
+      expect(sizes.password.width).toBeGreaterThanOrEqual(170);
+      expect(sizes.overflow).toBe("auto");
+      await page.locator("#login-button").scrollIntoViewIfNeeded();
+      await expect(page.locator("#login-button")).toBeInViewport();
+      if (reveal.includes("password-change")) { await page.locator("#confirm-password").scrollIntoViewIfNeeded(); await expect(page.locator("#confirm-password")).toBeInViewport(); }
     }
     await page.evaluate(() => ["mfa-step", "password-change"].forEach(id => document.getElementById(id).classList.add("hidden")));
   }
   await page.locator("#login-button").focus();
   await expect(page.locator("#login-button")).toBeFocused();
+});
+
+async function enrolledDevices(page) {
+  const current = {id:"local", name:"This workstation", status:"active", online:true};
+  const peer = {id:"peer", name:"Other workstation", status:"active", online:true};
+  await page.route("**/local/state", route => route.fulfill({json:{enrolled:true,console_url:"https://console.example.test",device_name:current.name,version:"10.1.0",connections:[]}}));
+  await page.route("**/local/devices", route => route.fulfill({json:{local_device_id:current.id,items:[current,peer]}}));
+  await page.route("**/local/update", route => route.fulfill({json:{current:"10.1.0",newer:false}}));
+  await page.route("**/local/remote/state", route => route.fulfill({json:{enrolled:true,enabled:true,running:true,capabilities:{available:true},access_profile:{device_id:"482913570"},pending:[],grants:[]}}));
+  await page.reload();
+  await expect(page.locator("#remote-page")).toBeVisible();
+  return {current,peer};
+}
+
+test("current device renames once, preserves failed drafts, and survives reload", async ({page}) => {
+  const {current} = await enrolledDevices(page);
+  let fail = true, requests = [], release;
+  await page.route("**/local/device/name", async route => {
+    const body = route.request().postDataJSON(); requests.push(body);
+    if (fail) return route.fulfill({status:503,json:{message:"Rename temporarily unavailable"}});
+    await new Promise(resolve => {release=resolve;});
+    current.name = body.name;
+    return route.fulfill({json:{device_name:current.name}});
+  });
+  await page.locator("#nav-devices").click();
+  const local = page.locator(".account-device-card").filter({hasText:"This workstation"});
+  await expect(local.getByRole("button",{name:"远程控制",exact:true})).toHaveCount(0);
+  await local.getByRole("button",{name:"重命名本机"}).click();
+  await expect(page.locator("#device-name")).toHaveValue(current.name);
+  await page.locator("#device-name").fill("  Studio <one>  ");
+  await page.locator("#device-rename-save").click();
+  await expect(page.locator("#device-rename-error")).toHaveText("Rename temporarily unavailable");
+  await expect(page.locator("#device-name")).toHaveValue("  Studio <one>  ");
+  fail=false;
+  await page.locator("#device-rename-save").click();
+  await expect.poll(()=>requests.length).toBe(2);
+  await page.locator("#device-name").press("Enter");
+  expect(requests).toEqual([{name:"Studio <one>"},{name:"Studio <one>"}]);
+  release();
+  await expect(page.locator("#device-rename")).not.toBeVisible();
+  await expect(page.locator("#sidebar-machine")).toHaveText("Studio <one>");
+  await expect(page.locator("#devices-list [data-no-translate]").first()).toHaveText("Studio <one>");
+  await expect(page.locator("#devices-list one")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator("#sidebar-machine")).toHaveText("Studio <one>");
+  await page.locator("#nav-devices").click();
+  await page.getByRole("button",{name:"重命名本机"}).click();
+  await expect(page.locator("#device-name")).toHaveValue("Studio <one>");
+});
+
+test("rename Cancel, Escape and navigation discard drafts without changing names", async ({page}) => {
+  await enrolledDevices(page);
+  let changes=0;
+  await page.route("**/local/device/name", route => { ++changes; return route.fulfill({json:{device_name:"unexpected"}}); });
+  await page.locator("#nav-devices").click();
+  for (const dismiss of ["cancel", "escape", "navigate"]) {
+    await page.getByRole("button",{name:"重命名本机"}).click();
+    await page.locator("#device-name").fill("Abandoned draft");
+    if (dismiss === "cancel") await page.locator("#device-rename-cancel").click();
+    else if (dismiss === "escape") await page.keyboard.press("Escape");
+    else await page.evaluate(()=>document.getElementById("nav-settings").click());
+    await expect(page.locator("#device-rename")).not.toBeVisible();
+    if (dismiss === "navigate") await page.locator("#nav-devices").click();
+    await page.getByRole("button",{name:"重命名本机"}).click();
+    await expect(page.locator("#device-name")).toHaveValue("This workstation");
+    await page.locator("#device-rename-cancel").click();
+  }
+  expect(changes).toBe(0);
+});
+
+test("closing a pending rename never reopens the modal or redirects a newer page", async ({page}) => {
+  const {current}=await enrolledDevices(page);
+  let release;
+  await page.route("**/local/device/name",async route=>{
+    await new Promise(resolve=>{release=resolve;}); current.name="Saved during close";
+    await route.fulfill({json:{device_name:current.name}});
+  });
+  await page.locator("#nav-devices").click();
+  await page.getByRole("button",{name:"重命名本机"}).click();
+  await page.locator("#device-name").fill("Saved during close");
+  await page.locator("#device-rename-save").click();
+  await expect.poll(()=>!!release).toBe(true);
+  await page.locator("#device-rename-cancel").click();
+  await page.locator("#nav-settings").click();
+  release();
+  await expect(page.locator("#sidebar-machine")).toHaveText("Saved during close");
+  await expect(page.locator("#settings")).toBeVisible();
+  await expect(page.locator("#device-rename")).not.toBeVisible();
+  await expect(page.locator("#nav-settings")).toHaveClass(/active/);
+});
+
+test("manual local device and access IDs never open a self remote session", async ({page}) => {
+  await enrolledDevices(page);
+  await expect(page.locator("#rd-host-code")).toHaveText("482 913 570");
+  const opened=[];
+  await page.route("**/local/remote/window",route=>{opened.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}});});
+  for (const id of ["local", "LOCAL", "482 913-570"]) {
+    await page.locator("#remote-device-id").fill(id);
+    await page.locator("#remote-connect-form button").click();
+    await expect(page.locator("#remote-open-error")).toHaveText("不能远程连接本机，请选择其他设备。");
+  }
+  expect(opened).toHaveLength(0);
+  await page.locator("#remote-device-id").fill("peer");
+  await page.locator("#remote-connect-form button").click();
+  await expect.poll(()=>opened).toEqual([{device_id:"peer"}]);
+});
+
+test("a delayed Settings load cannot pull the user away from newer navigation", async ({page}) => {
+  await enrolledDevices(page);
+  let release, delayed=false;
+  await page.route("**/local/state",async route=>{
+    if(!delayed){delayed=true;await new Promise(resolve=>{release=resolve;});}
+    await route.fulfill({json:{enrolled:true,console_url:"https://console.example.test",device_name:"This workstation",connections:[]}});
+  });
+  await page.locator("#nav-settings").click();
+  await expect.poll(()=>!!release).toBe(true);
+  await page.locator("#nav-devices").click();
+  await expect(page.locator("#devices-page")).toBeVisible();
+  release();
+  await expect(page.locator("#nav-devices")).toHaveClass(/active/);
+  await expect(page.locator("#settings")).toBeHidden();
+  await page.locator("#nav-settings").click();
+  await expect(page.locator("#settings-server")).toHaveText("https://console.example.test");
+  await expect(page.locator("#settings")).toBeVisible();
 });

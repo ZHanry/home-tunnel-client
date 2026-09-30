@@ -15,5 +15,11 @@
   "contract_status": "frozen",
   "frozen_tag": "api-v1.4.0",
   "previous_immutable_tag": "api-v1.3.0",
-  "tested_combination_scope": "historical 10.0.0 candidate only; 10.1.0 final-artifact acceptance pending"
+  "tested_combination_scope": "historical 10.0.0 candidate only; 10.1.0 final-artifact acceptance pending",
+  "target_combination": {
+    "server": "10.1.0",
+    "client": "10.1.0",
+    "android": "10.0.0",
+    "agent": "10.1.0"
+  }
 }

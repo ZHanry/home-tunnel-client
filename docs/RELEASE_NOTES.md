@@ -1,5 +1,7 @@
 # Home Tunnel Client 10.0.0
 
+The separate [10.1.0 candidate](V10_1_CANDIDATE.md) is under verification and is not yet a stable release. The evidence below belongs to 10.0.0 only.
+
 The GUI, CLI, managed Agent and native remote host identify as 10.0.0; upstream
 FRP keeps its independent 0.70.1 version. Existing tunnels remain compatible with
 7.0+ servers. Remote control requires a 10.0.0 server that advertises the matching

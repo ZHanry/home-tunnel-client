@@ -1,13 +1,17 @@
 package desktop
 
-import "sync"
+import (
+	"github.com/ZHanry/home-tunnel-client/internal/model"
+	"sync"
+)
 
 // Host lets the local HTTP API ask the native window to come to the front.
 type Host struct {
 	mu            sync.Mutex
 	show          func()
-	openRemote    func(string) error
+	openRemote    func(model.RemoteWindowLaunch) error
 	closeRemote   func()
+	remoteClosed  func(uint64)
 	emergencyStop func()
 	emergencyKey  string
 	popupShow     func(mode string, attention bool) bool
@@ -30,20 +34,20 @@ func (host *Host) Show() {
 	}
 }
 
-func (host *Host) setOpenRemote(open func(string) error) {
+func (host *Host) setOpenRemote(open func(model.RemoteWindowLaunch) error) {
 	host.mu.Lock()
 	host.openRemote = open
 	host.mu.Unlock()
 }
 
-func (host *Host) OpenRemote(url string) error {
+func (host *Host) OpenRemote(launch model.RemoteWindowLaunch) error {
 	host.mu.Lock()
 	open := host.openRemote
 	host.mu.Unlock()
 	if open == nil {
 		return ErrRemoteWindowUnavailable
 	}
-	return open(url)
+	return open(launch)
 }
 
 func (host *Host) setCloseRemote(close func()) {
@@ -112,5 +116,20 @@ func (host *Host) HideApprovalPopup() {
 	host.mu.Unlock()
 	if hide != nil {
 		hide()
+	}
+}
+
+// SetRemoteClosed revokes the native session when its window is dismissed.
+func (host *Host) SetRemoteClosed(closed func(uint64)) {
+	host.mu.Lock()
+	host.remoteClosed = closed
+	host.mu.Unlock()
+}
+func (host *Host) RemoteClosed(generation uint64) {
+	host.mu.Lock()
+	closed := host.remoteClosed
+	host.mu.Unlock()
+	if closed != nil {
+		closed(generation)
 	}
 }

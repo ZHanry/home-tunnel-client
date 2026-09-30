@@ -55,38 +55,39 @@ h2 { font-size: 22px; letter-spacing: -.03em; }
 .app-header { border-color: var(--line); }
 .app-header .brand svg { display: none; }
 .app-header .brand::before { content: ""; width: 36px; height: 36px; background: url('/HomeTunnel.svg') center / contain no-repeat; }
-.login-layout { max-width: 1080px; gap: 70px; min-height: calc(100vh - 155px); }
-/* The sign-in view always fits the window: it never scrolls, it compacts instead. */
-html:has(#login:not(.hidden)), body:has(#login:not(.hidden)) { height: 100%; overflow: hidden; }
-body:has(#login:not(.hidden)) { display: flex; flex-direction: column; }
-body:has(#login:not(.hidden)) main { flex: 1; min-height: 0; width: 100%; display: flex; padding-top: 24px; padding-bottom: 24px; overflow: hidden; }
-#login.login-layout { width: 100%; min-height: 0; max-height: 100%; grid-template-columns: minmax(0,.9fr) minmax(0,1.1fr); }
-.login-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 14px; }
+.login-layout { width: 100%; max-width: 1200px; gap: clamp(32px, 5vw, 72px); grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); min-height: calc(100vh - 160px); align-items: center; }
+/* Let short windows scroll rather than shrinking fields or clipping MFA and password recovery. */
+html:has(#login:not(.hidden)), body:has(#login:not(.hidden)) { min-height: 100%; overflow-x: hidden; overflow-y: auto; }
+body:has(#login:not(.hidden)) main { width: 100%; padding-block: 32px 48px; }
+#login.login-layout { width: 100%; }
+.login-grid { display: grid; grid-template-columns: minmax(0,1fr); gap: 4px 20px; }
 .login-grid.hidden { display: none; }
 .login-grid > .login-span { grid-column: 1 / -1; }
-#login-error:empty { min-height: 0; margin: 0; }
-@media (max-height: 860px) {
-  body:has(#login:not(.hidden)) .app-header { padding-top: 10px; padding-bottom: 10px; }
-  body:has(#login:not(.hidden)) main { padding-top: 14px; padding-bottom: 14px; }
-  #login.login-layout { gap: 40px; }
-  .login-story h1 { font-size: clamp(30px, 3.4vw, 42px); margin-bottom: 14px; }
-  .login-story p { font-size: 14px; line-height: 1.6; }
-  .login-panel { padding: 22px 28px; }
-  .login-panel h2 { margin-bottom: 4px; font-size: 20px; }
-  .login-panel label { margin: 10px 0 5px; font-size: 12px; }
-  .login-panel input, .login-panel select, .login-panel .password-field button { min-height: 40px; padding-top: 8px; padding-bottom: 8px; }
-  .login-panel .error { margin: 8px 0 0; }
-  .login-panel .row { margin-top: 14px; }
-  .login-panel .row button { min-height: 40px; }
-  .login-panel form > p.muted { margin-bottom: 0; font-size: 12px; }
-}
-.login-story h1 { font-size: clamp(34px, 4vw, 52px); }
-.login-story p { line-height: 1.7; }
-.login-steps, .login-panel > h2 + p { display: none; }
-.login-panel { border-radius: 18px; padding: 38px; box-shadow: 0 24px 60px rgba(39,43,91,.06); }
-.login-panel h2 { margin-bottom: 18px; }
+.login-panel { min-width: 0; border-radius: 18px; padding: 32px 38px; box-shadow: 0 24px 60px rgba(39,43,91,.06); }
+.login-panel h2 { margin-bottom: 10px; font-size: 26px; }
+.login-panel form > p.muted { margin-bottom: 12px; font-size: 14px; }
+.login-panel label { margin: 14px 0 7px; font-size: 13px; }
+.login-panel input, .login-panel select, .login-panel .password-field button { min-height: 48px; }
+.login-panel .row { margin-top: 22px; }
 .login-panel .row button[type=submit] { flex: 1; }
 .login-panel .row button.secondary { background: transparent; }
+.login-story h1 { font-size: clamp(34px, 4vw, 52px); }
+.login-story p { line-height: 1.8; }
+.login-steps, .login-panel > h2 + p { display: none; }
+#login-error:empty { min-height: 0; margin: 0; }
+@media (max-width: 980px) {
+  .login-layout { grid-template-columns: minmax(0,.7fr) minmax(0,1.3fr); gap: 28px; }
+  .login-story { padding: 8px; }
+  .login-panel { padding: 28px; }
+}
+@media (max-width: 700px) {
+  .login-layout { display: block; min-height: 0; }
+  .login-story { padding: 0 0 20px; }
+  .login-story h1 { font-size: 30px; }
+  .login-story > p:not(.eyebrow) { display: none; }
+  .login-panel { padding: 24px; }
+  body:has(#login:not(.hidden)) main { padding: 24px 20px 36px; }
+}
 .app-sidebar { width: 236px; background: var(--card); color: var(--fg); border-right: 1px solid var(--line); padding: 28px 14px 18px; }
 .sidebar-brand { display: flex; align-items: center; gap: 12px; padding: 0 15px 50px; font-size: 17px; line-height: 1; letter-spacing: -.06em; color: var(--fg); }
 .sidebar-brand > span { color: var(--fg); }
@@ -257,9 +258,11 @@ body.workspace-active .app-header { display: none; }
 .service-row .actions summary svg { width: 18px; height: 18px; }
 .service-row .actions details button { right: 0; top: 32px; }
 .update-page { max-width: 1080px; }
-.update-page .settings-card { padding: 34px; min-height: 240px; }
+.settings-update { margin-top: 28px; }
+.settings-update h2 { margin-bottom: 0; }
+.settings-update .settings-card { padding: 28px; }
 .update-layout { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,.85fr); gap: 20px; }
-.workspace-active .update-page .settings-card { max-width: none; }
+.settings-panel .settings-update .settings-card { max-width: none; }
 .update-notes p { max-width: 320px; }
 .update-hero-card { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 11px; }
 .update-logo { display: grid; place-items: center; width: 45px; height: 45px; margin-bottom: 11px; border-radius: 13px; background: var(--secondary); color: var(--accent); }
@@ -272,7 +275,12 @@ body.workspace-active .app-header { display: none; }
 .update-hero-card #update-page-status { margin-top: 4px; }
 .settings-card { padding: 28px; }
 .settings-panel { max-width: 1000px; }
-.settings-panel .settings-card { max-width: 800px; }
+.settings-panel .settings-card { max-width: none; }
+.device-rename-dialog { width: min(480px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); color: var(--fg); box-shadow: 0 24px 80px rgba(0,0,0,.2); }
+.device-rename-dialog::backdrop { background: rgba(15,18,35,.45); }
+.device-rename-dialog h2 { margin-bottom: 10px; }
+.device-rename-dialog p { margin-bottom: 0; }
+.device-rename-dialog .row { justify-content: flex-end; }
 #home #update { display: none; }
 @media (max-width: 1050px) { .devices-grid, .recent-devices-list { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 850px) { .remote-overview, .update-layout { grid-template-columns: 1fr; } }

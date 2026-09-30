@@ -161,6 +161,30 @@ jobs:
         "archive=$zip" >> $env:GITHUB_OUTPUT
         "checksum=$zip.sha256" >> $env:GITHUB_OUTPUT
         "sbom=$zip.spdx.json" >> $env:GITHUB_OUTPUT
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.19.0
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      with:
+        version: 11.16.0
+    - name: Test the final packaged native Windows UI
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+        ARCHIVE: ${{ steps.windows.outputs.archive }}
+      run: |
+        pnpm install --frozen-lockfile
+        if ($LASTEXITCODE -ne 0) { throw 'Packaged UI test dependency installation failed' }
+        $sha = (Get-FileHash -LiteralPath $env:ARCHIVE -Algorithm SHA256).Hash.ToLowerInvariant()
+        .\scripts\capture-windows-ui.ps1 -ArchivePath $env:ARCHIVE -ExpectedSHA256 $sha -ExpectedVersion $env:VERSION -Regression
+    - name: Retain actual packaged Windows UI screenshots and scoped results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-candidate-ui
+        path: outputs/windows-ui/*
+        if-no-files-found: warn
+        retention-days: 30
     - name: Scan the actual Windows release files with Microsoft Defender
       shell: pwsh
       env:

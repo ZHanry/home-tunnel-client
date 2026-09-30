@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ZHanry/home-tunnel-client/internal/model"
@@ -25,7 +26,14 @@ type Store struct {
 	Path string
 }
 
+// Serialize read-modify-write state updates with runtime saves in this process.
+var persistenceMu sync.Mutex
+
 func (store Store) Load() (model.State, error) {
+	return store.load(true)
+}
+
+func (store Store) load(migrateCredential bool) (model.State, error) {
 	var value model.State
 	data, err := os.ReadFile(store.Path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -54,7 +62,7 @@ func (store Store) Load() (model.State, error) {
 		if err != nil {
 			return model.State{}, err
 		}
-	} else if value.DeviceCredential != "" && (runtime.GOOS == "windows" || runtime.GOOS == "darwin") {
+	} else if migrateCredential && value.DeviceCredential != "" && (runtime.GOOS == "windows" || runtime.GOOS == "darwin") {
 		if err = store.Save(value); err != nil {
 			return model.State{}, fmt.Errorf("migrate legacy credential: %w", err)
 		}
@@ -63,6 +71,17 @@ func (store Store) Load() (model.State, error) {
 }
 
 func (store Store) Save(value model.State) error {
+	persistenceMu.Lock()
+	defer persistenceMu.Unlock()
+	release, err := store.lockFile()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return store.save(value, true)
+}
+
+func (store Store) save(value model.State, preserveDeviceName bool) error {
 	directory := filepath.Dir(store.Path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
@@ -71,6 +90,11 @@ func (store Store) Save(value model.State) error {
 	var previous model.State
 	if data, readErr := os.ReadFile(store.Path); readErr == nil {
 		_ = json.Unmarshal(data, &previous)
+	}
+	// The service holds a long-lived state snapshot. Preserve a newer explicit
+	// rename while saving its unrelated heartbeat/configuration changes.
+	if preserveDeviceName && sameDevice(previous, value) && previous.DeviceName != "" {
+		value.DeviceName = previous.DeviceName
 	}
 	if value.DeviceCredential != "" {
 		protected, err := protectCredential(value.DeviceCredential, store.Path)

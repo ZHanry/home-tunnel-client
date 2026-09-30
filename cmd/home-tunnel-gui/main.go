@@ -98,6 +98,7 @@ func main() {
 	server.SetShow(host.Show)
 	server.SetOpenRemote(host.OpenRemote)
 	server.SetCloseRemote(host.CloseRemote)
+	host.SetRemoteClosed(server.RemoteWindowClosed)
 	host.SetEmergencyStop(server.EmergencyStopRemote)
 	server.SetEmergencyHotkey(host.SetEmergencyHotkey)
 	if runtime.GOOS == "windows" {

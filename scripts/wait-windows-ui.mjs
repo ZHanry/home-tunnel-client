@@ -1,4 +1,5 @@
 import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 const report = { ready: false, endpoint: 'loopback WebView2 CDP', attempts: 0 };
 const deadline = Date.now() + 90_000;
 while (Date.now() < deadline) {
@@ -27,6 +28,6 @@ while (Date.now() < deadline) {
   } catch (error) { report.last_error = error.message; }
   await new Promise(r => setTimeout(r, 2000));
 }
-await writeFile('outputs/windows-ui/readiness.json',JSON.stringify(report,null,2)+'\n');
+await writeFile(join(process.env.HT_WINDOWS_UI_OUTPUT || 'outputs/windows-ui', 'readiness.json'),JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify(report));
 if (!report.ready) process.exitCode=1;
