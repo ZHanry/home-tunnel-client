@@ -3,7 +3,7 @@
   "stage": "public-release",
   "api_major": 1,
   "contract_ref": "api-v1.4.0",
-  "support_policy": "10.0.0 release. Existing 7.0+ tunnels keep API v1 compatibility. Remote control requires matching advertised server/host capabilities and signed grants; remote-control payloads use authenticated, end-to-end DTLS UDP, preferring direct P2P with an optional server UDP TURN relay for browser viewers and no TCP fallback. Formal publication requires the frozen api-v1.4.0 contract and reviewed acceptance receipts bound to the candidate packages; owner-waived items are disclosed and unverified. FRP keeps its independent upstream version.",
+  "support_policy": "10.0.0 release. Existing 7.0+ tunnels keep API v1 compatibility. Remote control requires matching advertised server/host capabilities and signed grants; remote-control payloads use authenticated, end-to-end DTLS UDP, preferring direct P2P with an optional server UDP TURN relay for browser viewers and no TCP fallback. Formal publication requires the frozen api-v1.4.0 contract and reviewed acceptance receipts bound to the candidate packages; checks not run on the final artifacts remain explicitly unverified. FRP keeps its independent upstream version.",
   "version": "10.0.0",
   "minimum_server": "7.0.0",
   "tested_combination": {

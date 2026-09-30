@@ -2,7 +2,7 @@
 
 # Home Tunnel Client
 
-当前版本为 **10.0.0**。远控载荷走端到端 DTLS 加密的 UDP，优先 P2P 直连；浏览器控制端可通过服务器可选的 UDP TURN 中继连接，服务器无法读取载荷，没有 TCP 回退。Windows 提供键鼠/中文输入、显式文件授权和授权系统音频。固定密码可免审批访问已登录桌面，不支持锁屏、登录前或 UAC 安全桌面控制。Linux amd64 提供受权限限制的 Xorg 被控端；macOS/Wayland 被控和桌面原生观看尚未提供。实际支持、验证结果和负责人豁免见 [发行说明](docs/RELEASE_NOTES.md)。
+当前版本为 **10.0.0**。远控载荷走端到端 DTLS 加密的 UDP，优先 P2P 直连；浏览器控制端可通过服务器可选的 UDP TURN 中继连接，服务器无法读取载荷，没有 TCP 回退。Windows 提供键鼠/中文输入、显式文件授权和授权系统音频。固定密码可免审批访问已登录桌面，不支持锁屏、登录前或 UAC 安全桌面控制。Linux amd64 提供受权限限制的 Xorg 被控端；macOS/Wayland 被控和桌面原生观看尚未提供。实际支持、已验证范围和未验证项目见 [发行说明](docs/RELEASE_NOTES.md)。
 
 **连接 Windows、macOS、Linux 与 NAS**
 

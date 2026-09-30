@@ -34,8 +34,8 @@ worked: screen, keyboard, mouse, Chinese text, clipboard in both directions, fil
 transfer from viewer to host (SHA-256 checked), system audio, the approval popup,
 quit and agent cleanup.
 
-The following were not verified and are listed as owner waivers in the attached
-acceptance record:
+The following were not verified for the final release artifacts. The attached
+acceptance record preserves the detailed test status:
 
 - file transfer from host to viewer
 - fixed-password mode on the final build
@@ -54,7 +54,7 @@ acceptance record:
 - 登录即开启被控。陌生连接在右下角弹出审批框，连接后显示"正在被远程控制 · 断开"条。
 - 一次性临时密码使用固定设备 ID。接受连接后本次放行画面、键鼠、剪贴板、文件和系统声音，不含麦克风。
 - 不支持锁屏、登录前与 UAC 安全桌面控制。
-- 实测范围见上文；未测项目在验收记录中标为负责人豁免。
+- 实测范围见上文；未验证范围及其详细测试状态见随附验收记录。
 
 ## Previous release: 9.0.0
 

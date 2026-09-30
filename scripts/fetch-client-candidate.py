@@ -171,7 +171,7 @@ def main():
     (args.output / "client-candidate-download.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     waived = sorted(g for g, item in (acceptance or {}).get("coverage", {}).items() if item["status"] == "waived")
     print("Verified fixed client candidate bytes" + (" and reviewed acceptance receipts" if args.acceptance_revision else "; runtime acceptance still required") +
-          ("; owner-waived, NOT verified: " + ", ".join(waived) if waived else ""))
+          ("; NOT verified: " + ", ".join(waived) if waived else ""))
 
 
 if __name__ == "__main__":

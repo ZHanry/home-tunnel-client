@@ -501,7 +501,7 @@ def public_asset_names(component, version):
     return [f"home-tunnel-server-{version}.tar.gz", "compose.release.yaml"]
 
 def waiver_notes(directory):
-    """Disclose every owner waiver in stable release notes; a waiver is not a pass."""
+    """Describe unverified coverage without changing the original evidence."""
     from client_release_candidate import ACCEPTANCE, GATES, read_json, verify_waiver
     path = directory / ACCEPTANCE
     if not path.is_file():
@@ -512,20 +512,20 @@ def waiver_notes(directory):
         if record.get('coverage', {}).get(gate, {}).get('status') != 'waived':
             continue
         receipt = read_json(directory / f'client-acceptance-{gate}.json')
-        waiver = verify_waiver(receipt.get('waiver'), gate)
+        verify_waiver(receipt.get('waiver'), gate)
         cases = ', '.join(f'`{name}`' for name, value in receipt.get('cases', {}).items() if value == 'waived')
-        lines.append(f"- `{gate}`: {waiver['reason'].strip()} Waived cases: {cases}.")
+        lines.append(f"- `{gate}`: not verified. Unverified cases: {cases}. Evidence: `client-acceptance-{gate}.json`.")
     native = directory / 'windows-remote-native-acceptance.json'
     if native.is_file():
         report = read_json(native)
         if report.get('status') == 'waived':
-            waiver = verify_waiver(report.get('waiver'), 'windows-remote-native-acceptance')
-            lines.append(f"- `windows-remote-native-acceptance`: {waiver['reason'].strip()}")
+            verify_waiver(report.get('waiver'), 'windows-remote-native-acceptance')
+            lines.append("- `windows-remote-native-acceptance`: not verified. Evidence: `windows-remote-native-acceptance.json`.")
     if not lines:
         return ''
-    return ("\n## Not verified (owner waivers)\n\n"
-            "The product owner approved shipping without verifying the items below. "
-            "They were not tested and are not claimed as passed.\n\n" + '\n'.join(lines) + '\n')
+    return ("\n## Not verified\n\n"
+            "The following checks were not run or remain unverified. "
+            "They are not claimed as passed. Original evidence files retain the detailed test records.\n\n" + '\n'.join(lines) + '\n')
 
 def publish(stable=False):
     directory=ROOT/'release'
