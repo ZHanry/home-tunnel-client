@@ -51,9 +51,14 @@ context, only on the ordinary desktop and after a verified feature request.
 An independent 500 ms media deadline stops capture if the session thread stalls;
 expiry requires a new explicit activation. No microphone capture is implemented.
 
-These are implemented controls, not a claim of final runtime acceptance. Full
-native builds and installed Windows VM tests of lock, sign-in, UAC, session
-switches, upgrade and restart must pass before the 10.0.0 release.
+These code-level controls do not establish final runtime acceptance. Published
+10.0.0 does not support lock-screen, pre-login, UAC secure-desktop or session-switch
+control, and the remaining service runtime cases were not run on the final bytes.
+The reported Web-to-Windows checks used development builds of the same feature
+code and were not repeated on the final release artifacts. CI builds and final
+Windows Defender, installation and payload-hash checks have separate passing
+evidence. See [release notes](RELEASE_NOTES.md) for the exact verified and unverified
+scope; do not treat implementation or build success as runtime acceptance.
 
 ## Current signing state
 

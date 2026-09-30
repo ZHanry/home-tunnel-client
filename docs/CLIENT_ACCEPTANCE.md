@@ -2,6 +2,8 @@
 
 格式由 [client_release_candidate.py](../scripts/client_release_candidate.py) 校验。校验器只验证结构、摘要绑定和记录的门槛；维护者仍须审阅原始证据。此仓库不附带预填通过的生产收据。
 
+本文描述验收矩阵及通过证据的要求，不表示 10.0.0 的每项运行时验收已经完成。原始记录中的 Web→Windows 远控结果来自相同功能代码的开发构建，未在最终发行字节上重跑；最终 Windows 文件的安全复扫、安装器生命周期及安装文件哈希检查则有独立通过记录。CI 构建也不能代替完整运行时矩阵。[当前发行的实际验证范围](RELEASE_NOTES.md)与原始记录中的逐项状态应分别核对。
+
 入口仓库 `validation/client/<完整客户端 SHA>/` 包含：
 
 - `client-acceptance.json`：`schema_version: 1`、`acceptance_complete: true`、完整 `coverage` 和 `files`（每个附件的 `bytes`、`sha256`）。

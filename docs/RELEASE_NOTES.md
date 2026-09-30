@@ -28,15 +28,23 @@ Lock screen, pre-login and UAC secure-desktop control are not available; unatten
 access is the fixed password on the signed-in desktop. Windows/macOS executables
 carry no publisher signature; hashes and malware scans are not OS signatures.
 
-**Verification scope.** A Web viewer controlled this client's Windows host through
-the 10.0.0 production server, over both direct UDP and the TURN relay. These
-worked: screen, keyboard, mouse, Chinese text, clipboard in both directions, file
-transfer from viewer to host (SHA-256 checked), system audio, the approval popup,
-quit and agent cleanup.
+**Verification scope.** On development builds of the same feature code, a Web
+viewer controlled this client's Windows host through the 10.0.0 production server,
+over both direct UDP and the TURN relay. Those development-build checks covered
+screen, keyboard, mouse, Chinese text, clipboard in both directions, file transfer
+from viewer to host (SHA-256 checked), system audio, the approval popup, quit and
+agent cleanup. They were not rerun on the final 10.0.0 release bytes and do not
+establish final-package remote-session acceptance.
+
+Build and security checks have separate evidence: CI built the packages, and the
+final Windows artifacts passed Defender rescanning, installer lifecycle checks
+and installed-payload hash checks. Those results remain valid within their scope;
+they do not substitute for the unrun final-package remote-session tests.
 
 The following were not verified for the final release artifacts. The attached
 acceptance record preserves the detailed test status:
 
+- Web-to-Windows remote sessions on final release bytes (development-build results only)
 - file transfer from host to viewer
 - fixed-password mode on the final build
 - Android and Windows-to-Windows controllers
@@ -54,7 +62,8 @@ acceptance record preserves the detailed test status:
 - 登录即开启被控。陌生连接在右下角弹出审批框，连接后显示"正在被远程控制 · 断开"条。
 - 一次性临时密码使用固定设备 ID。接受连接后本次放行画面、键鼠、剪贴板、文件和系统声音，不含麦克风。
 - 不支持锁屏、登录前与 UAC 安全桌面控制。
-- 实测范围见上文；未验证范围及其详细测试状态见随附验收记录。
+- 上述 Web→Windows 远控实测使用相同功能代码的开发构建，未在最终 10.0.0 发行字节上重跑，不能视为最终安装包远控验收通过。
+- CI 构建、最终 Windows 文件的 Defender 复扫、安装器生命周期及安装文件哈希检查有独立通过记录；其他未验证范围见上文及随附验收记录。
 
 ## Previous release: 9.0.0
 

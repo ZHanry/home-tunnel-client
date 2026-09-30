@@ -4,6 +4,8 @@
 
 The current version is **10.0.0**. Remote-control payloads use end-to-end DTLS-encrypted UDP, preferring direct P2P. Browser viewers can use the server's optional UDP TURN relay, which cannot read the payload; there is no TCP fallback. Windows provides keyboard/Unicode input, consent-bound files and authorized system audio. Fixed-password access skips approval on the signed-in desktop; lock screen, pre-login and UAC secure-desktop control are unavailable. Linux amd64 provides an Xorg host with local-session permission checks. macOS/Wayland hosting and native desktop viewing remain unavailable. See the [release notes](docs/RELEASE_NOTES.md) for supported scope, verified coverage and unverified cases.
 
+The 10.0.0 Web-to-Windows runtime checks used development builds of the same feature code and were not rerun on the final release bytes. CI builds and final Windows artifact security/installation checks have separate passing evidence; see the [release notes](docs/RELEASE_NOTES.md) for the scope of each.
+
 **Connect Windows, macOS, Linux and NAS hosts**
 
 [![Stable release](https://img.shields.io/github/v/release/ZHanry/home-tunnel-client?label=stable)](https://github.com/ZHanry/home-tunnel-client/releases/latest) [![License Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
