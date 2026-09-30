@@ -45,6 +45,7 @@ type configuration struct {
 	InputTargetPID   uint32 `json:"input_target_pid"`
 	FileTestRoot     string `json:"file_test_root"`
 	WebsiteClipboard bool   `json:"website_clipboard"`
+	Stability        bool   `json:"stability"`
 }
 
 type command struct {
@@ -87,7 +88,15 @@ func run() error {
 	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Hostname() != "127.0.0.1" || origin.Port() == "" || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" || origin.Path != "" || !filepath.IsAbs(initial.StorePath) {
 		return errors.New("fixture must be isolated IPv4 loopback")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	duration := 4 * time.Minute
+	grantDuration := 3 * time.Minute
+	if initial.Stability {
+		if initial.InputTargetPID == 0 || initial.FileTestRoot != "" || initial.WebsiteClipboard || origin.Scheme != "http" {
+			return errors.New("stability requires the isolated input-only loopback fixture")
+		}
+		duration, grantDuration = 3*time.Hour, 3*time.Hour
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 	engine, err := remoteengine.New(ctx, remoteengine.Options{ExecutablePath: initial.Worker, ExpectedSHA256: initial.SHA256, InputTargetProcessID: initial.InputTargetPID})
 	if err != nil {
@@ -175,8 +184,10 @@ func run() error {
 		defer release()
 		_ = service.SetEnabled(stop, false)
 	}()
-	if err = service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: initial.DeviceID, Name: "Native acceptance host", Platform: "windows"}); err != nil {
-		return err
+	if !initial.Stability || service.State(ctx).EndpointID == "" {
+		if err = service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: initial.DeviceID, Name: "Native acceptance host", Platform: "windows"}); err != nil {
+			return err
+		}
 	}
 	if err = service.SetEnabled(ctx, true); err != nil {
 		return err
@@ -377,7 +388,7 @@ func run() error {
 			if !exists || controllerID == "" || approval.ControllerEndpointID != controllerID || approval.ControllerThumbprint != controllerJKT || !sameScopes(approval.Permissions, scopes) || approval.Mode != "one_session" || !approval.ExpiresAt.After(time.Now()) {
 				operation = remotehost.ErrLocalApproval
 			} else if request.Action == "approve_pairing" && approval.Kind == "pairing" {
-				operation = service.ApprovePairing(ctx, approval.ID, approval.Permissions, "one_session", time.Now().Add(3*time.Minute))
+				operation = service.ApprovePairing(ctx, approval.ID, approval.Permissions, "one_session", time.Now().Add(grantDuration))
 			} else if request.Action == "approve_session" && approval.Kind == "session" {
 				operation = service.ApproveSessionExpected(ctx, approval.ID, approval.ConnectionEpoch, approval.StateVersion)
 			} else {

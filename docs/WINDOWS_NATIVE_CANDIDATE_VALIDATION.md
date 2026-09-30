@@ -73,3 +73,57 @@ the same sealed packages and the matching pinned server.
 The candidate identity is committed in [final-candidate-10.1.json](../tests/remote-native/final-candidate-10.1.json).
 The [paired candidate guide](V10_1_PAIRED_CANDIDATE_TEST_GUIDE.md) describes the
 separate environment and remaining verification work.
+
+## Explicit bounded stability mode
+
+The workflow dispatch input `validation_scope=stability` runs a separate strict
+acceptance phase against the **same originally sealed worker bytes**. Pull
+requests and the default `short` dispatch remain the two short cases. The job
+has a 300-minute ceiling, the native subprocess a hard 10800-second ceiling,
+and the native step 185 minutes. The wrapper kills only its owned process tree
+on timeout and uploads the partial sanitized observations on failure.
+
+The strict command uses `--phase stability` and `--stability 30x7200`; neither
+accepts a shorter duration or a smaller connection target:
+
+1. Create 29 distinct, real, same-account sessions using signed pairing, local
+   approval, a live UDP/DTLS video path, and fresh trusted native keyboard and
+   pointer events. Each must close cleanly. Start pairings at least 15 seconds
+   apart without changing the production 5/minute and 30/hour session limits.
+2. Establish the 30th session and keep it actively observed for at least 7200
+   actual monotonic seconds. Every approximately five seconds, require newly
+   presented/decoded/encoded frames, media-time and byte progression, increased
+   native accepted-input counts, and four fresh trusted key/pointer events in
+   the confined target process. Gaps above 15 seconds, wall-clock anomalies,
+   counter regressions, missing activity, or lost authentication fail closed.
+3. Require actual remote lease-sequence and controller signaling-token renewal
+   progression. Production lease duration and renewal logic are unchanged.
+4. Verify heartbeat-stop and worker-crash input release at most 2000 ms. After
+   the two-hour observation has moved the original sessions outside the hourly
+   limit, separately measure an explicit owned-host restart plus new signed
+   pairing and live input at most 30000 ms after the crash. This is an explicit
+   test-host restart, not automatic production restart or network restoration.
+
+The 30-session count excludes the additional intentional crash and recovered
+sessions. Individual `fresh_pairing_to_*_ms` values begin at the new pairing
+attempt and exclude the intentional rate-limit pacing. Only distinct sessions
+with verified media, trusted input and clean shutdown count toward 30/30.
+
+The long phase builds only the existing Go **test host**, using a Go overlay
+whose QA source hash is retained separately. It extends the opt-in test-host
+lifetime and one-session test grant from four/three minutes to three hours and
+lets the explicit restart reuse its disposable fixture identity. The original
+client checkout and production worker are never edited or rebuilt. The private
+loopback fixture uses `ACCESS_TOKEN_SECONDS=10800`; its disposable account
+credential stays in memory/private process pipes and is never an artifact.
+The three-hour one-session grant and account-token lifetimes are stated in the
+report. Server source, rate limits, remote leases, security settings, trust,
+firewall policy and production defaults remain unchanged.
+
+Raw `stability-samples.jsonl`, per-connection `stability-connections.json`, and
+`report.json` are retained with hashes in `validation.json`, including partial
+results on failure. These prove the explicitly stated same-machine native
+worker/Chromium fixture scope only. They do **not** establish full GUI two-hour
+acceptance, independent Windows endpoints, website/cross-account two-hour
+stability, account-token refresh, a controlled network-outage recovery, or
+24-hour idle stability. `network_restore_30s` stays `not_verified`.

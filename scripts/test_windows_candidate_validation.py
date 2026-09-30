@@ -130,5 +130,91 @@ class WindowsCandidateWrapperTests(unittest.TestCase):
         self.assertNotIn("build-native-windows", workflow)
 
 
+class StabilityReceiptTests(unittest.TestCase):
+    """Synthetic receipt fixtures test rejection only; they are not runtime evidence."""
+    def fixture(self, destination):
+        samples = []
+        for n in range(1441):
+            samples.append({"sample": n + 1, "elapsed_ms": n * 5000, "wall_ms": 10000000 + n * 5000,
+                "media_state": {**{key: True for key in ("peer_verified", "host_path_verified", "browser_udp_verified", "input_enabled", "lease_valid", "signal_authenticated")}, "connection_state": "connected", "dtls_state": "connected"},
+                **{key: n + 1 for key in ("frames_decoded", "frames_presented", "bytes_received", "video_time", "input_frames_sent", "native_input_accepted", "native_frames_encoded")},
+                "lease_sequence": 1 + n // 48, "controller_token_refreshes": n // 120,
+                "input_events": [{"type": kind, "trusted": True, "target_matches": True} for kind in ("keydown", "keyup", "pointerdown", "pointerup")]})
+        report = {"input": {"heartbeat_watchdog": {"passed": True, "release_ms": 1600}, "worker_crash": {"passed": True, "key_release_ms": 100, "button_release_ms": 100}},
+            "stability": {"status": "passed", "actual_connections": 30,
+                "sessions": [{"ordinal": n + 1, "pairing_started_elapsed_ms": n * 15000, "session_id_sha256": str(n), "signed_pairing": True, "live_media": True, "trusted_input": True, "clean_close": True, "fresh_pairing_to_input_ms": 3000} for n in range(30)],
+                "active_window": {"status": "passed", "actual_active_seconds": 7200, "samples": len(samples)},
+                "post_crash_explicit_restart": {"status": "passed", "clean_close": True, "crash_to_live_input_ms": 5000}}}
+        self.save_samples(report, destination, samples)
+        return report, samples
+
+    def save_samples(self, report, destination, samples):
+        path = destination / "stability-samples.jsonl"
+        path.write_text("".join(json.dumps(value) + "\n" for value in samples))
+        report["stability"]["samples_sha256"] = validation.digest(path)
+
+    def test_valid_fixture_is_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report, _ = self.fixture(root)
+            validation.verify_stability_report(report, root)
+
+    def test_missing_or_inflated_results_are_rejected(self):
+        changes = [
+            lambda r, s: r["stability"].update(actual_connections=29),
+            lambda r, s: r["stability"]["sessions"][1].update(session_id_sha256="0"),
+            lambda r, s: r["stability"]["sessions"][1].update(clean_close=False),
+            lambda r, s: r["stability"]["sessions"][1].update(pairing_started_elapsed_ms=14999),
+            lambda r, s: r["stability"]["sessions"][1].update(fresh_pairing_to_input_ms=30001),
+            lambda r, s: r["stability"]["active_window"].update(actual_active_seconds=7199),
+            lambda r, s: s[-1].update(elapsed_ms=7199999),
+            lambda r, s: s[-1].update(lease_sequence=1),
+            lambda r, s: s[1].update(frames_decoded=s[0]["frames_decoded"]),
+            lambda r, s: s[1]["input_events"][0].update(trusted=False),
+            lambda r, s: s[1]["media_state"].update(browser_udp_verified=False),
+            lambda r, s: s[1].update(wall_ms=20000000),
+            lambda r, s: r["input"]["heartbeat_watchdog"].update(release_ms=2001),
+            lambda r, s: r["stability"]["post_crash_explicit_restart"].update(crash_to_live_input_ms=30001),
+        ]
+        for index, change in enumerate(changes):
+            with self.subTest(case=index), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                report, samples = self.fixture(root)
+                change(report, samples)
+                self.save_samples(report, root, samples)
+                with self.assertRaises(RuntimeError):
+                    validation.verify_stability_report(report, root)
+
+    def test_original_samples_hash_is_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report, _ = self.fixture(root)
+            (root / "stability-samples.jsonl").write_text("changed")
+            with self.assertRaisesRegex(RuntimeError, "samples changed"):
+                validation.verify_stability_report(report, root)
+
+    def test_long_case_is_bounded_and_only_owned_tree_is_killed(self):
+        child = Mock(pid=12345)
+        child.wait.side_effect = [subprocess.TimeoutExpired("owned", 10800), 1]
+        with tempfile.TemporaryDirectory() as directory, patch.object(subprocess, "Popen", return_value=child), patch.object(subprocess, "run") as kill:
+            self.assertEqual(validation.run_case(["owned"], Path(directory) / "console.log", timeout_seconds=10800), 124)
+            self.assertEqual(child.wait.call_args_list[0].kwargs, {"timeout": 10800})
+            self.assertEqual(kill.call_args.args[0], ["taskkill", "/PID", "12345", "/T", "/F"])
+
+    def test_arbitrary_timeout_is_rejected(self):
+        with patch.object(subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(RuntimeError, "Unsupported native case timeout"):
+                validation.run_case([], None, timeout_seconds=86400)
+            launch.assert_not_called()
+
+    def test_long_mode_requires_explicit_dispatch(self):
+        source = (ROOT / ".github/workflows/validate-windows-candidate.yml").read_text()
+        self.assertIn("default: short", source)
+        self.assertIn("options: [short, stability]", source)
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stability'", source)
+        self.assertIn("timeout-minutes: 185", source)
+        self.assertIn("--phase stability", source)
+
+
 if __name__ == "__main__":
     unittest.main()

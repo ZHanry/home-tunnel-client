@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -154,12 +155,52 @@ def rescan_candidate(args, candidate_dir, manifest, release, receipt):
             require(receipt["original_scan_unchanged"], "Original build-time scan was changed")
 
 
-def run_case(command, log_path):
+def verify_stability_report(report, destination):
+    stability = report.get("stability", {})
+    require(stability.get("status") == "passed" and stability.get("actual_connections") == 30, "Thirty native connections were not verified")
+    sessions = stability.get("sessions", [])
+    require(len(sessions) == 30 and len({item.get("session_id_sha256") for item in sessions}) == 30 and
+            all(item.get("signed_pairing") is True and item.get("live_media") is True and item.get("trusted_input") is True and item.get("clean_close") is True for item in sessions),
+            "Native sessions lack distinct pairing/media/input/close evidence")
+    require(all(item.get("ordinal") == index + 1 for index, item in enumerate(sessions)), "Native session ordinals differ")
+    require(all(sessions[index]["pairing_started_elapsed_ms"] - sessions[index - 1]["pairing_started_elapsed_ms"] >= 15000 for index in range(1, len(sessions))), "Native sessions were not paced within production limits")
+    require(all(0 <= item.get("fresh_pairing_to_input_ms", -1) <= 30000 for item in sessions), "Fresh pairing exceeded 30 seconds")
+    active = stability.get("active_window", {})
+    duration = active.get("actual_active_seconds", 0)
+    require(isinstance(duration, (int, float)) and math.isfinite(duration) and duration >= 7200 and active.get("status") == "passed", "Actual active duration is incomplete")
+    samples_path = destination / "stability-samples.jsonl"
+    require(digest(samples_path) == stability.get("samples_sha256"), "Stability samples changed")
+    samples = [json.loads(line) for line in samples_path.read_text(encoding="utf-8").splitlines()]
+    require(len(samples) == active.get("samples") and len(samples) >= 481, "Stability sample count is incomplete")
+    require(samples[-1]["elapsed_ms"] - samples[0]["elapsed_ms"] >= 7200000, "Raw duration is incomplete")
+    require(samples[-1]["lease_sequence"] > samples[0]["lease_sequence"] and samples[-1]["controller_token_refreshes"] > samples[0]["controller_token_refreshes"], "Real lease and signaling-token renewals were not observed")
+    for index, sample in enumerate(samples):
+        media = sample.get("media_state", {})
+        require(all(media.get(key) is True for key in ("peer_verified", "host_path_verified", "browser_udp_verified", "input_enabled", "lease_valid", "signal_authenticated")) and
+                media.get("connection_state") == "connected" and media.get("dtls_state") == "connected", "Raw media state is not live/authenticated")
+        require(sample.get("sample") == index + 1 and len(sample.get("input_events", [])) == 4 and
+                all(event.get("trusted") is True and event.get("target_matches") is True for event in sample["input_events"]), "Trusted input sample is incomplete")
+        if index:
+            previous = samples[index - 1]
+            elapsed = sample["elapsed_ms"] - previous["elapsed_ms"]
+            require(0 < elapsed <= 15000 and abs(sample["wall_ms"] - previous["wall_ms"] - elapsed) <= 5000, "Stability observation gap or clock anomaly")
+            require(all(sample[key] > previous[key] for key in ("frames_decoded", "frames_presented", "bytes_received", "video_time", "input_frames_sent", "native_input_accepted", "native_frames_encoded")), "Stability sample activity stalled")
+    require(report.get("input", {}).get("heartbeat_watchdog", {}).get("passed") is True and report.get("input", {}).get("worker_crash", {}).get("passed") is True,
+            "Input release checks are incomplete")
+    require(0 <= report["input"]["heartbeat_watchdog"].get("release_ms", -1) <= 2000 and
+            all(0 <= report["input"]["worker_crash"].get(key, -1) <= 2000 for key in ("key_release_ms", "button_release_ms")), "Input release exceeded two seconds")
+    require(stability.get("post_crash_explicit_restart", {}).get("status") == "passed" and stability["post_crash_explicit_restart"].get("clean_close") is True and
+            0 <= stability["post_crash_explicit_restart"].get("crash_to_live_input_ms", -1) <= 30000,
+            "Explicit post-crash restart check is incomplete")
+
+
+def run_case(command, log_path, timeout_seconds=600):
     """Keep the original report and kill only this owned tree on hard timeout."""
+    require(timeout_seconds in (600, 10800), "Unsupported native case timeout")
     with log_path.open("w", encoding="utf-8") as stream:
         child = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT)
         try:
-            return child.wait(timeout=600)
+            return child.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"], check=False, timeout=30,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -174,7 +215,7 @@ def main():
     parser.add_argument("--revision", required=True)
     parser.add_argument("--server-revision", required=True)
     parser.add_argument("--version", required=True)
-    parser.add_argument("--phase", choices=("rescan", "native"), default="native")
+    parser.add_argument("--phase", choices=("rescan", "native", "stability"), default="native")
     args = parser.parse_args()
     args.client, args.server, args.verified, args.output = (path.resolve() for path in
         (args.client, args.server, args.verified, args.output))
@@ -185,6 +226,7 @@ def main():
         "schema_version": 1, "status": "not_verified", "started_at": datetime.now(timezone.utc).isoformat(),
         "phase": args.phase,
         "scope": "Post-seal Microsoft Defender scan of six original Windows subjects" if args.phase == "rescan" else
+                 "Thirty actual native sessions and >=7200 seconds of active media/input in one disposable loopback session" if args.phase == "stability" else
                  "Two bounded, same-machine native Windows worker to Chromium fixture cases",
         "production_worker_rebuilt": False, "deployed_server_tested": False,
         "validation_run": {
@@ -193,7 +235,8 @@ def main():
         },
         "environment": {"platform": platform.platform(), "python": platform.python_version()},
         "cases": {}, "limitations": [
-            "Does not establish Windows-to-Windows, Android, cross-network traversal, or long-duration stability.",
+            "Does not establish independent Windows-to-Windows endpoints, Android, full GUI acceptance, cross-network traversal, or 24-hour idle stability.",
+            "The stability phase uses a three-hour disposable account token and one-session grant; account-token refresh and network-outage recovery are not tested.",
             "Server JavaScript and the test host are built from pinned clean source; deployed server images are not executed.",
             "Fixture files use confined selectors and origin-private storage, not user-facing file pickers.",
             "Website input invokes production DOM handlers while native injection is confined to a disposable target process.",
@@ -269,12 +312,14 @@ def main():
                 ("website-temporary-assistance", ["--mode", "cross-account-assist", "--controller", "website",
                     "--ca", str(private / "cert.pem"), "--cert", str(private / "cert.pem"), "--key", str(private / "key.pem")]),
             ]
+            if args.phase == "stability":
+                cases = [("native-30-connections-7200s-active", ["--mode", "same-account", "--stability", "30x7200"])]
             for name, flags in cases:
                 require(digest(worker_path) == worker_hash, "Worker changed before the next case")
                 destination = args.output / name
                 destination.mkdir()
-                code = run_case(common + flags + ["--report-dir", str(destination)], destination / "console.log")
-                case = {"exit_code": code, "worker_unchanged": digest(worker_path) == worker_hash,
+                code = run_case(common + flags + ["--report-dir", str(destination)], destination / "console.log", timeout_seconds=10800 if args.phase == "stability" else 600)
+                case = {"exit_code": code, "timeout_seconds": 10800 if args.phase == "stability" else 600, "worker_unchanged": digest(worker_path) == worker_hash,
                         "status": "not_verified"}
                 report_path = destination / "report.json"
                 if report_path.exists():
@@ -294,6 +339,14 @@ def main():
                     report["harness"]["script_sha256"] == digest(harness_root / "scripts/test-remote-native.mjs") and
                     report["harness"]["website_predicates_sha256"] == digest(harness_root / "tests/remote-native/website-evidence.mjs"),
                     "QA harness source or script identity differs from the recorded workflow")
+                if args.phase == "stability":
+                    expected = {name: digest(harness_root / name) for name in (
+                        "tests/remote-native/stability.mjs", "tests/remote-native/host/main.go", "tests/remote-native/fixture.mjs",
+                        "tests/remote-native/controller.mjs", "tests/remote-native/target.html")}
+                    require(report["harness"].get("stability_sources") == expected, "Stability QA sources differ")
+                    verify_stability_report(report, destination)
+                    receipt["stability"] = {"actual_connections": 30, "actual_active_seconds": report["stability"]["active_window"]["actual_active_seconds"],
+                                            "network_restore_30s": "not_verified", "account_token_refresh": "not_verified"}
             receipt["worker_unchanged_after"] = digest(worker_path) == worker_hash
         receipt["package_unchanged_after"] = digest(package) == receipt["package"]["sha256"]
         receipt["sources_after"] = {"client": source_state(args.client), "server": source_state(args.server)}

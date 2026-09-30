@@ -11,7 +11,18 @@ on:
       - tests/remote-native/website-evidence.mjs
       - tests/remote-native/website-evidence.test.mjs
       - tests/remote-native/final-candidate-10.1.json
+      - tests/remote-native/stability.mjs
+      - tests/remote-native/stability.test.mjs
+      - tests/remote-native/host/main.go
+      - tests/remote-native/controller.mjs
+      - tests/remote-native/target.html
   workflow_dispatch:
+    inputs:
+      validation_scope:
+        description: "Short checks or actual 30 connections plus 7200-second active stability"
+        type: choice
+        default: short
+        options: [short, stability]
 
 permissions:
   contents: read
@@ -22,7 +33,7 @@ jobs:
     name: Final Defender rescan and bounded native checks
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-2022
-    timeout-minutes: 75
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stability' && 300 || 75 }}
     steps:
       - name: Check out validation helper separately
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -93,6 +104,8 @@ jobs:
       - name: Check strict website evidence predicates
         shell: pwsh
         run: |
+          node --test qa/tests/remote-native/stability.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Stability evidence predicate tests failed' }
           node --test qa/tests/remote-native/website-evidence.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Website evidence predicate tests failed' }
           node --test qa/tests/remote-native/policy.test.mjs
@@ -110,11 +123,19 @@ jobs:
           pnpm --dir sources/client exec playwright install chromium
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Playwright Chromium installation failed' }
       - name: Run two bounded real native cases against the unchanged worker
+        if: github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stability'
         shell: pwsh
         timeout-minutes: 25
         run: |
           python qa/scripts/validate-windows-candidate.py --client sources/client --server sources/server --verified verified-candidate --output native-evidence --revision 9b3dbb751942fee040049f9901ea61e95e60c10c --server-revision 194ae805f3569dc16d94b7fda71367e5d68fdff5 --version 10.1.0
           if ($LASTEXITCODE -ne 0) { throw 'Native candidate validation did not pass; inspect the retained original reports' }
+      - name: Run actual 30 native connections and 7200-second active stability
+        if: github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stability'
+        shell: pwsh
+        timeout-minutes: 185
+        run: |
+          python qa/scripts/validate-windows-candidate.py --phase stability --client sources/client --server sources/server --verified verified-candidate --output native-evidence --revision 9b3dbb751942fee040049f9901ea61e95e60c10c --server-revision 194ae805f3569dc16d94b7fda71367e5d68fdff5 --version 10.1.0
+          if ($LASTEXITCODE -ne 0) { throw 'Actual native stability did not pass; inspect partial raw samples and reports' }
       - name: Retain package-bound raw reports without private fixture state
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
