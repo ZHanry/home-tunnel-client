@@ -23,8 +23,8 @@ if ($env:GITHUB_ACTIONS -eq 'true') {
     }
 }
 if ($UpdateSignatures) {
-    & $scanner -SignatureUpdate
-    if ($LASTEXITCODE -ne 0) { throw "Defender signature update failed: $LASTEXITCODE" }
+    . (Join-Path $PSScriptRoot 'update-defender-signatures.ps1')
+    Update-DefenderSignatures -Scanner $scanner
 }
 $status = Get-MpComputerStatus -ErrorAction Stop
 if (-not $status.AMServiceEnabled -or -not $status.AntivirusEnabled) { throw 'Microsoft Defender is unavailable; release scanning is required' }

@@ -1,0 +1,27 @@
+name: Capture released Windows UI
+on:
+  push:
+    branches: [codex/capture-windows-v10]
+    paths:
+      - '.github/workflows/windows-ui-capture.yml'
+      - 'scripts/capture-windows-ui.ps1'
+      - 'scripts/wait-windows-ui.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Capture the genuine released native GUI
+        shell: pwsh
+        run: .\scripts\capture-windows-ui.ps1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: windows-v10-ui
+          path: outputs/windows-ui/*
+          if-no-files-found: error
+          retention-days: 7

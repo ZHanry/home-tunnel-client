@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from native_build import build_logged
 
@@ -25,6 +26,25 @@ NATIVE = ROOT / "native/remote"
 def run(command, cwd, env):
     # Never log process environment, which may contain authenticated proxy details.
     subprocess.run([str(item) for item in command], cwd=cwd, env=env, check=True)
+
+
+def fetch_revision(revision, path, env):
+    """Retry transient transport failures, never a different source or revision."""
+    command = ["git", "-c", "core.longpaths=true", "fetch", "--depth=1", "origin", revision]
+    transient = re.compile(r"(?:returned error: (?:502|503|504)|timed out|connection reset)", re.I)
+    for attempt in range(3):
+        result = subprocess.run(command, cwd=path, env=env, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace")
+        print(result.stdout, end="")
+        print(result.stderr, end="", file=sys.stderr)
+        if result.returncode == 0:
+            return
+        if attempt == 2 or not transient.search(result.stderr):
+            raise subprocess.CalledProcessError(result.returncode, command,
+                                                output=result.stdout, stderr=result.stderr)
+        delay = 2 ** (attempt + 1)
+        print(f"Transient upstream fetch failure; retrying the same revision in {delay}s", file=sys.stderr)
+        time.sleep(delay)
 
 
 def checkout(repository, revision, path, env, reviewed_difference=b""):
@@ -39,7 +59,7 @@ def checkout(repository, revision, path, env, reviewed_difference=b""):
     difference = subprocess.check_output(["git", "diff", "--binary"], cwd=path, env=env)
     if dirty and (not reviewed_difference or difference != reviewed_difference or subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=path, env=env)):
         raise SystemExit("Refusing to overwrite modified dependency sources")
-    run(["git", "-c", "core.longpaths=true", "fetch", "--depth=1", "origin", revision], path, env)
+    fetch_revision(revision, path, env)
     run(["git", "-c", "core.longpaths=true", "checkout", "--detach", revision], path, env)
 
 

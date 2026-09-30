@@ -30,6 +30,10 @@ about every security product.
 - Scan failures, unavailable scanners, stale definitions, missing files or
   changed hashes block publication. The release verifier matches scan results
   to the exact installer, archive and embedded programs.
+- Signature-update network timeouts (`0x80072ee2`) retry at most twice, after
+  10 and 20 seconds. An unsuccessful final update still blocks scanning;
+  definitions must still be less than 48 hours old. Scan detections are never
+  retried or ignored.
 - Exercise silent installation, installed-file hash checks and native
   uninstallation on the isolated runner.
 - Attest the EXE and ZIP separately. Keep antivirus and installation reports in

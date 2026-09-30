@@ -23,6 +23,15 @@ finally:
     os.chdir(previous_directory)
 
 class ReleasePolicyTests(unittest.TestCase):
+    def test_public_documentation_uses_objective_test_coverage(self):
+        root = Path(__file__).resolve().parents[1]
+        documents = [*root.glob("README*.md"), *(root / "docs").rglob("*.md")]
+        for document in documents:
+            with self.subTest(path=document.relative_to(root)):
+                self.assertNotRegex(document.read_text(encoding="utf-8"), r"(?i)owner[\s_-]+waiv|负责人豁免")
+        policy = json.loads((root / "compatibility.json").read_text())["support_policy"]
+        self.assertNotRegex(policy, r"(?i)owner[\s_-]+waiv|负责人豁免")
+
     def frozen_contract_fixture(self):
         project = {"contract_ref": "api-v1.4.0", "contract_status": "frozen", "frozen_tag": "api-v1.4.0"}
         lock = {"repository": "ZHanry/home-tunnel-server", "contract_status": "frozen",
@@ -197,7 +206,7 @@ class ReleasePolicyTests(unittest.TestCase):
                 with self.subTest(status=status), self.assertRaisesRegex(SystemExit, 'must both pass'):
                     module.verify_remote_evidence(directory, '6.0.1', 'revision')
 
-    def test_stable_notes_disclose_every_owner_waiver(self):
+    def test_stable_notes_list_unverified_coverage_without_rewriting_evidence(self):
         import client_release_candidate as policy
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -214,12 +223,17 @@ class ReleasePolicyTests(unittest.TestCase):
             (directory / policy.ACCEPTANCE).write_text(json.dumps({'status': 'accepted_with_waivers', 'coverage': coverage}))
             (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps(
                 {'status': 'waived', 'waiver': dict(waiver, reason='Native VM run not performed.')}))
+            originals = {path: path.read_bytes() for path in directory.iterdir()}
             notes = module.waiver_notes(directory)
-            self.assertIn('## Not verified (owner waivers)', notes)
-            self.assertIn('- `stability`: stability removed. Waived cases: `thirty_connections`', notes)
+            self.assertIn('## Not verified\n', notes)
+            self.assertIn('- `stability`: not verified. Unverified cases: `thirty_connections`', notes)
             self.assertIn('`lock_screen`', notes)
             self.assertNotIn('`boot_without_login`', notes)
-            self.assertIn('Native VM run not performed.', notes)
+            self.assertIn('`windows-remote-native-acceptance`: not verified.', notes)
+            self.assertNotIn('waiv', notes.lower())
+            self.assertNotIn('owner', notes.lower())
+            for path, original in originals.items():
+                self.assertEqual(path.read_bytes(), original)
             self.assertNotIn('udp_network', notes)
             (directory / 'windows-remote-native-acceptance.json').write_text(json.dumps({'status': 'passed'}))
             coverage = {gate: dict(item, status='passed') for gate, item in coverage.items()}
