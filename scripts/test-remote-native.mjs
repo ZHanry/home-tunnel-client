@@ -7,17 +7,21 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { createRequire } from 'node:module';
+import { STABILITY, observeActiveWindow, observeInputCycle, checkSample } from '../tests/remote-native/stability.mjs';
+import { verifiedWebsiteMedia, websiteInputGranted, collectFailureMedia } from '../tests/remote-native/website-evidence.mjs';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const harnessRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = Object.create(null);
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i];
-  if (!['--worker', '--sha256', '--server-root', '--report-dir', '--input', '--codec', '--files', '--mode', '--server-source', '--controller', '--ca', '--cert', '--key'].includes(key) || !process.argv[i + 1] || options[key]) {
-    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>] [--input chromium] [--codec H264|VP8] [--files fixture] [--mode same-account|cross-account-assist|cross-account-fixed|cross-account-request] [--server-source locked|working-tree] [--controller harness|website --ca <absolute.crt> --cert <absolute.crt> --key <absolute.key>]');
+  if (!['--worker', '--sha256', '--server-root', '--client-root', '--report-dir', '--input', '--codec', '--files', '--mode', '--server-source', '--controller', '--ca', '--cert', '--key', '--stability'].includes(key) || !process.argv[i + 1] || options[key]) {
+    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--client-root <absolute clean candidate checkout>] [--report-dir <directory>] [--input chromium] [--codec H264|VP8] [--files fixture] [--mode same-account|cross-account-assist|cross-account-fixed|cross-account-request] [--server-source locked|working-tree] [--controller harness|website --ca <absolute.crt> --cert <absolute.crt> --key <absolute.key>] [--stability 30x7200]');
     process.exit(2);
   }
   options[key] = process.argv[i + 1];
 }
+const root = options['--client-root'] ? resolve(options['--client-root']) : harnessRoot;
 const reportDir = resolve(options['--report-dir'] ?? join(root, 'outputs', 'remote-native-acceptance'));
 const withInput = options['--input'] === 'chromium';
 const withFiles = options['--files'] === 'fixture';
@@ -25,9 +29,11 @@ const mode = options['--mode'] ?? 'same-account';
 const crossAccount = mode !== 'same-account';
 const serverSource = options['--server-source'] ?? 'locked';
 const controllerKind = options['--controller'] ?? 'harness';
+const withStability = options['--stability'] === '30x7200';
 const requestedCodec = options['--codec'] ?? null;
 if (requestedCodec !== null && !['H264', 'VP8'].includes(requestedCodec)) { console.error('Unsupported codec constraint'); process.exit(2); }
-if (!['same-account', 'cross-account-assist', 'cross-account-fixed', 'cross-account-request'].includes(mode) || !['locked', 'working-tree'].includes(serverSource) ||
+if ((options['--stability'] !== undefined && (!withStability || !withInput || withFiles || crossAccount || controllerKind !== 'harness' || requestedCodec !== null || serverSource !== 'locked')) ||
+    !['same-account', 'cross-account-assist', 'cross-account-fixed', 'cross-account-request'].includes(mode) || !['locked', 'working-tree'].includes(serverSource) ||
     !['harness', 'website'].includes(controllerKind) || (serverSource === 'working-tree' && !options['--report-dir']) ||
     (crossAccount && withFiles) ||
     (controllerKind === 'website' && (withFiles || requestedCodec !== null ||
@@ -46,7 +52,7 @@ const report = {
   privacy: { screenshots: false, recordings: false, sdp: false, network_addresses: false, credentials: false },
   requested_codec: requestedCodec,
 };
-let directory, fixture, host, browser, page, target, targetBrowser, targetServer, accessProfile, fixedPassword, rpcID = 0, stage = 'preflight';
+let hostConfiguration, directory, fixture, host, browser, page, target, targetBrowser, targetServer, accessProfile, fixedPassword, rpcID = 0, stage = 'preflight';
 const children = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 class CheckFailure extends Error { constructor(code) { super(code); this.code = code; } }
@@ -65,14 +71,15 @@ async function websiteEvidence(page) {
     const pair = selectedUdpPair(stats);
     const inbound = values.find(item => item.type === 'inbound-rtp' && item.kind === 'video');
     const transport = values.find(item => item.type === 'transport' && item.selectedCandidatePairId);
+    let diagnostics;
+    try { diagnostics = JSON.parse(document.querySelector('[data-diagnostics]')?.textContent ?? '{}'); } catch {}
     return { status: document.querySelector('.remote-status')?.textContent ?? '', media_mask_hidden: document.querySelector('[data-media-mask]')?.hidden === true,
+      viewer_live: document.querySelector('.remote-dialog')?.dataset.live === 'true', video_paused: video.paused,
+      video_ready_state: video.readyState, video_current_time: video.currentTime,
+      host_udp_verified: diagnostics?.hostVerifiedUDP === true,
       browser_udp_verified: pair?.verified === true, connection_state: peer.connectionState, dtls_state: transport?.dtlsState,
       frames_decoded: inbound?.framesDecoded ?? 0, bytes_received: inbound?.bytesReceived ?? 0, width: video.videoWidth, height: video.videoHeight };
   });
-}
-function verifiedWebsiteMedia(evidence) {
-  return evidence?.status.includes('UDP') && evidence.media_mask_hidden && evidence.browser_udp_verified && evidence.connection_state === 'connected' &&
-    evidence.dtls_state === 'connected' && evidence.frames_decoded >= 5 && evidence.bytes_received > 0 && evidence.width > 0 && evidence.height > 0;
 }
 
 class PipeProcess {
@@ -182,6 +189,7 @@ function treeHash(directory) {
 }
 try {
   requireCheck(process.platform === 'win32', 'E2E_WINDOWS_REQUIRED');
+  requireCheck(!options['--client-root'] || (isAbsolute(options['--client-root']) && existsSync(join(root, 'go.mod'))), 'E2E_CLIENT_SOURCE_REQUIRED');
   requireCheck(Number(process.versions.node.split('.')[0]) === 24, 'E2E_NODE_24_REQUIRED');
   requireCheck(options['--input'] === undefined || withInput, 'E2E_INPUT_TARGET_INVALID');
   requireCheck(options['--files'] === undefined || withFiles, 'E2E_FILE_FIXTURE_INVALID');
@@ -193,7 +201,16 @@ try {
   const serverRoot = resolve(options['--server-root'] ?? process.env.HT_SERVER_ROOT ?? join(root, '..', 'home-tunnel-server'));
   requireCheck(existsSync(join(serverRoot, 'control-center', 'package.json')), 'E2E_SERVER_SOURCE_REQUIRED');
   report.sources = { client: revision(root), server: revision(serverRoot) };
-  report.release_eligible = serverSource === 'locked' && report.sources.client.modified === false && report.sources.server.modified === false;
+  report.harness = { source: revision(harnessRoot),
+    script_sha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
+    website_predicates_sha256: createHash('sha256').update(readFileSync(join(harnessRoot, 'tests/remote-native/website-evidence.mjs'))).digest('hex') };
+  if (withStability) {
+    report.stability = { status: 'not_verified', target_sessions: STABILITY.sessions, target_active_seconds: STABILITY.active_ms / 1000, sessions: [],
+      fixture_policy: { host_timeout_seconds: 10800, one_session_grant_seconds: 10800, account_access_token_seconds: 10800 },
+      network_restore_30s: { status: 'not_verified', reason: 'No network outage is induced by this fixture.' } };
+    report.harness.stability_sources = Object.fromEntries(['tests/remote-native/stability.mjs', 'tests/remote-native/host/main.go', 'tests/remote-native/fixture.mjs', 'tests/remote-native/controller.mjs', 'tests/remote-native/target.html'].map(name => [name, createHash('sha256').update(readFileSync(join(harnessRoot, name))).digest('hex')]));
+  }
+  report.release_eligible = serverSource === 'locked' && report.sources.client.modified === false && report.sources.server.modified === false && report.harness.source.modified === false;
   const serverLock = JSON.parse(readFileSync(join(root, 'tests', 'remote-native', 'server-lock.json'), 'utf8'));
   if (serverSource === 'locked') requireCheck(report.sources.server.commit === serverLock.revision && report.sources.server.modified === false, 'E2E_LOCKED_CLEAN_SERVER_REQUIRED');
   stage = 'build_server';
@@ -219,17 +236,26 @@ try {
   }
   stage = 'build_host';
   const hostExecutable = join(directory, 'native-e2e-host.exe');
-  const build = spawnSync('go', ['build', '-tags', 'remote_native_e2e', '-o', hostExecutable, './tests/remote-native/host'], { cwd: root, windowsHide: true, timeout: 120000, encoding: 'utf8', maxBuffer: 1048576 });
+  const buildArguments = ['build', '-tags', 'remote_native_e2e', '-o', hostExecutable];
+  if (withStability) {
+    const overlay = join(directory, 'qa-host-overlay.json');
+    writeFileSync(overlay, JSON.stringify({ Replace: { [join(root, 'tests/remote-native/host/main.go')]: join(harnessRoot, 'tests/remote-native/host/main.go') } }));
+    buildArguments.push('-overlay', overlay);
+    report.harness.host_overlay = { purpose: 'QA-only timeout and one-session grant duration', production_source_modified: false, source: 'tests/remote-native/host/main.go', reuses_disposable_identity_after_owned_restart: true, sha256: report.harness.stability_sources['tests/remote-native/host/main.go'] };
+  }
+  buildArguments.push('./tests/remote-native/host');
+  const build = spawnSync('go', buildArguments, { cwd: root, windowsHide: true, timeout: 120000, encoding: 'utf8', maxBuffer: 1048576 });
   requireCheck(build.status === 0, 'E2E_NATIVE_HOST_BUILD_FAILED');
   stage = 'fixture';
-  fixture = new PipeProcess(process.execPath, [join(root, 'tests', 'remote-native', 'fixture.mjs')], {
+  fixture = new PipeProcess(process.execPath, [join(withStability ? harnessRoot : root, 'tests', 'remote-native', 'fixture.mjs')], {
     ...process.env, HT_SERVER_ROOT: serverRoot, HT_NATIVE_E2E_TEMP: directory,
+    ...(withStability ? { ACCESS_TOKEN_SECONDS: '10800' } : {}),
     ...(controllerKind === 'website' ? { HT_NATIVE_E2E_HTTPS: '1', HT_NATIVE_E2E_TLS_CERT: options['--cert'], HT_NATIVE_E2E_TLS_KEY: options['--key'] } : {}),
   });
   const initial = await fixture.read(item => item.event === 'fixture', 30000);
   requireCheck(new RegExp(`^${controllerKind === 'website' ? 'https' : 'http'}:\\/\\/127\\.0\\.0\\.1:\\d+$`).test(initial.origin), 'E2E_NON_LOOPBACK_FIXTURE');
   report.checks.isolated_real_server = true;
-  const { chromium } = await import('@playwright/test');
+  const { chromium } = createRequire(join(root, 'package.json'))('@playwright/test');
   let inputTargetPID = 0;
   if (withInput || controllerKind === 'website') {
     stage = 'input_target';
@@ -247,9 +273,10 @@ try {
   }
   stage = 'native_backend';
   host = new PipeProcess(hostExecutable, []);
-  host.send({ ...initial, worker: options['--worker'], sha256: actualHash, store_path: join(directory, 'host-state.json'), input_target_pid: inputTargetPID, file_test_root: fileRoot,
+  hostConfiguration = { ...initial, worker: options['--worker'], sha256: actualHash, store_path: join(directory, 'host-state.json'), input_target_pid: inputTargetPID, file_test_root: fileRoot,
     website_clipboard: controllerKind === 'website',
-    ...(controllerKind === 'website' ? { ca_file: join(directory, 'ca.crt') } : {}) });
+    ...(controllerKind === 'website' ? { ca_file: join(directory, 'ca.crt') } : {}), ...(withStability ? { stability: true } : {}) };
+  host.send(hostConfiguration);
   const ready = await host.read(item => item.event === 'host', 30000);
   requireCheck(ready.capabilities?.available && ready.capabilities.status === 'ready' && ready.capabilities.displays?.length, 'RD_BACKEND_UNAVAILABLE');
   report.checks.native_backend_ready = true;
@@ -325,9 +352,14 @@ try {
     stage = 'website_media';
     await until(async () => { report.media = await websiteEvidence(page); return verifiedWebsiteMedia(report.media); }, 'E2E_WEBSITE_MEDIA_NOT_OBSERVED', 45000);
     const first = report.media.frames_decoded;
+    const firstMediaTime = report.media.video_current_time;
     await delay(1200);
     report.media = await websiteEvidence(page);
-    requireCheck(verifiedWebsiteMedia(report.media) && report.media.frames_decoded > first, 'E2E_WEBSITE_MEDIA_NOT_CONTINUING');
+    report.media_progression = {
+      first: { frames_decoded: first, video_current_time: firstMediaTime },
+      second: { frames_decoded: report.media?.frames_decoded, video_current_time: report.media?.video_current_time },
+    };
+    requireCheck(verifiedWebsiteMedia(report.media) && report.media.frames_decoded > first && report.media.video_current_time > firstMediaTime, 'E2E_WEBSITE_MEDIA_NOT_CONTINUING');
     report.checks.website_real_continuing_video = true;
     report.checks.website_selected_udp_and_dtls = true;
     report.checks[crossAccount ? 'cross_account_auto_approval' : 'one_session_grant_auto_approval'] = true;
@@ -346,7 +378,10 @@ try {
       await until(() => target.evaluate(() => document.querySelector('#input-target').value.endsWith('验收✓')), 'E2E_WEBSITE_TEXT_NOT_OBSERVED', 10000);
       report.input.unicode_text = true;
       await page.evaluate(() => document.querySelector('.remote-dialog [data-input]').click());
-      await until(() => page.locator('.remote-status').textContent().then(value => value.includes('允许输入')), 'E2E_WEBSITE_INPUT_NOT_GRANTED', 10000);
+      await until(async () => websiteInputGranted(await page.evaluate(() => ({
+        release_visible: document.querySelector('.remote-dialog [data-release]')?.hidden === false,
+        release_enabled: document.querySelector('.remote-dialog [data-release]')?.disabled === false,
+      })), (await rpc('diagnostics')).native), 'E2E_WEBSITE_INPUT_NOT_GRANTED', 10000);
       const point = (await rpc('input_target_point')).point;
       requireCheck(point.hit_matches_target_root && point.hit_matches_target_pid, 'E2E_INPUT_TARGET_OBSCURED');
       await target.evaluate(() => { window.nativeInputTarget.events = []; });
@@ -376,7 +411,8 @@ try {
       report.checks.website_native_input = true;
       await page.evaluate(() => document.querySelector('.remote-dialog [data-release]').click());
     }
-    await page.locator('.remote-dialog [data-close]').click();
+    stage = 'website_shutdown';
+    await page.locator('.remote-dialog [data-disconnect]').click();
     await until(async () => (await rpc('state')).session_idle, 'E2E_WEBSITE_SESSION_DID_NOT_CLOSE', 10000);
     report.checks.clean_session_shutdown = true;
   } else {
@@ -394,6 +430,68 @@ try {
   if (crossAccount) await authorizeCrossAccount(ready);
   else await until(() => page.evaluate(id => window.nativeE2E.findHost(id), ready.endpoint_id), 'E2E_HOST_NOT_ONLINE');
   report.checks.real_browser_identity = true;
+  async function openStabilitySession() {
+    const paired = await page.evaluate(() => window.nativeE2E.pair());
+    await host.read(item => item.event === 'approval' && item.approval.kind === 'pairing' && item.approval.id === paired.id);
+    await rpc('approve_pairing', { target_id: paired.id });
+    const displayed = await host.read(item => item.event === 'approval' && item.approval.kind === 'pairing_display' && item.approval.id === paired.id);
+    const session = await page.evaluate(code => window.nativeE2E.confirm(code), displayed.approval.display_code);
+    await until(() => page.evaluate(id => window.nativeE2E.ticketReady(id), session.session_id), 'E2E_SESSION_NOT_AUTO_APPROVED', 15000);
+    await page.evaluate(id => window.nativeE2E.start(id), session.session_id);
+    await until(async () => verifiedMedia(await page.evaluate(() => window.nativeE2E.evidence())), 'E2E_STABILITY_SESSION_MEDIA_MISSING', 30000);
+    return session;
+  }
+  async function proveStabilitySessionInput() {
+    await page.evaluate(() => window.nativeE2E.prepareInput());
+    await target.bringToFront();
+    await rpc('focus_input_target');
+    await target.locator('#input-target').click();
+    requireCheck((await rpc('input_focus')).foreground_matches_target, 'E2E_STABILITY_TARGET_LOST_FOREGROUND');
+    await page.evaluate(() => window.nativeE2E.requestInput());
+    await until(async () => (await page.evaluate(() => window.nativeE2E.evidence())).input_enabled, 'E2E_STABILITY_INPUT_HANDSHAKE_FAILED', 7000);
+    const point = (await rpc('input_target_point')).point;
+    requireCheck(point.hit_matches_target_root && point.hit_matches_target_pid, 'E2E_INPUT_TARGET_OBSCURED');
+    const started = performance.now();
+    const first = await observeInputCycle({ page, target, rpc, until, requireCheck, point, started });
+    checkSample(null, first);
+    await delay(1200);
+    const second = await observeInputCycle({ page, target, rpc, until, requireCheck, point, started });
+    checkSample(first, second);
+    return { first, second };
+  }
+
+  const stabilityRunStarted = performance.now();
+  let previousPairingStarted = -Infinity;
+  async function paceStabilityPairing() {
+    while (performance.now() - previousPairingStarted < 15000) await delay(Math.ceil(15000 - (performance.now() - previousPairingStarted)));
+    previousPairingStarted = performance.now();
+    return previousPairingStarted;
+  }
+  if (withStability) {
+    stage = 'stability_30_connections';
+    for (let ordinal = 1; ordinal < STABILITY.sessions; ordinal++) {
+      const reconnectStarted = await paceStabilityPairing();
+      const next = await openStabilitySession();
+      const opened = performance.now();
+      const activity = await proveStabilitySessionInput();
+      requireCheck(performance.now() - reconnectStarted <= 30000, 'E2E_STABILITY_NORMAL_REPAIR_TOO_SLOW');
+      const record = { ordinal, pairing_started_elapsed_ms: reconnectStarted - stabilityRunStarted, session_id_sha256: createHash('sha256').update(next.session_id).digest('hex'), signed_pairing: true, live_media: true, trusted_input: true,
+        fresh_pairing_to_media_ms: opened - reconnectStarted, fresh_pairing_to_input_ms: performance.now() - reconnectStarted, activity, clean_close: false };
+      report.stability.sessions.push(record);
+      await page.evaluate(() => { window.nativeE2E.releaseInput(); });
+      await page.evaluate(() => window.nativeE2E.closeSession());
+      await until(async () => (await rpc('state')).session_idle, 'E2E_STABILITY_SESSION_DID_NOT_CLOSE', 5000);
+      record.clean_close = true;
+      writeFileSync(join(reportDir, 'stability-connections.json'), `${JSON.stringify(report.stability.sessions, null, 2)}\n`, { mode: 0o600 });
+      console.log(JSON.stringify({ event: 'stability_connection', ordinal, status: 'passed', fresh_pairing_to_input_ms: record.fresh_pairing_to_input_ms }));
+    }
+    // The 30th session is the uninterrupted 2-hour observation below.
+    // Existing server limits stay 5/minute and 30/hour; extra crash/restart
+    // sessions run only after the actual two-hour window has elapsed.
+    await paceStabilityPairing();
+  }
+  const primaryPairStarted = performance.now();
+  let primaryMediaMs, primaryInputMs;
   stage = 'pairing';
   const pairing = await page.evaluate(() => window.nativeE2E.pair());
   if (!crossAccount) {
@@ -422,6 +520,7 @@ try {
   report.checks.real_continuing_video = true;
   report.checks.selected_udp_and_dtls = true;
   report.native_media = (await rpc('diagnostics')).native;
+  if (withStability) primaryMediaMs = performance.now() - primaryPairStarted;
   if (requestedCodec) {
     const expectedMime = `video/${requestedCodec}`;
     requireCheck(report.media.video_codec === expectedMime && report.native_media.video_codec === expectedMime && report.native_media.video_frames_encoded > 0 && typeof report.native_media.video_encoder_implementation === 'string' && report.native_media.video_encoder_implementation.length > 0, 'E2E_REQUESTED_CODEC_NOT_OBSERVED');
@@ -505,6 +604,10 @@ try {
     await until(() => target.evaluate(() => document.querySelector('#input-target').value === '验收✓'), 'E2E_REAL_UNICODE_TEXT_NOT_OBSERVED', 5000);
     report.input.unicode_text = true;
     report.input.trusted_event_count = await target.evaluate(() => window.nativeInputTarget.events.length);
+    if (withStability) {
+      primaryInputMs = performance.now() - primaryPairStarted;
+      requireCheck(primaryInputMs <= 30000, 'E2E_STABILITY_PRIMARY_PAIRING_TOO_SLOW');
+    }
     const previousEpoch = (await page.evaluate(() => window.nativeE2E.evidence())).input_epoch;
     await page.evaluate(() => window.nativeE2E.releaseInput());
     await page.evaluate(() => window.nativeE2E.requestInput());
@@ -517,6 +620,13 @@ try {
     await page.evaluate(() => window.nativeE2E.sendKey());
     await until(() => target.evaluate(() => ['keydown', 'keyup'].every(type => window.nativeInputTarget.events.some(item => item.type === type && item.code === 'KeyA'))), 'E2E_INPUT_DID_NOT_SURVIVE_STALE_EPOCH', 3000);
     report.input.stale_epoch_rejected = true;
+    if (withStability) {
+      stage = 'stability_active_7200s';
+      report.stability.active_window = await observeActiveWindow({ page, target, rpc, until, requireCheck, point }, join(reportDir, 'stability-samples.jsonl'), progress => {
+        if (progress.samples === 1 || progress.samples % 12 === 0) console.log(JSON.stringify({ event: 'stability_progress', ...progress }));
+      });
+      report.stability.samples_sha256 = createHash('sha256').update(readFileSync(join(reportDir, 'stability-samples.jsonl'))).digest('hex');
+    }
     await target.evaluate(() => { window.nativeInputTarget.events = []; });
     await page.evaluate(() => { window.nativeE2E.pauseHeartbeat(); window.nativeE2E.holdKey(); });
     await until(() => target.evaluate(() => window.nativeInputTarget.events.some(item => item.type === 'keydown' && item.code === 'KeyA')), 'E2E_WATCHDOG_KEYDOWN_MISSING', 3000);
@@ -534,6 +644,12 @@ try {
     await page.evaluate(() => window.nativeE2E.closeSession());
     await until(async () => (await rpc('state')).session_idle, 'E2E_NORMAL_SESSION_DID_NOT_CLOSE', 5000);
     report.checks.clean_session_shutdown = true;
+    if (withStability) {
+      report.stability.sessions.push({ ordinal: STABILITY.sessions, session_id_sha256: createHash('sha256').update(created.session_id).digest('hex'), signed_pairing: true, live_media: true, trusted_input: true, clean_close: true, active_window: true,
+        pairing_started_elapsed_ms: previousPairingStarted - stabilityRunStarted, fresh_pairing_to_media_ms: primaryMediaMs, fresh_pairing_to_input_ms: primaryInputMs });
+      requireCheck(report.stability.sessions.length === STABILITY.sessions && new Set(report.stability.sessions.map(item => item.session_id_sha256)).size === STABILITY.sessions && report.stability.sessions.every(item => item.clean_close), 'E2E_STABILITY_CONNECTION_COUNT_INVALID');
+      report.stability.actual_connections = report.stability.sessions.length;
+    }
     // A second independently paired/approved session tests process death. The
     // first session's normal shutdown and healthy media evidence remain intact.
     stage = 'worker_crash';
@@ -572,6 +688,29 @@ try {
     }), crashStarted);
     requireCheck(release.key_release_ms >= 0 && release.key_release_ms <= 2000 && release.button_release_ms >= 0 && release.button_release_ms <= 2000, 'E2E_WORKER_CRASH_RELEASE_TOO_SLOW');
     report.input.worker_crash = { passed: true, ...release };
+    if (withStability) {
+      stage = 'stability_post_crash_restart';
+      // This is an explicit owned-host restart and new pairing, not automatic
+      // product recovery and not recovery from a network interruption.
+      await page.evaluate(() => window.nativeE2E.closeSession());
+      await host.stop();
+      host = new PipeProcess(hostExecutable, []);
+      host.send(hostConfiguration);
+      const restarted = await host.read(item => item.event === 'host', 30000);
+      requireCheck(restarted.endpoint_id === ready.endpoint_id && restarted.jkt === ready.jkt, 'E2E_STABILITY_RESTART_IDENTITY_CHANGED');
+      await rpc('bind_controller', controller);
+      await until(() => page.evaluate(id => window.nativeE2E.findHost(id), restarted.endpoint_id), 'E2E_STABILITY_RESTART_HOST_OFFLINE');
+      const recovered = await openStabilitySession();
+      const activity = await proveStabilitySessionInput();
+      const restartMs = await target.evaluate(start => performance.now() - start, crashStarted);
+      requireCheck(Number.isFinite(restartMs) && restartMs >= 0 && restartMs <= 30000, 'E2E_STABILITY_POST_CRASH_REPAIR_TOO_SLOW');
+      await page.evaluate(() => { window.nativeE2E.releaseInput(); });
+      await page.evaluate(() => window.nativeE2E.closeSession());
+      await until(async () => (await rpc('state')).session_idle, 'E2E_STABILITY_RECOVERED_SESSION_DID_NOT_CLOSE', 5000);
+      report.stability.post_crash_explicit_restart = { status: 'passed', crash_to_live_input_ms: restartMs, session_id_sha256: createHash('sha256').update(recovered.session_id).digest('hex'), activity, clean_close: true,
+        scope: 'Owned QA host restart and new signed pairing; no automatic restart or network outage claim.' };
+      report.stability.status = 'passed';
+    }
     report.input.status = 'passed'; delete report.input.reason;
     report.limitations = ['Cross-network traversal, Android, audio, clipboard and files are not established by this run.'];
   }
@@ -585,6 +724,7 @@ try {
     `Cross-network traversal, Android, audio, clipboard${withFiles ? '' : ', files'}${withInput ? '' : ', input'} are not established by this run.`,
     ...(withFiles ? ['File selection uses a confined test fixture and browser origin-private storage; native and browser user pickers are not established.'] : []),
     ...(controllerKind === 'website' && withInput ? ['Website input is triggered through production DOM handlers; stale-epoch, watchdog and worker-crash behavior are established separately by the isolated harness.'] : []),
+    ...(withStability ? ['Stability covers the original Windows worker with a disposable single-machine controller and QA host; full GUI, independent Windows endpoints, account-token refresh, network-outage recovery and 24-hour idle stability are not established.', 'The disposable account token and one-session test grant expire after 10800 seconds; production remote lease and signaling-token renewal logic remains unchanged.'] : []),
     ...(serverSource === 'working-tree' ? ['Uncommitted server sources are accepted only for local development validation; this report is not release provenance.'] : []),
   ];
 } catch (error) {
@@ -593,14 +733,14 @@ try {
     try { report.input.failure_window_diagnostics = (await rpc('input_focus')).window_diagnostics; } catch {}
   }
   if (page && !page.isClosed()) {
-    try { report.media = await page.evaluate(() => window.nativeE2E?.evidence()); } catch {}
+    report.media = await collectFailureMedia(page, controllerKind, report.media, websiteEvidence);
   }
   if (withInput && target && !target.isClosed()) {
     try { report.input.observed_events = await target.evaluate(() => window.nativeInputTarget.events.slice(0, 32).map(({ type, code, target_matches }) => ({ type, code, target_matches }))); } catch {}
     try { report.input.target_value_length = await target.evaluate(() => document.querySelector('#input-target').value.length); } catch {}
   }
   report.status = report.checks.native_backend_ready ? 'failed' : 'not_verified';
-  report.failure = { stage, code: error instanceof CheckFailure ? error.code : (String(error.message).match(/\bRD_[A-Z_]{3,80}\b/)?.[0] ?? 'E2E_UNEXPECTED_FAILURE'),
+  report.failure = { stage, code: error instanceof CheckFailure || /^E2E_STABILITY_[A-Z_]+$/.test(error.code ?? '') ? error.code : (String(error.message).match(/\bRD_[A-Z_]{3,80}\b/)?.[0] ?? 'E2E_UNEXPECTED_FAILURE'),
     ...(host?.failureStage ? { host_stage: host.failureStage } : {}) };
   process.exitCode = 1;
 } finally {
@@ -613,6 +753,11 @@ try {
   if (directory) {
     try { rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }); }
     catch { report.cleanup = 'failed'; report.status = 'failed'; process.exitCode = 1; }
+  }
+  if (withStability && report.stability) {
+    if (report.status !== 'passed') report.stability.status = report.status;
+    if (existsSync(join(reportDir, 'stability-samples.jsonl'))) report.stability.samples_sha256 = createHash('sha256').update(readFileSync(join(reportDir, 'stability-samples.jsonl'))).digest('hex');
+    writeFileSync(join(reportDir, 'stability-connections.json'), `${JSON.stringify(report.stability.sessions, null, 2)}\n`, { mode: 0o600 });
   }
   report.finished_at = new Date().toISOString();
   const destination = join(reportDir, 'report.json');

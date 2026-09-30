@@ -9,6 +9,7 @@ import { RemoteTransfers } from '/modules/remote/transfer.js';
 let api, signal, session, host, assistInviteID, pairing, requestID, nonce, input, savedHeartbeat, transfers, pending = [], permissions = ['view'];
 const fileState = { offers: [], progress: [], received: [] };
 const video = document.querySelector('video');
+let controllerTokenRefreshes = 0;
 const state = { phases: [], failures: [], input_releases: [], frames: 0 };
 const fail = error => { state.failures.push(error?.code ?? 'RD_NATIVE_E2E_BROWSER_FAILED'); session?.fail(error); };
 async function acceptCrossAccountTarget(target) {
@@ -60,6 +61,7 @@ window.nativeE2E = {
       const response = await fetch(path, { ...options, redirect: 'error', headers: { 'content-type': 'application/json', ...options.headers, authorization: `Bearer ${token}` } });
       const result = await boundedResponse(response);
       if (!response.ok) throw new Error(result.error_code ?? 'RD_ACCOUNT_FAILED');
+      if (path === '/api/v1/rd/tokens') controllerTokenRefreshes++;
       return result;
     };
     api = await new RemoteApi(account, userID).initialize();
@@ -158,6 +160,8 @@ window.nativeE2E = {
       host_path_verified: session?.pathVerified === true, browser_udp_verified: pair?.verified === true,
       input_enabled: session?.inputEnabled === true, connection_state: session?.pc?.connectionState,
       input_epoch: session?.inputEpoch ?? 0,
+      lease_sequence: session?.lease?.sequence ?? 0, lease_valid: session?.lease?.valid() === true,
+      signal_authenticated: signal?.authenticated === true, controller_token_refreshes: controllerTokenRefreshes,
       dtls_state: transport?.dtlsState, frames_decoded: inbound?.framesDecoded ?? 0, bytes_received: inbound?.bytesReceived ?? 0,
       video_codec: codec?.mimeType ?? null, video_codec_parameters: codec?.sdpFmtpLine ?? null,
       video_decoder_implementation: inbound?.decoderImplementation ?? null, video_power_efficient_decoder: inbound?.powerEfficientDecoder ?? null,
