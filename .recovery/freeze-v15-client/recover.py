@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 REPOSITORY = 'ZHanry/home-tunnel-client'
 BRANCH = 'codex/windows-v10-1'
-PARENT = 'd4616525347d443950057e6cf2c83cb7e2c0602a'
-ALLOWED = {'contracts/openapi.v1.json', 'contracts/lock.json', 'compatibility.json', 'scripts/test_candidate_transport.py', 'contracts/remote.lock.json', '.github/workflows/client-candidate.yml', 'docs/RELEASING.md', 'docs/V10_1_CANDIDATE.md', 'CHANGELOG.md', 'tests/remote-native/server-lock.json', 'scripts/stage-candidate-transport.py'}
+PARENT = '57a15d1ed9114177d917664820c9884c15529ce2'
+ALLOWED = {'compatibility.json', 'contracts/remote.lock.json', 'docs/RELEASING.md', 'docs/V10_1_CANDIDATE.md', 'scripts/test_candidate_transport.py', 'CHANGELOG.md', 'contracts/openapi.v1.json', 'contracts/lock.json', 'scripts/stage-candidate-transport.py', 'tests/remote-native/server-lock.json'}
 PATCHED = ALLOWED
 
 

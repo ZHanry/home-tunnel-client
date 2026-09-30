@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   recover:
-    if: github.repository == 'ZHanry/home-tunnel-client' && github.ref == 'refs/heads/codex/windows-v10-1' && github.event_name == 'push' && github.event.before == 'd4616525347d443950057e6cf2c83cb7e2c0602a'
+    if: github.repository == 'ZHanry/home-tunnel-client' && github.ref == 'refs/heads/codex/windows-v10-1' && github.event_name == 'push' && github.event.before == '57a15d1ed9114177d917664820c9884c15529ce2'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
