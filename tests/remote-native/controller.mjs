@@ -1,3 +1,4 @@
+import { sessionCreateErrorMetadata } from './failure-metadata.mjs';
 import { RemoteApi, boundedResponse } from '/modules/remote/http.js';
 import { RemoteSignal } from '/modules/remote/signal.js';
 import { RemoteSession, selectedUdpPair } from '/modules/remote/session.js';
@@ -113,7 +114,15 @@ window.nativeE2E = {
     const confirmed = await api.request(`/api/v1/rd/pairings/${pairing.id}/confirm`, { method: 'POST', body: { signed_proof: await signJws(api.identity, proof, 'ht-rd-pairing+jwt') } });
     if (confirmed.state !== 'confirmed' || !confirmed.grant_id) throw new Error('RD_PAIRING_REQUIRED');
     await api.identity.rememberHost(host.id, host.jkt);
-    const snapshot = await api.request('/api/v1/rd/sessions', { method: 'POST', idempotencyKey: requestID, body: { host_endpoint_id: host.id, grant_id: confirmed.grant_id, permissions, display_id: host.capabilities.displays[0].id, protocol: { major: 1, minor: 0 }, quality: 'balanced' } });
+    state.session_create_failure = null;
+    let snapshot;
+    try {
+      snapshot = await api.request('/api/v1/rd/sessions', { method: 'POST', idempotencyKey: requestID, body: { host_endpoint_id: host.id, grant_id: confirmed.grant_id, permissions, display_id: host.capabilities.displays[0].id, protocol: { major: 1, minor: 0 }, quality: 'balanced' } });
+    } catch (error) {
+      state.session_create_failure = sessionCreateErrorMetadata(error);
+      // Preserve rejection. Never retain raw message/body/stack or retry it.
+      throw new Error(state.session_create_failure.error_code);
+    }
     return { session_id: snapshot.session_id };
   },
   async ticketReady(id) {

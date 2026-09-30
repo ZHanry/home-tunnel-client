@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { failureMetadata } from './failure-metadata.mjs';
+import { failureMetadata, sessionCreateErrorMetadata } from './failure-metadata.mjs';
 const runner = fileURLToPath(new URL('../../scripts/test-remote-native.mjs', import.meta.url));
 test('diagnostic metadata exposes only fixed type, source basename and numeric coordinates', () => {
   const value = failureMetadata({ name: 'TypeError', message: 'secret bearer opaque', code: 'PRIVATE_TOKEN',
@@ -41,4 +41,25 @@ test('strict stability targets remain unchanged and probe has separate classific
   assert.match(source, /if \(withRestartProbe\) report.restart_probe =/);
   assert.match(source, /timeout_seconds: 600/);
   assert.match(readFileSync(new URL('./stability.mjs', import.meta.url), 'utf8'), /sessions: 30, active_ms: 7_200_000/);
+});
+
+test('session-create failure preserves only allowlisted machine code and bounded HTTP status', () => {
+  const result = sessionCreateErrorMetadata({ code: 'RD_SESSION_LIMIT', status: 429, message: 'private localized message', body: { token: 'secret' }, stack: 'https://private.invalid/?secret' });
+  assert.deepEqual(result, { error_code: 'RD_SESSION_LIMIT', http_status: 429 });
+  assert.doesNotMatch(JSON.stringify(result), /private|localized|token|secret|https/);
+});
+test('unknown machine codes and invalid statuses cannot escape in-browser sanitization', () => {
+  for (const code of ['RD_SECRET_TOKEN_VALUE', 'bearer-secret', {}, null, undefined]) assert.equal(sessionCreateErrorMetadata({ code, status: 500 }).error_code, 'UNRECOGNIZED_API_FAILURE');
+  for (const status of [0, 399, 600, NaN, Infinity, 429.5, '429', null, true]) assert.equal(sessionCreateErrorMetadata({ code: 'RD_SESSION_LIMIT', status }).http_status, null);
+});
+test('only failed session-create request is captured and it still throws', () => {
+  const controller = readFileSync(new URL('./controller.mjs', import.meta.url), 'utf8');
+  const start = controller.indexOf('state.session_create_failure = null;');
+  const end = controller.indexOf('return { session_id: snapshot.session_id };', start);
+  const guarded = controller.slice(start, end);
+  assert.match(guarded, /await api.request\('\/api\/v1\/rd\/sessions'/);
+  assert.match(guarded, /state.session_create_failure = sessionCreateErrorMetadata\(error\)/);
+  assert.match(guarded, /throw new Error\(state.session_create_failure.error_code\)/);
+  assert.doesNotMatch(guarded, /error\.(?:message|stack|body)|response|console\./);
+  assert.match(readFileSync(new URL('./fixture.mjs', import.meta.url), 'utf8'), /\/\_\_native-e2e\/failure-metadata.mjs/);
 });
