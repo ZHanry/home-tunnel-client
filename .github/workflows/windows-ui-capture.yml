@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/windows-ui-capture.yml'
       - 'scripts/capture-windows-ui.ps1'
+      - 'scripts/wait-windows-ui.mjs'
   workflow_dispatch:
 permissions:
   contents: read

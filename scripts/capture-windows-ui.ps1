@@ -44,6 +44,7 @@ public static class HomeTunnelDocWindow {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int state);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out RECT rectangle, int size);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out RECT rectangle);
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll")] public static extern bool PostThreadMessage(uint thread, uint message, UIntPtr wparam, IntPtr lparam);
@@ -65,6 +66,9 @@ public static class HomeTunnelDocWindow {
 '@
     [HomeTunnelDocWindow]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null
     $env:HOME_TUNNEL_STATE_PATH = Join-Path $root 'isolated-state/state.json'
+    $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $root 'webview2-profile'
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9223'
+    $report.browser_arguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     $process = Start-Process -FilePath $gui[0].FullName -WorkingDirectory $gui[0].DirectoryName -WindowStyle Normal -PassThru
     $deadline = (Get-Date).AddSeconds(45)
     $window = [IntPtr]::Zero
@@ -77,10 +81,13 @@ public static class HomeTunnelDocWindow {
     if ($window -eq [IntPtr]::Zero) { throw 'No native WebView2 window found' }
     [HomeTunnelDocWindow]::ShowWindow($window,9) | Out-Null
     [HomeTunnelDocWindow]::SetForegroundWindow($window) | Out-Null
-    Start-Sleep -Seconds 8
+    node scripts/wait-windows-ui.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Released WebView2 did not render its actual application DOM' }
+    Start-Sleep -Seconds 3
     if ([HomeTunnelDocWindow]::GetForegroundWindow() -ne $window) { throw 'Native GUI is not foreground; refuse unrelated desktop pixels' }
     $rectangle = [HomeTunnelDocWindow+RECT]::new()
     if (-not [HomeTunnelDocWindow]::GetWindowRect($window,[ref]$rectangle)) { throw 'Native window bounds unavailable' }
+    if ([HomeTunnelDocWindow]::DwmGetWindowAttribute($window,9,[ref]$rectangle,16) -ne 0) { throw 'Visible window frame bounds unavailable' }
     $width = $rectangle.Right-$rectangle.Left; $height = $rectangle.Bottom-$rectangle.Top
     if ($width -lt 600 -or $height -lt 400 -or $width -gt 4096 -or $height -gt 2160) { throw 'Unexpected native window dimensions' }
     $bitmap = [Drawing.Bitmap]::new($width,$height)
@@ -88,7 +95,7 @@ public static class HomeTunnelDocWindow {
     try {
         $graphics.CopyFromScreen($rectangle.Left,$rectangle.Top,0,0,[Drawing.Size]::new($width,$height))
         $colors = [Collections.Generic.HashSet[int]]::new()
-        for($y=0;$y -lt $height;$y+=11) { for($x=0;$x -lt $width;$x+=11) { $colors.Add($bitmap.GetPixel($x,$y).ToArgb()) | Out-Null } }
+        for($y=60;$y -lt ($height-40);$y+=11) { for($x=40;$x -lt ($width-40);$x+=11) { $colors.Add($bitmap.GetPixel($x,$y).ToArgb()) | Out-Null } }
         if($colors.Count -lt 24) { throw 'Blank or incomplete rendered screenshot; refusing to claim capture' }
         $image = Join-Path $output 'windows-v10-signin.png'
         $bitmap.Save($image,[Drawing.Imaging.ImageFormat]::Png)
