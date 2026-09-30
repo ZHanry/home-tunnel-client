@@ -255,3 +255,42 @@ test("the popup never sits on screen as an empty card", async ({ page }) => {
   await page.evaluate(() => window.htPopup.show("request"));
   await expect.poll(() => posts(calls, "/local/remote/popup").some((call) => call.body.action === "refresh")).toBe(true);
 });
+
+test("native reveal waits for ready and populated request content", async ({page}) => {
+  await page.addInitScript(()=>{window.nativeMessages=[];window.chrome??={};window.chrome.webview={postMessage:message=>window.nativeMessages.push(message)};});
+  await openPopup(page,{access_requests:[{id:"r-ready",controller_endpoint_id:"peer",expires_at:inSeconds(40)}],pending:[]});
+  await expect.poll(()=>page.evaluate(()=>window.nativeMessages)).toEqual(["ht-popup:ready"]);
+  let release;
+  await page.route("**/local/remote/state",async route=>{
+    await new Promise(resolve=>{release=resolve;});
+    await route.fulfill({json:{access_requests:[{id:"r-ready",controller_endpoint_id:"peer",expires_at:inSeconds(40)}],pending:[]}});
+  });
+  await page.evaluate(()=>window.htPopup.show("request"));
+  await expect.poll(()=>!!release).toBe(true);
+  expect(await page.evaluate(()=>window.nativeMessages)).toEqual(["ht-popup:ready"]);
+  release();
+  await expect.poll(()=>page.evaluate(()=>window.nativeMessages)).toContain("ht-popup:rendered:request");
+  await expect(page.locator("#request")).toBeVisible();
+  await page.unroute("**/local/remote/state");
+  await page.route("**/local/remote/state",route=>route.fulfill({json:{access_requests:[],pending:[]}}));
+  await expect.poll(()=>page.evaluate(()=>window.nativeMessages)).toContain("ht-popup:empty:request");
+});
+
+test("reopening a session after an empty request discards stale state and stays opaque", async ({page}) => {
+  await page.addInitScript(()=>{window.nativeMessages=[];window.chrome??={};window.chrome.webview={postMessage:message=>window.nativeMessages.push(message)};});
+  await openPopup(page,{access_requests:[],pending:[]},{viewport:{width:320,height:60}});
+  await page.evaluate(()=>window.htPopup.show("request"));
+  await page.route("**/local/remote/state",()=>{});
+  await page.evaluate(()=>{window.htPopup.hide();window.htPopup.show("session");});
+  await expect(page.locator("#session")).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>window.nativeMessages)).toContain("ht-popup:rendered:session");
+  for(const selector of ["html","body","#session"]){
+    const style=await page.locator(selector).evaluate(el=>({background:getComputedStyle(el).backgroundColor,opacity:getComputedStyle(el).opacity}));
+    expect(style.background).toBe("rgb(255, 255, 255)");
+    expect(style.opacity).toBe("1");
+  }
+  await page.evaluate(()=>window.htPopup.hide());
+  await expect(page.locator("#session")).toBeHidden();
+  await page.evaluate(()=>window.htPopup.show("session"));
+  await expect(page.locator("#session")).toBeVisible();
+});

@@ -112,6 +112,7 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 	}
 	state.Profile = profile
 	state.DeviceID = registration.DeviceID
+	state.DeviceName = strings.TrimSpace(options.DeviceName)
 	state.DeviceCredential = registration.DeviceCredential
 	state.LastConfigVersion = 0
 	state.SyncCapabilityVersion = 0

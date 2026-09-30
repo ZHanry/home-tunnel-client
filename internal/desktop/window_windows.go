@@ -41,8 +41,6 @@ var (
 var (
 	nativeView             webview2.WebView
 	nativeHWND             uintptr
-	remoteView             webview2.WebView
-	remoteHWND             uintptr
 	originalProcs          = map[uintptr]uintptr{}
 	emergencyHost          *Host
 	registeredEmergencyKey string
@@ -123,8 +121,8 @@ func createNativeWindow(url string) error {
 	}
 	nativeView = view
 	nativeHWND = uintptr(view.Window())
-	// The UI is laid out to fit this outer size (about 944x600 client pixels)
-	// without scrolling the sign-in page; smaller screens keep their own limit.
+	// Keep useful input widths at the minimum size. Short sign-in windows
+	// scroll naturally so MFA and password-change fields remain reachable.
 	view.SetSize(int(min(minWindowWidth, width)), int(min(minWindowHeight, height)), webview2.HintMin)
 	subclassHideOnClose(nativeHWND)
 	if emergencyHost != nil {
@@ -161,49 +159,11 @@ func quitNativeWindow() {
 	if nativeView != nil {
 		// Terminate posts WM_QUIT to the calling thread's queue. Quit requests come from
 		// the tray and the local API on other threads, so post it from the UI thread.
-		nativeView.Dispatch(nativeView.Terminate)
+		nativeView.Dispatch(func() {
+			clearRemoteWindow()
+			nativeView.Terminate()
+		})
 	}
-}
-
-func openNativeRemoteWindow(url string) error {
-	if nativeView == nil {
-		return ErrRemoteWindowUnavailable
-	}
-	result := make(chan error, 1)
-	nativeView.Dispatch(func() {
-		if remoteView == nil {
-			remoteView = webview2.NewWithOptions(webview2.WebViewOptions{
-				AutoFocus: true,
-				WindowOptions: webview2.WindowOptions{
-					Title: "Home Tunnel · 远程控制", Width: 1280, Height: 840, IconId: 1, Center: true,
-				},
-			})
-			if remoteView == nil {
-				result <- ErrRemoteWindowUnavailable
-				return
-			}
-			remoteHWND = uintptr(remoteView.Window())
-			subclassHideOnClose(remoteHWND)
-		}
-		remoteView.Navigate(url)
-		procShowWindow.Call(remoteHWND, swRestore)
-		procShowWindow.Call(remoteHWND, swShow)
-		procSetForeground.Call(remoteHWND)
-		result <- nil
-	})
-	return <-result
-}
-
-func closeNativeRemoteWindow() {
-	if nativeView == nil {
-		return
-	}
-	nativeView.Dispatch(func() {
-		if remoteView != nil {
-			remoteView.Navigate("about:blank")
-			procShowWindow.Call(remoteHWND, swHide)
-		}
-	})
 }
 
 func subclassHideOnClose(hwnd uintptr) {
@@ -219,9 +179,6 @@ func hideOnCloseProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		return 0
 	}
 	if msg == wmClose {
-		if hwnd == remoteHWND && remoteView != nil {
-			remoteView.Navigate("about:blank")
-		}
 		procShowWindow.Call(hwnd, swHide)
 		return 0
 	}

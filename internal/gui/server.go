@@ -38,32 +38,37 @@ type Options struct {
 }
 
 type Server struct {
-	options             Options
-	parent              context.Context
-	mu                  sync.Mutex
-	cancel              context.CancelFunc
-	done                chan struct{}
-	running             bool
-	quit                func()
-	show                func()
-	openRemote          func(string) error
-	closeRemote         func()
-	remoteMu            sync.Mutex
-	remoteHost          *localRemoteHost
-	remoteBlocked       bool
-	setEmergencyHotkey  func(string) error
-	serviceActions      sync.Mutex
-	serviceEmergencyKey string
-	accountMu           sync.Mutex
-	accountGeneration   uint64
-	accountCancel       context.CancelFunc
-	popupMu             sync.Mutex
-	popupShow           func(mode string, attention bool) bool
-	popupHide           func()
-	popupTracker        *approvalTracker
-	popupMode           string
-	popupAttention      bool
-	popupPoke           chan struct{}
+	options                 Options
+	parent                  context.Context
+	mu                      sync.Mutex
+	cancel                  context.CancelFunc
+	done                    chan struct{}
+	running                 bool
+	quit                    func()
+	show                    func()
+	openRemote              func(model.RemoteWindowLaunch) error
+	closeRemote             func()
+	remoteSessionMu         sync.Mutex
+	remoteSession           *api.Client
+	remoteSessionGeneration uint64
+	remoteSessionCancel     context.CancelFunc
+	remoteGeneration        uint64
+	remoteMu                sync.Mutex
+	remoteHost              *localRemoteHost
+	remoteBlocked           bool
+	setEmergencyHotkey      func(string) error
+	serviceActions          sync.Mutex
+	serviceEmergencyKey     string
+	accountMu               sync.Mutex
+	accountGeneration       uint64
+	accountCancel           context.CancelFunc
+	popupMu                 sync.Mutex
+	popupShow               func(mode string, attention bool) bool
+	popupHide               func()
+	popupTracker            *approvalTracker
+	popupMode               string
+	popupAttention          bool
+	popupPoke               chan struct{}
 }
 
 func New(options Options) *Server {
@@ -89,7 +94,7 @@ func (server *Server) SetShow(show func()) {
 	server.mu.Unlock()
 }
 
-func (server *Server) SetOpenRemote(open func(string) error) {
+func (server *Server) SetOpenRemote(open func(model.RemoteWindowLaunch) error) {
 	server.mu.Lock()
 	server.openRemote = open
 	server.mu.Unlock()
@@ -133,6 +138,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("/local/subdomain", server.subdomain)
 	mux.HandleFunc("/local/doctor", server.doctor)
 	mux.HandleFunc("/local/device/metadata", server.deviceMetadata)
+	mux.HandleFunc("/local/device/name", server.renameDevice)
 	mux.HandleFunc("/local/batch", server.batchConnections)
 	return protectLocalUI(mux, server.options.LocalToken)
 }
@@ -235,7 +241,7 @@ func (server *Server) state(writer http.ResponseWriter, request *http.Request) {
 		"agent_message":  state.AgentMessage,
 		"console_url":    console,
 		"device_id":      state.DeviceID,
-		"device_name":    app.DefaultDeviceName(),
+		"device_name":    localDeviceName(state),
 		"version":        currentVersion(server.options),
 		"connections":    connections,
 		"capabilities":   capabilities,
@@ -292,21 +298,24 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 // Account mutations are serialized; their generation is invalidated immediately
 // so a slow login cannot save credentials or restart services after sign-out.
 func (server *Server) beginAccountChange(cancel context.CancelFunc) uint64 {
+	// Block fresh remote opens before any network/window cleanup can yield.
+	server.remoteMu.Lock()
+	if server.accountCancel != nil {
+		server.accountCancel()
+	}
+	server.accountGeneration++
+	generation := server.accountGeneration
+	server.accountCancel = cancel
+	server.remoteBlocked = true
+	server.remoteMu.Unlock()
+	server.CloseRemoteSession()
 	server.mu.Lock()
 	closeRemote := server.closeRemote
 	server.mu.Unlock()
 	if closeRemote != nil {
 		closeRemote()
 	}
-	server.remoteMu.Lock()
-	defer server.remoteMu.Unlock()
-	if server.accountCancel != nil {
-		server.accountCancel()
-	}
-	server.accountGeneration++
-	server.accountCancel = cancel
-	server.remoteBlocked = true
-	return server.accountGeneration
+	return generation
 }
 
 func (server *Server) currentAccountChange(ctx context.Context, generation uint64) bool {
@@ -388,6 +397,8 @@ func (server *Server) devices(writer http.ResponseWriter, request *http.Request)
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	server.accountMu.Lock()
+	defer server.accountMu.Unlock()
 	client, state, err := server.client()
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err.Error())
@@ -400,6 +411,7 @@ func (server *Server) devices(writer http.ResponseWriter, request *http.Request)
 		writeError(writer, http.StatusBadGateway, err.Error())
 		return
 	}
+	server.reconcileDeviceName(state, items)
 	writeJSON(writer, map[string]any{"items": items, "local_device_id": state.DeviceID})
 }
 

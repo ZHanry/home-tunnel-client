@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const Version = "10.0.0"
+const Version = "10.1.0"
 const CurrentSyncCapabilityVersion = 1
 
 type Profile struct {
@@ -137,6 +137,7 @@ type State struct {
 	InstallID             string       `json:"install_id"`
 	Profile               Profile      `json:"profile"`
 	DeviceID              string       `json:"device_id"`
+	DeviceName            string       `json:"device_name,omitempty"`
 	DeviceCredential      string       `json:"device_credential"`
 	LastConfigVersion     int64        `json:"last_config_version"`
 	SyncCapabilityVersion int          `json:"sync_capability_version"`

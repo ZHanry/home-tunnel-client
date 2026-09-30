@@ -105,6 +105,21 @@
     return item.longTerm ? msg("长期配对请求") : msg("配对请求 · 仅本次会话");
   }
 
+  function notifyHost(message) { window.chrome?.webview?.postMessage(message); }
+  let renderedMode = "";
+  function reportContent() {
+    const visible = !$("request").hidden || !$("session").hidden;
+    const next = visible ? mode : "";
+    if (next === renderedMode) return;
+    renderedMode = next;
+    // A layout flush and a separate task let the native host reveal only a populated page.
+    if (visible) void document.body.offsetHeight;
+    const reported = mode;
+    setTimeout(() => {
+      if (mode === reported && renderedMode === next) notifyHost(`ht-popup:${visible ? "rendered" : "empty"}:${reported}`);
+    }, 0);
+  }
+
   function render() {
     const now = Date.now();
     const items = mode === "request" ? visibleItems(now) : [];
@@ -119,6 +134,7 @@
     else shownKey = "";
     if (!$("session").hidden) renderSession();
     applyStaticText();
+    reportContent();
   }
 
   function renderRequest(item, others, now) {
@@ -284,7 +300,9 @@
 
   window.htPopup = Object.freeze({
     show(next) {
-      mode = next === "session" ? "session" : "request";
+      const nextMode = next === "session" ? "session" : "request";
+      if (mode !== nextMode) state = null;
+      mode = nextMode; renderedMode = "";
       armedAt = Math.max(armedAt, performance.now() + ARM_DELAY);
       render();
       setTimeout(updateButtons, ARM_DELAY + 20);
@@ -293,7 +311,7 @@
       void refresh().then(schedulePoll);
     },
     hide() {
-      mode = ""; shownKey = "";
+      mode = ""; shownKey = ""; state = null; renderedMode = "";
       clearTimeout(pollTimer); clearInterval(tickTimer);
       $("request").hidden = true; $("session").hidden = true;
     },
@@ -313,4 +331,5 @@
     if (event.key === "ht_locale") { locale = event.newValue === "en" ? "en" : "zh-CN"; render(); }
   });
   applyStaticText();
+  notifyHost("ht-popup:ready");
 })();

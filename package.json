@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "eslint --config eslint.browser.config.mjs internal/gui/web/desktop.js internal/gui/web/popup.js",
-    "test:browser": "playwright test"
+    "lint": "eslint --config eslint.browser.config.mjs internal/gui/web/desktop.js internal/gui/web/popup.js internal/desktop/remote_handoff.js",
+    "test:browser": "node --test scripts/native-remote-handoff.test.mjs && playwright test"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",

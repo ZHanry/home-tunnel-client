@@ -61,8 +61,9 @@ void ht_window_quit(void) {
 */
 import "C"
 import "unsafe"
+import "github.com/ZHanry/home-tunnel-client/internal/model"
 
-func openNativeRemoteWindow(string) error { return ErrRemoteWindowUnavailable }
+func openNativeRemoteWindow(model.RemoteWindowLaunch) error { return ErrRemoteWindowUnavailable }
 
 func closeNativeRemoteWindow() {}
 

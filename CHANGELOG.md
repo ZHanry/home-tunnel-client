@@ -1,5 +1,14 @@
 # Changelog
 
+## 10.1.0 — candidate (not yet released)
+
+- Fix the Windows approval popup's opaque backing and wait for populated popup content before showing its native window.
+- Block connections to the current device in the desktop and in source-device-bound remote authorization.
+- Reuse the native sign-in for the remote window through a short-lived, single-use handoff. The resulting cookie session is restricted to remote control and tied to the originating device session; reusable credentials never enter navigation URLs.
+- Combine software settings and update controls, show the configured server immediately, and move current-device rename to My Devices. Remove device tags, the local-services return control, and appearance options from Settings.
+- Give sign-in fields more space and improve narrow-window scrolling, retry, and keyboard behavior.
+- Native sign-in handoff and current-device rename require Server 10.1.0 and additive API 1.5.0. The additive API 1.5.0 contract is frozen and imported with exact source/SHA-256 locks. Existing API 1.4.0 tags remain immutable. Final-package acceptance is pending; see [candidate verification](docs/V10_1_CANDIDATE.md).
+
 ## 10.0.0
 
 - Client, CLI, managed Agent and native host versions are 10.0.0; FRP stays at 0.70.1. API contract `api-v1.4.0`; existing tunnels keep 7.0+ server compatibility.

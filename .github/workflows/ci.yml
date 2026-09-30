@@ -26,6 +26,10 @@ jobs:
     - name: Test shared Go client
       run: |
         go test ./...
+    - name: Exercise real WebView2 remote and popup lifecycles
+      env:
+        HOMETUNNEL_WEBVIEW2_INTEGRATION: '1'
+      run: go test ./internal/desktop -run '^TestWindowsWebView2Integration$' -count=1 -timeout=6m -v
     - name: Build unified desktop GUI
       run: |
         .\packaging\windows\test-defender-signatures.ps1
@@ -133,6 +137,45 @@ jobs:
         .\packaging\windows\build-release.ps1 -Version $version -WindRes $env:HOME_TUNNEL_WINDRES -RemoteHostBuild "$PWD/outputs/native-windows-build/remote-host-build.json"
         .\packaging\windows\scan-release.ps1 -Directory outputs/windows -Version $version -ReportPath windows-defender-scan.json -UpdateSignatures
         .\packaging\windows\test-installer.ps1 -Installer "$PWD/outputs/windows/HomeTunnel-Setup-$version-x64.exe" -PayloadDirectory "$PWD/outputs/windows" -Version $version -ReportPath windows-installer-smoke.json
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.19.0
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      with:
+        version: 11.16.0
+    - name: Test the actual CI-packaged native Windows UI
+      shell: pwsh
+      run: |
+        pnpm install --frozen-lockfile
+        if ($LASTEXITCODE -ne 0) { throw 'Packaged UI test dependency installation failed' }
+        $version = (Select-String -Path internal/model/model.go -Pattern '^const Version = "([^"]+)"$').Matches.Groups[1].Value
+        $archive = Join-Path $PWD "outputs/windows/HomeTunnel-Windows-$version-x64.zip"
+        $sha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        .\scripts\capture-windows-ui.ps1 -ArchivePath $archive -ExpectedSHA256 $sha -ExpectedVersion $version -Regression
+    - name: Retain CI package bytes and native UI evidence (not an accepted candidate)
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-ci-package-and-ui
+        path: |
+          outputs/windows/HomeTunnel-Setup-*-x64.exe
+          outputs/windows/HomeTunnel-Setup-*-x64.exe.sha256
+          outputs/windows/HomeTunnel-Windows-*-x64.zip
+          outputs/windows/HomeTunnel-Windows-*-x64.zip.sha256
+          outputs/windows/windows-platform-signing.json
+          outputs/windows-ui/*
+          windows-defender-scan.json
+          windows-installer-smoke.json
+        if-no-files-found: warn
+        retention-days: 30
+    - name: Retain lightweight native UI evidence separately
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-ci-ui
+        path: outputs/windows-ui/*
+        if-no-files-found: warn
+        retention-days: 30
     - name: Preserve Windows verification reports
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

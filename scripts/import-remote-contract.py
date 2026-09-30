@@ -22,7 +22,7 @@ REST_FILES = {
     "contracts/openapi.v1.json": "contracts/openapi.v1.json",
     "contracts/api.schema.json": "contracts/api.schema.json",
 }
-PREVIOUS_IMMUTABLE_TAG = "api-v1.3.0"
+PREVIOUS_IMMUTABLE_TAG = "api-v1.4.0"
 
 
 def validate_published_ref(source, value, revision, dirty):

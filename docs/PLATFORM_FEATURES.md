@@ -10,7 +10,7 @@ single-use enrollment code created in Web/Android. HTTP is self-service. TCP/UDP
 and SSH/RDP/RTSP presets appear according to server deployment and account
 capabilities. Public ports are allocated by the server, never guessed by the UI.
 
-Settings edit this device's tags/favorite with a metadata version check. Select
+In the 10.1.0 candidate, My Devices renames this device while Settings shows the server address and update controls. Device tags/favorites are no longer edited in Settings. Select
 up to 50 local services to pause/resume; confirm the named selection, then inspect
 each result. A conflict or missing permission on one item does not erase the
 successful results of other items. Re-read before retrying a conflict.
