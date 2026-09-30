@@ -257,7 +257,7 @@ test("the popup never sits on screen as an empty card", async ({ page }) => {
 });
 
 test("native reveal waits for ready and populated request content", async ({page}) => {
-  await page.addInitScript(()=>{window.nativeMessages=[];window.chrome.webview={postMessage:message=>window.nativeMessages.push(message)};});
+  await page.addInitScript(()=>{window.nativeMessages=[];window.chrome??={};window.chrome.webview={postMessage:message=>window.nativeMessages.push(message)};});
   await openPopup(page,{access_requests:[{id:"r-ready",controller_endpoint_id:"peer",expires_at:inSeconds(40)}],pending:[]});
   await expect.poll(()=>page.evaluate(()=>window.nativeMessages)).toEqual(["ht-popup:ready"]);
   let release;
@@ -277,7 +277,7 @@ test("native reveal waits for ready and populated request content", async ({page
 });
 
 test("reopening a session after an empty request discards stale state and stays opaque", async ({page}) => {
-  await page.addInitScript(()=>{window.nativeMessages=[];window.chrome.webview={postMessage:message=>window.nativeMessages.push(message)};});
+  await page.addInitScript(()=>{window.nativeMessages=[];window.chrome??={};window.chrome.webview={postMessage:message=>window.nativeMessages.push(message)};});
   await openPopup(page,{access_requests:[],pending:[]},{viewport:{width:320,height:60}});
   await page.evaluate(()=>window.htPopup.show("request"));
   await page.route("**/local/remote/state",()=>{});

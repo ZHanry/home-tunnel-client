@@ -168,6 +168,14 @@ jobs:
           windows-installer-smoke.json
         if-no-files-found: warn
         retention-days: 30
+    - name: Retain lightweight native UI evidence separately
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-ci-ui
+        path: outputs/windows-ui/*
+        if-no-files-found: warn
+        retention-days: 30
     - name: Preserve Windows verification reports
       if: ${{ always() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
