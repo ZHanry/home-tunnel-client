@@ -2,7 +2,7 @@
 
 # Home Tunnel Client
 
-The current version is **10.0.0**. Remote-control payloads use authenticated UDP P2P only and are never relayed by the server. Windows provides keyboard/Unicode input, consent-bound files, authorized system audio and an optional system service (unattended access off by default). Linux amd64 provides an Xorg host with local-session permission checks. macOS/Wayland hosting and native desktop viewing remain unavailable. See the [release notes](docs/RELEASE_NOTES.md) for supported and verified scope.
+The current version is **10.0.0**. Remote-control payloads use end-to-end DTLS-encrypted UDP, preferring direct P2P. Browser viewers can use the server's optional UDP TURN relay, which cannot read the payload; there is no TCP fallback. Windows provides keyboard/Unicode input, consent-bound files and authorized system audio. Fixed-password access skips approval on the signed-in desktop; lock screen, pre-login and UAC secure-desktop control are unavailable. Linux amd64 provides an Xorg host with local-session permission checks. macOS/Wayland hosting and native desktop viewing remain unavailable. See the [release notes](docs/RELEASE_NOTES.md) for supported scope, verification and owner waivers.
 
 **Connect Windows, macOS, Linux and NAS hosts**
 

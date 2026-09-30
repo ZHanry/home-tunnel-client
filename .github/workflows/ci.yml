@@ -28,6 +28,7 @@ jobs:
         go test ./...
     - name: Build unified desktop GUI
       run: |
+        .\packaging\windows\test-defender-signatures.ps1
         python -m unittest discover -s scripts -p "test_signing_config.py"
         go build ./cmd/home-tunnel-client
         go build -ldflags "-H windowsgui" ./cmd/home-tunnel-gui
@@ -250,6 +251,7 @@ jobs:
         python3 -m unittest discover -s scripts -p "test_remote_contract_import.py"
         python3 -m unittest discover -s scripts -p "test_remote_android_build.py"
         python3 -m unittest discover -s scripts -p "test_remote_android_sdk.py"
+        python3 -m unittest discover -s scripts -p "test_remote_fetch.py"
     - name: Verify the patched FRP build dependency locks
       run: |
         python3 scripts/verify-frp-security.py
