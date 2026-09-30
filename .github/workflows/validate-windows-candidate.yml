@@ -13,6 +13,8 @@ on:
       - tests/remote-native/final-candidate-10.1.json
       - tests/remote-native/stability.mjs
       - tests/remote-native/stability.test.mjs
+      - tests/remote-native/restart-probe.test.mjs
+      - tests/remote-native/failure-metadata.mjs
       - tests/remote-native/host/main.go
       - tests/remote-native/controller.mjs
       - tests/remote-native/target.html
@@ -22,7 +24,7 @@ on:
         description: "Short checks or actual 30 connections plus 7200-second active stability"
         type: choice
         default: short
-        options: [short, stability]
+        options: [short, stability, restart-probe]
 
 permissions:
   contents: read
@@ -33,7 +35,7 @@ jobs:
     name: Final Defender rescan and bounded native checks
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-2022
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stability' && 300 || 75 }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stability' && 300 || 90 }}
     steps:
       - name: Check out validation helper separately
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -104,6 +106,8 @@ jobs:
       - name: Check strict website evidence predicates
         shell: pwsh
         run: |
+          node --test qa/tests/remote-native/restart-probe.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Restart probe safety tests failed' }
           node --test qa/tests/remote-native/stability.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Stability evidence predicate tests failed' }
           node --test qa/tests/remote-native/website-evidence.test.mjs
@@ -114,6 +118,7 @@ jobs:
         with:
           version: 11.19.0
       - name: Install locked test dependencies and Chromium
+        id: native_dependencies
         shell: pwsh
         run: |
           pnpm --dir sources/client install --frozen-lockfile --ignore-scripts
@@ -122,8 +127,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Server dependency installation failed' }
           pnpm --dir sources/client exec playwright install chromium
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Playwright Chromium installation failed' }
+      - name: Probe owned-host restart on the unchanged original worker
+        id: restart_probe
+        if: github.event_name == 'pull_request' || inputs.validation_scope == 'restart-probe'
+        shell: pwsh
+        timeout-minutes: 13
+        run: |
+          python qa/scripts/validate-windows-candidate.py --phase restart-probe --client sources/client --server sources/server --verified verified-candidate --output restart-probe-evidence --revision 9b3dbb751942fee040049f9901ea61e95e60c10c --server-revision 194ae805f3569dc16d94b7fda71367e5d68fdff5 --version 10.1.0
+          if ($LASTEXITCODE -ne 0) { throw 'Bounded original-worker restart probe failed; inspect its separate sanitized failure substage' }
+      - name: Retain bounded restart probe evidence separately
+        if: always() && steps.restart_probe.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-restart-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: restart-probe-evidence/
+          if-no-files-found: error
+          retention-days: 30
       - name: Run two bounded real native cases against the unchanged worker
-        if: github.event_name != 'workflow_dispatch' || inputs.validation_scope != 'stability'
+        if: ${{ !cancelled() && steps.native_dependencies.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.validation_scope == 'short') }}
         shell: pwsh
         timeout-minutes: 25
         run: |

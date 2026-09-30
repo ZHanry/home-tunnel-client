@@ -127,3 +127,29 @@ worker/Chromium fixture scope only. They do **not** establish full GUI two-hour
 acceptance, independent Windows endpoints, website/cross-account two-hour
 stability, account-token refresh, a controlled network-outage recovery, or
 24-hour idle stability. `network_restore_30s` stays `not_verified`.
+
+## Bounded post-crash restart probe
+
+`validation_scope=restart-probe` / `--phase restart-probe` diagnoses the same
+owned-host restart path independently. Every eligible pull request also runs it
+before the unchanged short cases, in its own step with a separate
+`windows-restart-probe-*` artifact. The native subprocess is capped at **600
+seconds**; the step allows 13 minutes for wrapper setup, owned-tree cleanup and
+failure reporting. The short cases keep their own original 25-minute step and
+still run after a probe failure when dependency setup succeeded.
+
+The probe creates one real signed session, verifies native media, holds actual
+confined keyboard/pointer input, kills only the worker owned by the test host,
+and measures release. It then follows the exact existing same-identity host
+restart, new signed pairing, live media, fresh trusted input and clean-close
+path. The three-hour disposable fixture policy and hashed QA host overlay are
+retained for identical restart semantics; the wrapper's ten-minute bound is
+unchanged. No product worker is rebuilt and no deployed account is used.
+
+The report is classified as `restart_probe`, never `stability`. It cannot supply
+30-session or 7200-second acceptance evidence, account-token refresh, automatic
+product restart, or network-outage recovery. Original failed-run evidence stays
+unchanged. Restart awaits have distinct substages. Failure details add only a
+fixed exception-type label and allowlisted source basenames with numeric
+line/column coordinates; raw error messages/stacks, URLs, credentials and
+fixture content are not retained.
