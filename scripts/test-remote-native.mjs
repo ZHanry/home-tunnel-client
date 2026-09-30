@@ -7,17 +7,20 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { createRequire } from 'node:module';
+import { verifiedWebsiteMedia, websiteInputGranted, collectFailureMedia } from '../tests/remote-native/website-evidence.mjs';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const harnessRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = Object.create(null);
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i];
-  if (!['--worker', '--sha256', '--server-root', '--report-dir', '--input', '--codec', '--files', '--mode', '--server-source', '--controller', '--ca', '--cert', '--key'].includes(key) || !process.argv[i + 1] || options[key]) {
-    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--report-dir <directory>] [--input chromium] [--codec H264|VP8] [--files fixture] [--mode same-account|cross-account-assist|cross-account-fixed|cross-account-request] [--server-source locked|working-tree] [--controller harness|website --ca <absolute.crt> --cert <absolute.crt> --key <absolute.key>]');
+  if (!['--worker', '--sha256', '--server-root', '--client-root', '--report-dir', '--input', '--codec', '--files', '--mode', '--server-source', '--controller', '--ca', '--cert', '--key'].includes(key) || !process.argv[i + 1] || options[key]) {
+    console.error('Usage: node scripts/test-remote-native.mjs --worker <absolute.exe> --sha256 <expected hash> --server-root <built server checkout> [--client-root <absolute clean candidate checkout>] [--report-dir <directory>] [--input chromium] [--codec H264|VP8] [--files fixture] [--mode same-account|cross-account-assist|cross-account-fixed|cross-account-request] [--server-source locked|working-tree] [--controller harness|website --ca <absolute.crt> --cert <absolute.crt> --key <absolute.key>]');
     process.exit(2);
   }
   options[key] = process.argv[i + 1];
 }
+const root = options['--client-root'] ? resolve(options['--client-root']) : harnessRoot;
 const reportDir = resolve(options['--report-dir'] ?? join(root, 'outputs', 'remote-native-acceptance'));
 const withInput = options['--input'] === 'chromium';
 const withFiles = options['--files'] === 'fixture';
@@ -65,14 +68,15 @@ async function websiteEvidence(page) {
     const pair = selectedUdpPair(stats);
     const inbound = values.find(item => item.type === 'inbound-rtp' && item.kind === 'video');
     const transport = values.find(item => item.type === 'transport' && item.selectedCandidatePairId);
+    let diagnostics;
+    try { diagnostics = JSON.parse(document.querySelector('[data-diagnostics]')?.textContent ?? '{}'); } catch {}
     return { status: document.querySelector('.remote-status')?.textContent ?? '', media_mask_hidden: document.querySelector('[data-media-mask]')?.hidden === true,
+      viewer_live: document.querySelector('.remote-dialog')?.dataset.live === 'true', video_paused: video.paused,
+      video_ready_state: video.readyState, video_current_time: video.currentTime,
+      host_udp_verified: diagnostics?.hostVerifiedUDP === true,
       browser_udp_verified: pair?.verified === true, connection_state: peer.connectionState, dtls_state: transport?.dtlsState,
       frames_decoded: inbound?.framesDecoded ?? 0, bytes_received: inbound?.bytesReceived ?? 0, width: video.videoWidth, height: video.videoHeight };
   });
-}
-function verifiedWebsiteMedia(evidence) {
-  return evidence?.status.includes('UDP') && evidence.media_mask_hidden && evidence.browser_udp_verified && evidence.connection_state === 'connected' &&
-    evidence.dtls_state === 'connected' && evidence.frames_decoded >= 5 && evidence.bytes_received > 0 && evidence.width > 0 && evidence.height > 0;
 }
 
 class PipeProcess {
@@ -182,6 +186,7 @@ function treeHash(directory) {
 }
 try {
   requireCheck(process.platform === 'win32', 'E2E_WINDOWS_REQUIRED');
+  requireCheck(!options['--client-root'] || (isAbsolute(options['--client-root']) && existsSync(join(root, 'go.mod'))), 'E2E_CLIENT_SOURCE_REQUIRED');
   requireCheck(Number(process.versions.node.split('.')[0]) === 24, 'E2E_NODE_24_REQUIRED');
   requireCheck(options['--input'] === undefined || withInput, 'E2E_INPUT_TARGET_INVALID');
   requireCheck(options['--files'] === undefined || withFiles, 'E2E_FILE_FIXTURE_INVALID');
@@ -193,7 +198,10 @@ try {
   const serverRoot = resolve(options['--server-root'] ?? process.env.HT_SERVER_ROOT ?? join(root, '..', 'home-tunnel-server'));
   requireCheck(existsSync(join(serverRoot, 'control-center', 'package.json')), 'E2E_SERVER_SOURCE_REQUIRED');
   report.sources = { client: revision(root), server: revision(serverRoot) };
-  report.release_eligible = serverSource === 'locked' && report.sources.client.modified === false && report.sources.server.modified === false;
+  report.harness = { source: revision(harnessRoot),
+    script_sha256: createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex'),
+    website_predicates_sha256: createHash('sha256').update(readFileSync(join(harnessRoot, 'tests/remote-native/website-evidence.mjs'))).digest('hex') };
+  report.release_eligible = serverSource === 'locked' && report.sources.client.modified === false && report.sources.server.modified === false && report.harness.source.modified === false;
   const serverLock = JSON.parse(readFileSync(join(root, 'tests', 'remote-native', 'server-lock.json'), 'utf8'));
   if (serverSource === 'locked') requireCheck(report.sources.server.commit === serverLock.revision && report.sources.server.modified === false, 'E2E_LOCKED_CLEAN_SERVER_REQUIRED');
   stage = 'build_server';
@@ -229,7 +237,7 @@ try {
   const initial = await fixture.read(item => item.event === 'fixture', 30000);
   requireCheck(new RegExp(`^${controllerKind === 'website' ? 'https' : 'http'}:\\/\\/127\\.0\\.0\\.1:\\d+$`).test(initial.origin), 'E2E_NON_LOOPBACK_FIXTURE');
   report.checks.isolated_real_server = true;
-  const { chromium } = await import('@playwright/test');
+  const { chromium } = createRequire(join(root, 'package.json'))('@playwright/test');
   let inputTargetPID = 0;
   if (withInput || controllerKind === 'website') {
     stage = 'input_target';
@@ -325,9 +333,14 @@ try {
     stage = 'website_media';
     await until(async () => { report.media = await websiteEvidence(page); return verifiedWebsiteMedia(report.media); }, 'E2E_WEBSITE_MEDIA_NOT_OBSERVED', 45000);
     const first = report.media.frames_decoded;
+    const firstMediaTime = report.media.video_current_time;
     await delay(1200);
     report.media = await websiteEvidence(page);
-    requireCheck(verifiedWebsiteMedia(report.media) && report.media.frames_decoded > first, 'E2E_WEBSITE_MEDIA_NOT_CONTINUING');
+    report.media_progression = {
+      first: { frames_decoded: first, video_current_time: firstMediaTime },
+      second: { frames_decoded: report.media?.frames_decoded, video_current_time: report.media?.video_current_time },
+    };
+    requireCheck(verifiedWebsiteMedia(report.media) && report.media.frames_decoded > first && report.media.video_current_time > firstMediaTime, 'E2E_WEBSITE_MEDIA_NOT_CONTINUING');
     report.checks.website_real_continuing_video = true;
     report.checks.website_selected_udp_and_dtls = true;
     report.checks[crossAccount ? 'cross_account_auto_approval' : 'one_session_grant_auto_approval'] = true;
@@ -346,7 +359,10 @@ try {
       await until(() => target.evaluate(() => document.querySelector('#input-target').value.endsWith('验收✓')), 'E2E_WEBSITE_TEXT_NOT_OBSERVED', 10000);
       report.input.unicode_text = true;
       await page.evaluate(() => document.querySelector('.remote-dialog [data-input]').click());
-      await until(() => page.locator('.remote-status').textContent().then(value => value.includes('允许输入')), 'E2E_WEBSITE_INPUT_NOT_GRANTED', 10000);
+      await until(async () => websiteInputGranted(await page.evaluate(() => ({
+        release_visible: document.querySelector('.remote-dialog [data-release]')?.hidden === false,
+        release_enabled: document.querySelector('.remote-dialog [data-release]')?.disabled === false,
+      })), (await rpc('diagnostics')).native), 'E2E_WEBSITE_INPUT_NOT_GRANTED', 10000);
       const point = (await rpc('input_target_point')).point;
       requireCheck(point.hit_matches_target_root && point.hit_matches_target_pid, 'E2E_INPUT_TARGET_OBSCURED');
       await target.evaluate(() => { window.nativeInputTarget.events = []; });
@@ -593,7 +609,7 @@ try {
     try { report.input.failure_window_diagnostics = (await rpc('input_focus')).window_diagnostics; } catch {}
   }
   if (page && !page.isClosed()) {
-    try { report.media = await page.evaluate(() => window.nativeE2E?.evidence()); } catch {}
+    report.media = await collectFailureMedia(page, controllerKind, report.media, websiteEvidence);
   }
   if (withInput && target && !target.isClosed()) {
     try { report.input.observed_events = await target.evaluate(() => window.nativeInputTarget.events.slice(0, 32).map(({ type, code, target_matches }) => ({ type, code, target_matches }))); } catch {}

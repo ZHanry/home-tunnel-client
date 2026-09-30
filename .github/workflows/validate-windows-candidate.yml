@@ -7,6 +7,9 @@ on:
       - .github/workflows/validate-windows-candidate.yml
       - scripts/validate-windows-candidate.py
       - scripts/test_windows_candidate_validation.py
+      - scripts/test-remote-native.mjs
+      - tests/remote-native/website-evidence.mjs
+      - tests/remote-native/website-evidence.test.mjs
       - tests/remote-native/final-candidate-10.1.json
   workflow_dispatch:
 
@@ -87,6 +90,13 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24.19.0
+      - name: Check strict website evidence predicates
+        shell: pwsh
+        run: |
+          node --test qa/tests/remote-native/website-evidence.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Website evidence predicate tests failed' }
+          node --test qa/tests/remote-native/policy.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Native harness safety preflight tests failed' }
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
           version: 11.19.0

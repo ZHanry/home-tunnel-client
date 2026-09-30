@@ -260,7 +260,8 @@ def main():
             subprocess.run(["go", "run", str(Path(goroot) / "src/crypto/tls/generate_cert.go"),
                             "-host", "127.0.0.1", "-ca", "-ecdsa-curve", "P256", "-duration", "1h"],
                            cwd=private, check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            common = ["node", str(args.client / "scripts/test-remote-native.mjs"), "--worker", str(worker_path),
+            harness_root = Path(__file__).resolve().parents[1]
+            common = ["node", str(harness_root / "scripts/test-remote-native.mjs"), "--client-root", str(args.client), "--worker", str(worker_path),
                       "--sha256", worker_hash, "--server-root", str(args.server), "--server-source", "locked",
                       "--input", "chromium"]
             cases = [
@@ -288,6 +289,11 @@ def main():
                 require(code == 0 and case["status"] == "passed" and case["worker_unchanged"], "Native runtime case did not pass: " + name)
                 require(report.get("release_eligible") is True and report["worker_sha256"] == worker_hash,
                         "Harness did not retain clean, pinned provenance")
+                require(report.get("harness", {}).get("source") == {
+                    "commit": receipt["validation_run"]["revision"], "modified": False} and
+                    report["harness"]["script_sha256"] == digest(harness_root / "scripts/test-remote-native.mjs") and
+                    report["harness"]["website_predicates_sha256"] == digest(harness_root / "tests/remote-native/website-evidence.mjs"),
+                    "QA harness source or script identity differs from the recorded workflow")
             receipt["worker_unchanged_after"] = digest(worker_path) == worker_hash
         receipt["package_unchanged_after"] = digest(package) == receipt["package"]["sha256"]
         receipt["sources_after"] = {"client": source_state(args.client), "server": source_state(args.server)}

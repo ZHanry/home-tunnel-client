@@ -3,6 +3,10 @@
 The `Validate sealed Windows candidate` workflow first performs the required
 post-seal Defender rescan, then runs the existing client
 `scripts/test-remote-native.mjs` against the original sealed 10.1.0 worker.
+The reviewed QA harness is recorded separately and receives an explicit clean
+candidate source root. Website checks use real rendering, decoded-frame and
+playback-time progression, native input evidence and UDP/DTLS statistics rather
+than localized status labels. Candidate application source remains unchanged.
 It is additional candidate evidence, not a publication or full acceptance gate.
 The stable download records remain unchanged.
 
