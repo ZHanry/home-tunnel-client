@@ -75,6 +75,30 @@ The historical candidate identity remains committed unchanged in
 The [paired candidate guide](V10_1_PAIRED_CANDIDATE_TEST_GUIDE.md) describes the
 separate environment and remaining verification work.
 
+### Repaired candidate build
+
+The separate repaired identity is recorded in
+[repaired-candidate-10.1.json](../tests/remote-native/repaired-candidate-10.1.json).
+[Build 36795202532](https://github.com/ZHanry/home-tunnel-client/actions/runs/36795202532)
+completed successfully on 2026-10-01 from clean source
+`41c0e21fbb3a4c634fbc9d63fcd7453337e4d029`, paired with unchanged server source
+`194ae805f3569dc16d94b7fda71367e5d68fdff5`. All platform/SDK build and sealing jobs
+passed; publication jobs were skipped. The immutable `candidate-assets` artifact
+is `11135066756`, run attempt `1`, ZIP SHA-256
+`dbf59ff6d73e6e3ce0082a313087f41e26382d8b70324acb8b3a6be1e1c08b62`.
+
+- Windows portable ZIP: `e1c04b5cd06dcd5ac4548bac0e1611d9a996e70ba71307bb05fdb82350b98df7`
+- Windows installer: `58340bcd7d799ab7e5deaccc6d284fb4313b322ac869bdfd2ad2368b03b13eb5`
+- Candidate manifest: `0e3a17f725baae4bee4dc3776023511bbc155c331be4edc647bf0cd73590931b`
+
+The original candidate and pin remain unchanged. This new build includes the
+repaired Go host/engine cleanup. Its native worker still has the same deterministic
+hash because the native worker source did not change; this does not make the
+new GUI/service package interchangeable with the old package. Post-seal Defender,
+bounded recovery, the two short native cases and a fresh 30-session/two-hour run
+must establish their own results for this selected candidate. Build success alone
+does not establish those runtime results or complete release acceptance.
+
 ## Rebuilding and selecting repaired bytes
 
 The workflow's `candidate_identity` selects only two reviewed pin filenames:
