@@ -1,6 +1,6 @@
 # Windows 10.1.0 candidate verification
 
-This work addresses the five reported Windows desktop issues. Version 10.1.0 is a candidate, not a published or accepted release. Existing 10.0.0 releases and immutable API tags are unchanged.
+Historical candidate preparation record. Version 10.1.0 has now been published by promoting the original verified candidate; see [stable release coverage](RELEASE_10_1_STABLE.md). Existing 10.0.0 releases and immutable API tags are unchanged. The verification requirements and evidence boundaries below describe candidate preparation.
 
 ## Behavior under test
 
