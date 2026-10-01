@@ -1,0 +1,24 @@
+name: Promote verified 10.1 client
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: promote-verified-client-10.1
+  cancel-in-progress: false
+jobs:
+  promote:
+    name: Invoke the existing exact-byte release verifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      actions: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Create the exact tested tag and dispatch the existing release workflow
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python3 scripts/promote-10.1.py
