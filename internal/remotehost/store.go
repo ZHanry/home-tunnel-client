@@ -31,6 +31,7 @@ type diskState struct {
 	FixedRevision           int64                 `json:"fixed_revision,omitempty"`
 	FixedInvites            map[string]time.Time  `json:"fixed_invites,omitempty"`
 	EmergencyKey            string                `json:"emergency_key,omitempty"`
+	CloseAcks               map[string]stoppedAck `json:"close_acks,omitempty"`
 }
 
 // Store wraps the existing OS credential protection in a separate remote-host
@@ -41,6 +42,9 @@ type Store struct {
 	mu      sync.Mutex
 	backend protectedBackend
 	data    diskState
+	// Serialize shutdown reports with exact close acknowledgments across
+	// replacement Service instances sharing this protected identity.
+	closeGate chan struct{}
 }
 
 type StoreBackend interface {
@@ -113,7 +117,11 @@ func openStore(backend protectedBackend) (*Store, error) {
 			return nil, e
 		}
 	}
-	if _, e = store.privateKey(); e != nil {
+	key, e := store.privateKey()
+	if e != nil {
+		return nil, e
+	}
+	if e = validateCloseAcks(store.data.CloseAcks, key); e != nil {
 		return nil, e
 	}
 	return store, nil

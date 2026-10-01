@@ -105,6 +105,7 @@ let pairing, requestID, hostID, session;
 async function command(input) {
   switch (input.action) {
     case 'pair': {
+      activeAccount = account; signingKey = keys; signingJWK = publicJWK; controller = primaryController;
       hostID = input.host_id; requestID = randomUUID();
       pairing = await request('/pairings', 'POST', { host_endpoint_id: hostID, session_request_id: requestID, permissions: ['view', 'input.pointer'], mode: 'one_session', nonce_controller: randomBytes(32).toString('base64url') });
       return { id: pairing.id, request_id: requestID };

@@ -726,6 +726,13 @@ try {
       // This is an explicit owned-host restart and new pairing, not automatic
       // product recovery and not recovery from a network interruption.
       await page.evaluate(() => window.nativeE2E.closeSession());
+      stage = 'restart_verify_crashed_session_closed';
+      await until(() => page.evaluate(id => window.nativeE2E.sessionClosed(id), crashSession.session_id), 'E2E_CRASHED_SESSION_NOT_CLOSED', 5000);
+      requireCheck((await rpc('state')).session_idle === true, 'E2E_CRASHED_HOST_NOT_IDLE');
+      const crashedClosure = { server_state: 'closed', host_idle: true, verified_before_restart: true,
+        session_id_sha256: createHash('sha256').update(crashSession.session_id).digest('hex') };
+      if (withRestartProbe) report.restart_probe.crashed_session_closure = crashedClosure;
+      if (withStability) report.stability.crashed_session_closure = crashedClosure;
       stage = 'restart_stop_owned_host';
       await host.stop();
       stage = 'restart_start_owned_host';
@@ -749,9 +756,12 @@ try {
       await page.evaluate(() => { window.nativeE2E.releaseInput(); });
       stage = 'restart_close_recovered_session';
       await page.evaluate(() => window.nativeE2E.closeSession());
+      stage = 'restart_verify_recovered_session_closed';
+      await until(() => page.evaluate(id => window.nativeE2E.sessionClosed(id), recovered.session_id), 'E2E_RECOVERED_SESSION_NOT_CLOSED', 5000);
       stage = 'restart_await_recovered_idle';
       await until(async () => (await rpc('state')).session_idle, 'E2E_STABILITY_RECOVERED_SESSION_DID_NOT_CLOSE', 5000);
       const restartResult = { status: 'passed', crash_to_live_input_ms: restartMs, session_id_sha256: createHash('sha256').update(recovered.session_id).digest('hex'), activity, clean_close: true,
+        server_state: 'closed', host_idle: true, crashed_session_closure: crashedClosure,
         scope: 'Owned QA host restart and new signed pairing; no automatic restart or network outage claim.' };
       if (withStability) { report.stability.post_crash_explicit_restart = restartResult; report.stability.status = 'passed'; }
       if (withRestartProbe) Object.assign(report.restart_probe, { status: 'passed', initial_session_id_sha256: createHash('sha256').update(created.session_id).digest('hex'), same_identity: true, fixture_policy: { host_timeout_seconds: 10800, one_session_grant_seconds: 10800, account_access_token_seconds: 10800 }, recovery: restartResult });

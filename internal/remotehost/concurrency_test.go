@@ -55,6 +55,15 @@ func TestStopDuringDecisionCannotStartNative(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	s.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
 		if strings.HasSuffix(request.URL.Path, "/decision") {
+			var body struct {
+				Decision string `json:"decision"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Decision == "reject" {
+				return fixtureResponse(r.Session), nil
+			}
 			close(entered)
 			<-release
 			return fixtureResponse(r.Session), nil
@@ -317,9 +326,10 @@ func TestSTUNURLsForbidRelayCredentialsAndUnboundedPorts(t *testing.T) {
 func TestDisablePersistsBeforeCloseNetworkWait(t *testing.T) {
 	s, r := approvalFixture(t)
 	s.active = r
+	r.Session.State = "active"
 	entered, release := make(chan struct{}), make(chan struct{})
 	s.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
-		if strings.HasSuffix(request.URL.Path, "/close") {
+		if strings.HasSuffix(request.URL.Path, "/report") {
 			close(entered)
 			<-release
 		}

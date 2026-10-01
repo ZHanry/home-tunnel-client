@@ -129,6 +129,12 @@ window.nativeE2E = {
     const snapshot = await api.request(`/api/v1/rd/sessions/${id}`);
     return !!snapshot.ticket_jws;
   },
+  async sessionClosed(id) {
+    // A read-only observation of the actual server state. Local UI teardown,
+    // `closing`, lease expiry, and swallowed close-request errors are not proof.
+    const snapshot = await api.request(`/api/v1/rd/sessions/${id}`);
+    return snapshot.session_id === id && snapshot.state === 'closed';
+  },
   async start(id) {
     const snapshot = await api.request(`/api/v1/rd/sessions/${id}`);
     if (!snapshot.ticket_jws) throw new Error('RD_LOCAL_APPROVAL_REQUIRED');

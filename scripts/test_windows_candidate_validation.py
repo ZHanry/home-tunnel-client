@@ -125,8 +125,9 @@ class WindowsCandidateWrapperTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/validate-windows-candidate.yml").read_text()
         self.assertNotIn(": write", workflow)
         self.assertEqual(workflow.count("persist-credentials: false"), 3)
-        self.assertIn("ref: 9b3dbb751942fee040049f9901ea61e95e60c10c", workflow)
-        self.assertIn("ref: 194ae805f3569dc16d94b7fda71367e5d68fdff5", workflow)
+        self.assertIn("ref: ${{ steps.candidate.outputs.revision }}", workflow)
+        self.assertIn("ref: ${{ steps.candidate.outputs.server_revision }}", workflow)
+        self.assertIn("--receipt verified-candidate/client-candidate-download.json", workflow)
         self.assertNotIn("build-native-windows", workflow)
 
 
@@ -223,7 +224,9 @@ class RestartProbeTests(unittest.TestCase):
                  **{key: 1 for key in ("frames_decoded", "frames_presented", "bytes_received", "video_time", "input_frames_sent", "native_input_accepted", "native_frames_encoded")}}
         second = {**first, **{key: 2 for key in ("frames_decoded", "frames_presented", "bytes_received", "video_time", "input_frames_sent", "native_input_accepted", "native_frames_encoded")}}
         return {"restart_probe": {"status": "passed", "timeout_seconds": 600, "same_identity": True, "initial_session_id_sha256": "a" * 64,
-                    "recovery": {"status": "passed", "clean_close": True, "crash_to_live_input_ms": 5000, "session_id_sha256": "b" * 64, "activity": {"first": first, "second": second}}},
+                    "recovery": {"status": "passed", "clean_close": True, "crash_to_live_input_ms": 5000, "session_id_sha256": "b" * 64, "activity": {"first": first, "second": second},
+                                 "server_state": "closed", "host_idle": True,
+                                 "crashed_session_closure": {"server_state": "closed", "host_idle": True, "verified_before_restart": True, "session_id_sha256": "a" * 64}}},
                 "input": {"worker_crash": {"passed": True, "key_release_ms": 100, "button_release_ms": 100}}}
 
     def test_probe_fixture_is_accepted_only_as_probe(self):
@@ -239,6 +242,13 @@ class RestartProbeTests(unittest.TestCase):
                    lambda r: r["restart_probe"]["recovery"].update(crash_to_live_input_ms=30001),
                    lambda r: r["restart_probe"]["recovery"].update(clean_close=False),
                    lambda r: r["restart_probe"]["recovery"].update(session_id_sha256="a" * 64),
+                   lambda r: r["restart_probe"]["recovery"].update(session_id_sha256="short"),
+                   lambda r: r["restart_probe"]["recovery"].update(server_state="closing"),
+                   lambda r: r["restart_probe"]["recovery"].update(host_idle=False),
+                   lambda r: r["restart_probe"]["recovery"]["crashed_session_closure"].update(server_state="expired"),
+                   lambda r: r["restart_probe"]["recovery"]["crashed_session_closure"].update(host_idle=False),
+                   lambda r: r["restart_probe"]["recovery"]["crashed_session_closure"].update(verified_before_restart=False),
+                   lambda r: r["restart_probe"]["recovery"]["crashed_session_closure"].update(session_id_sha256="c" * 64),
                    lambda r: r["restart_probe"]["recovery"]["activity"]["second"].update(frames_decoded=1),
                    lambda r: r["input"]["worker_crash"].update(key_release_ms=2001)]
         for index, change in enumerate(changes):

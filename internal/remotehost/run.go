@@ -24,12 +24,12 @@ func (s *Service) Run(ctx context.Context) error {
 	s.running = true
 	s.mu.Unlock()
 	defer func() {
-		s.mu.Lock()
-		s.running = false
-		s.mu.Unlock()
 		stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.Stop(stop, "RD_SIGNAL_DISCONNECTED")
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
 	}()
 	d := s.config.Store.snapshot()
 	if !d.Enabled || d.EndpointID == "" {
@@ -45,6 +45,11 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	if changed {
 		return ErrLocalApproval
+	}
+	// Reconcile the previous worker's exact stopped debt before advertising
+	// this generation online, so an immediate retry sees the released slot.
+	if e = s.flushOwedAcks(ctx); e != nil {
+		return e
 	}
 	if !s.republished.Load() {
 		// Best effort: a failed refresh leaves the previous capabilities in place.
@@ -227,27 +232,6 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 }
 
-// flushOwedAcks resends close acknowledgements lost to a network failure.
-func (s *Service) flushOwedAcks(ctx context.Context) error {
-	s.mu.Lock()
-	owed := make(map[string]map[string]any, len(s.owedAcks))
-	for id, body := range s.owedAcks {
-		owed[id] = body
-	}
-	s.mu.Unlock()
-	for id, body := range owed {
-		e := s.request(ctx, "POST", "/sessions/"+url.PathEscape(id)+"/close-ack", body, "dpop", nil)
-		var rejected *APIError
-		if e != nil && !errors.As(e, &rejected) {
-			return e
-		}
-		// Accepted, or rejected because the session already ended: nothing more to send.
-		s.mu.Lock()
-		delete(s.owedAcks, id)
-		s.mu.Unlock()
-	}
-	return nil
-}
 func (s *Service) tick(ctx context.Context) error {
 	if e := s.flushOwedAcks(ctx); e != nil {
 		return e
@@ -335,35 +319,7 @@ func (s *Service) handleEngine(ctx context.Context, event EngineEvent, send func
 		if json.Unmarshal(event.Payload, &closed) == nil && closed.ErrorCode != "" {
 			log.Printf("remote session closed by host: %s", closed.ErrorCode)
 		}
-		if snapshot.Session.LeaseSeq > 0 && !snapshot.Superseded {
-			proof, e := signJWS(s.key, "ht-rd-session+jwt", map[string]any{"type": "session.close_ack", "session_id": snapshot.Session.SessionID, "connection_epoch": snapshot.Session.ConnectionEpoch, "lease_seq": snapshot.Session.LeaseSeq, "stopped": true}, false)
-			if e != nil {
-				return e
-			}
-			body := map[string]any{"connection_epoch": snapshot.Session.ConnectionEpoch, "lease_seq": snapshot.Session.LeaseSeq, "signed_proof": proof}
-			if e = s.request(ctx, "POST", "/sessions/"+url.PathEscape(snapshot.Session.SessionID)+"/close-ack", body, "dpop", nil); e != nil {
-				var rejected *APIError
-				if !errors.As(e, &rejected) {
-					s.mu.Lock()
-					s.owedAcks[snapshot.Session.SessionID] = body
-					if s.active == r {
-						s.active = nil
-					}
-					delete(s.pending, snapshot.Session.SessionID)
-					s.mu.Unlock()
-				}
-				return e
-			}
-		}
-		s.mu.Lock()
-		if s.active == r {
-			s.active = nil
-		}
-		if !snapshot.Superseded {
-			delete(s.pending, snapshot.Session.SessionID)
-		}
-		s.mu.Unlock()
-		return nil
+		return s.acknowledgeStopped(ctx, r)
 	}
 	if closing {
 		return nil

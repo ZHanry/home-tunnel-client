@@ -103,6 +103,15 @@ type HostEngine interface {
 	Events() <-chan EngineEvent
 	Close(context.Context, SessionRef, string) error
 }
+
+// EngineStopVerifier is optional for adapters that own an isolated native process.
+// A nil result proves that the entire media/input producer has exited, not merely
+// that IPC failed. It must never terminate a healthy producer to obtain proof.
+// Independent input-release guards remain responsible for any release debt.
+type EngineStopVerifier interface {
+	WaitStopped(context.Context) error
+}
+
 type UnavailableEngine struct{}
 
 func (UnavailableEngine) Capabilities(context.Context) (Capabilities, error) {

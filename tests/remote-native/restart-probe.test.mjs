@@ -28,12 +28,40 @@ test('probe cannot be requested without the confined input target or with unknow
 });
 test('probe shares exact owned restart path and retains per-await substages', () => {
   const source = readFileSync(runner, 'utf8');
-  for (const stage of ['restart_close_crashed_session', 'restart_stop_owned_host', 'restart_start_owned_host', 'restart_send_private_configuration', 'restart_await_backend', 'restart_verify_same_identity', 'restart_bind_controller', 'restart_find_host', 'restart_measure_live_input', 'restart_release_input', 'restart_close_recovered_session', 'restart_await_recovered_idle']) assert.ok(source.includes(`stage = '${stage}'`), stage);
+  for (const stage of ['restart_close_crashed_session', 'restart_verify_crashed_session_closed', 'restart_stop_owned_host', 'restart_start_owned_host', 'restart_send_private_configuration', 'restart_await_backend', 'restart_verify_same_identity', 'restart_bind_controller', 'restart_find_host', 'restart_measure_live_input', 'restart_release_input', 'restart_close_recovered_session', 'restart_verify_recovered_session_closed', 'restart_await_recovered_idle']) assert.ok(source.includes(`stage = '${stage}'`), stage);
   assert.match(source, /if \(withNativeFixture\) \{\s+stage = 'restart_close_crashed_session'/);
   assert.match(source, /openStabilitySession\('restart'\)/); assert.match(source, /proveStabilitySessionInput\('restart'\)/);
   assert.match(source, /let crashSession = created;\s+if \(!withRestartProbe\)/);
   assert.match(source, /withNativeFixture \? failureMetadata\(error\)/);
   assert.doesNotMatch(source, /console\.(?:log|error)\(error\.(?:stack|message)\)/);
+});
+test('restart requires observed server closure before stopping the owned host', () => {
+  const source = readFileSync(runner, 'utf8');
+  const start = source.indexOf("stage = 'restart_close_crashed_session'");
+  const stop = source.indexOf("stage = 'restart_stop_owned_host'", start);
+  const boundary = source.slice(start, stop);
+  assert.match(boundary, /sessionClosed\(id\), crashSession.session_id/);
+  assert.match(boundary, /E2E_CRASHED_SESSION_NOT_CLOSED', 5000/);
+  assert.match(boundary, /session_idle === true/);
+  assert.match(boundary, /verified_before_restart: true/);
+  assert.doesNotMatch(boundary, /openStabilitySession|\.pair\(|\.confirm\(|rpc\('shutdown'\)/);
+  assert.match(source, /sessionClosed\(id\), recovered.session_id/);
+});
+test('server closure observation is one read and rejects local or nonterminal states', async () => {
+  const source = readFileSync(new URL('./controller.mjs', import.meta.url), 'utf8');
+  const body = source.match(/async sessionClosed\(id\) \{([\s\S]*?)\n  \},/)[1];
+  for (const state of ['closed', 'closing', 'expired', 'failed', 'active', undefined]) {
+    const calls = [];
+    const observe = new Function('api', `return async function(id) {${body}}`)({ request: async (...args) => {
+      calls.push(args); return { session_id: 'owned-session', state };
+    } });
+    assert.equal(await observe('owned-session'), state === 'closed');
+    assert.deepEqual(calls, [['/api/v1/rd/sessions/owned-session']]);
+  }
+  const wrongIdentity = new Function('api', `return async function(id) {${body}}`)({ request: async () => ({ session_id: 'other', state: 'closed' }) });
+  assert.equal(await wrongIdentity('owned-session'), false);
+  const unavailable = new Function('api', `return async function(id) {${body}}`)({ request: async () => { throw new Error('unavailable'); } });
+  await assert.rejects(unavailable('owned-session'));
 });
 test('strict stability targets remain unchanged and probe has separate classification', () => {
   const source = readFileSync(runner, 'utf8');

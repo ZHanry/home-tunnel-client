@@ -84,6 +84,7 @@ type runningSession struct {
 	Files        map[string]FileEvent
 	FileOrder    []string
 	Closing      bool
+	Stopped      bool
 	Superseded   bool
 	Cancel       context.CancelFunc
 }
@@ -570,18 +571,26 @@ func (s *Service) checkAuthority(r *runningSession) error {
 	return nil
 }
 func (s *Service) Stop(ctx context.Context, reason string) error {
-	session, present, engineError := s.stopLocal(ctx, reason)
-	if !present {
+	session, running, engineError := s.stopLocal(ctx, reason)
+	if running == nil {
 		return engineError
 	}
-	networkError := s.request(ctx, "POST", "/sessions/"+url.PathEscape(session.SessionID)+"/close", map[string]any{}, "dpop", nil)
-	// Only a subsequent native closed event may produce close_ack and release slots.
+	// Verify and record stopped media before any HTTP wait can consume the
+	// shutdown deadline. The close-ack itself can close an active session.
+	var stoppedError error
+	var confirmed bool
 	if engineError != nil {
-		return engineError
+		confirmed, stoppedError = s.confirmEngineStopped(ctx, running, true)
 	}
-	return networkError
+	if confirmed || s.stopAlreadySettled(running) {
+		// /close has no epoch binding. Once the exact proof can release the
+		// old slot, a trailing generic close could close a reconnected epoch.
+		return errors.Join(engineError, stoppedError)
+	}
+	networkError := s.requestSessionClose(ctx, session, running)
+	return errors.Join(engineError, stoppedError, networkError)
 }
-func (s *Service) stopLocal(ctx context.Context, reason string) (Session, bool, error) {
+func (s *Service) stopLocal(ctx context.Context, reason string) (Session, *runningSession, error) {
 	s.mu.Lock()
 	s.generation++
 	r := s.active
@@ -595,14 +604,40 @@ func (s *Service) stopLocal(ctx context.Context, reason string) (Session, bool, 
 	}
 	s.mu.Unlock()
 	if r == nil {
-		return Session{}, false, nil
+		return Session{}, nil, nil
 	}
 	log.Printf("remote session stopping: %s", reason)
 	s.engineMu.Lock()
 	engineError := s.config.Engine.Close(ctx, session.SessionRef, reason)
 	s.engineMu.Unlock()
-	return session, true, engineError
+	return session, r, engineError
 }
+
+func (s *Service) stopAlreadySettled(r *runningSession) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active != r || r.Stopped || r.Superseded
+}
+
+func (s *Service) confirmEngineStopped(ctx context.Context, r *runningSession, notifyServer bool) (bool, error) {
+	// A crashed worker cannot emit native closed. Only its owning adapter can
+	// prove process exit; closed IPC or an arbitrary Close error is not proof.
+	verifier, ok := s.config.Engine.(EngineStopVerifier)
+	if !ok || r == nil {
+		return false, nil
+	}
+	wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if verifier.WaitStopped(wait) != nil {
+		return false, nil
+	}
+	if notifyServer {
+		return true, s.acknowledgeStopped(ctx, r)
+	}
+	_, err := s.recordStopped(r)
+	return true, err
+}
+
 func (s *Service) handleServer(ctx context.Context, raw json.RawMessage) error {
 	var message struct {
 		V          int             `json:"v"`

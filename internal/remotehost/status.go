@@ -2,7 +2,6 @@ package remotehost
 
 import (
 	"context"
-	"net/url"
 	"time"
 )
 
@@ -94,10 +93,22 @@ func (s *Service) rejectSession(ctx context.Context, id string, epoch, version i
 	if session.State != "pending_approval" && session.State != "reconnecting" {
 		return ErrAuthorization
 	}
-	e = s.request(ctx, "POST", "/sessions/"+url.PathEscape(id)+"/close", map[string]any{}, "dpop", nil)
+	raw, e := verifyJWS(session.GrantJWS, jwk(&s.key.PublicKey), "ht-rd-grant+jwt")
+	if e != nil {
+		return e
+	}
+	var grant struct {
+		Version int64 `json:"grant_version"`
+	}
+	if strictDecode(raw, &grant, false) != nil || grant.Version < 1 {
+		return ErrAuthorization
+	}
+	e = s.requestSessionRejection(ctx, session, grant.Version)
 	if e == nil {
 		s.mu.Lock()
-		delete(s.pending, id)
+		if pending, present := s.pending[id]; present && pending.SessionRef == session.SessionRef && pending.StateVersion == session.StateVersion {
+			delete(s.pending, id)
+		}
 		s.mu.Unlock()
 	}
 	return e

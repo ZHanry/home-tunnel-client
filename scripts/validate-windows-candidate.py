@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -204,6 +205,16 @@ def verify_restart_probe(report):
     require(recovery.get("status") == "passed" and recovery.get("clean_close") is True and
             0 <= recovery.get("crash_to_live_input_ms", -1) <= 30000 and
             probe.get("initial_session_id_sha256") != recovery.get("session_id_sha256"), "Fresh recovered session did not pass")
+    for value in (probe.get("initial_session_id_sha256"), recovery.get("session_id_sha256")):
+        require(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None,
+                "Initial and recovered session digests must be complete")
+    closure = recovery.get("crashed_session_closure", {})
+    require(closure.get("server_state") == "closed" and closure.get("host_idle") is True and
+            closure.get("verified_before_restart") is True and
+            closure.get("session_id_sha256") == probe["initial_session_id_sha256"],
+            "Crashed session lacks server-confirmed closure before restart")
+    require(recovery.get("server_state") == "closed" and recovery.get("host_idle") is True,
+            "Recovered session lacks server-confirmed closure")
     crash = report.get("input", {}).get("worker_crash", {})
     require(crash.get("passed") is True and all(0 <= crash.get(key, -1) <= 2000 for key in ("key_release_ms", "button_release_ms")),
             "Crash input release did not pass")

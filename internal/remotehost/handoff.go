@@ -69,8 +69,11 @@ func ValidateServiceTransfer(raw []byte, origin string) error {
 		}
 	}
 	store := &Store{data: data}
-	_, err := store.privateKey()
-	return err
+	key, err := store.privateKey()
+	if err != nil {
+		return err
+	}
+	return validateCloseAcks(data.CloseAcks, key)
 }
 
 // Identity is non-secret metadata used to bind service IPC to one endpoint.
