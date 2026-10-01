@@ -2,7 +2,7 @@
 
 The `Validate sealed Windows candidate` workflow first performs the required
 post-seal Defender rescan, then runs the existing client
-`scripts/test-remote-native.mjs` against the original sealed 10.1.0 worker.
+`scripts/test-remote-native.mjs` against the selected sealed 10.1.0 worker.
 The reviewed QA harness is recorded separately and receives an explicit clean
 candidate source root. Website checks use real rendering, decoded-frame and
 playback-time progression, native input evidence and UDP/DTLS statistics rather
@@ -70,15 +70,95 @@ testing from this task; it is not run or claimed as passed. Server
 images are not executed by this workflow. Further real-device testing must use
 the same sealed packages and the matching pinned server.
 
-The candidate identity is committed in [final-candidate-10.1.json](../tests/remote-native/final-candidate-10.1.json).
+The historical candidate identity remains committed unchanged in
+[final-candidate-10.1.json](../tests/remote-native/final-candidate-10.1.json).
 The [paired candidate guide](V10_1_PAIRED_CANDIDATE_TEST_GUIDE.md) describes the
 separate environment and remaining verification work.
+
+### Repaired candidate build
+
+The separate repaired identity is recorded in
+[repaired-candidate-10.1.json](../tests/remote-native/repaired-candidate-10.1.json).
+[Build 36795202532](https://github.com/ZHanry/home-tunnel-client/actions/runs/36795202532)
+completed successfully on 2026-10-01 from clean source
+`41c0e21fbb3a4c634fbc9d63fcd7453337e4d029`, paired with unchanged server source
+`194ae805f3569dc16d94b7fda71367e5d68fdff5`. All platform/SDK build and sealing jobs
+passed; publication jobs were skipped. The immutable `candidate-assets` artifact
+is `11135066756`, run attempt `1`, ZIP SHA-256
+`dbf59ff6d73e6e3ce0082a313087f41e26382d8b70324acb8b3a6be1e1c08b62`.
+
+- Windows portable ZIP: `e1c04b5cd06dcd5ac4548bac0e1611d9a996e70ba71307bb05fdb82350b98df7`
+- Windows installer: `58340bcd7d799ab7e5deaccc6d284fb4313b322ac869bdfd2ad2368b03b13eb5`
+- Candidate manifest: `0e3a17f725baae4bee4dc3776023511bbc155c331be4edc647bf0cd73590931b`
+
+The original candidate and pin remain unchanged. This new build includes the
+repaired Go host/engine cleanup. Its native worker still has the same deterministic
+hash because the native worker source did not change; this does not make the
+new GUI/service package interchangeable with the old package. Post-seal Defender,
+bounded recovery, the two short native cases and a fresh 30-session/two-hour run
+must establish their own results for this selected candidate. Build success alone
+does not establish those runtime results or complete release acceptance.
+
+## Rebuilding and selecting repaired bytes
+
+The workflow's `candidate_identity` selects only two reviewed pin filenames:
+`original-10.1` selects the historical file above; `repaired-10.1` selects
+`tests/remote-native/repaired-candidate-10.1.json`. Pull requests always select
+the repaired identity, and dispatch defaults to it. An absent repaired pin
+**fails validation**. There is no automatic fallback, latest-run lookup, skipped
+probe, or passing status derived from the historical package.
+
+1. Finish the product repair and applicable local checks on a clean branch.
+   Dispatch **Release client** (`release.yml`) on that branch with
+   `candidate=true` and `revision=<exact 40-character branch SHA>`. Keep source
+   version `10.1.0`. This builds and seals a new untagged candidate, not a public
+   release; leave all publication-only inputs empty.
+2. Wait for the complete build to succeed, including Windows packaging, native
+   UI regression, Defender, installation, signatures, attestations, and sealing.
+   Record the actual run ID/attempt and `candidate-assets` artifact ID/SHA-256.
+   Do not use a Windows CI package or partial build as a sealed candidate.
+3. Add the new reviewed `repaired-candidate-10.1.json` with the same strict schema
+   as the historical pin, exact repaired source SHA, manifest's server SHA,
+   version `10.1.0`, run ID/attempt and artifact ID/digest. The new revision,
+   run, artifact and artifact digest must all differ from the historical ones.
+   Never replace the historical pin, package or failed evidence. The pin commit
+   follows the sealed build commit; the candidate does not need to contain its
+   own subsequently recorded artifact ID.
+4. Pull-request validation resolves that pin before checking out client/server
+   source, downloads the immutable artifact with the candidate's existing
+   verifier, verifies signatures and run-bound attestations, and checks the
+   download receipt's exact run attempt and identity against the pin. It then
+   rescans and executes the bounded restart probe and both short native cases.
+   Explicit `candidate_identity=original-10.1` remains available to reproduce
+   the historical result. Explicit `validation_scope=restart-probe` selects
+   only the rescan and bounded recovery case; it does not run a long soak.
+
+Every validation artifact includes `selected-candidate-pin.json`, recording
+the selected identity and pin-file digest. Same-version filenames alone never
+identify the repaired package: use its source SHA, build run and sealed hashes.
+The source lock and candidate manifest must agree on the server revision; this
+workflow does not silently overlay a different server or rewrite frozen tags.
+
+The native worker executable is extracted from the verified new ZIP and is
+never rebuilt during validation. The QA Go host is compiled using that
+candidate's actual production Go packages. Its existing overlay replaces only
+the opt-in test host file for fixture lifetime/identity reuse; it does not replace
+`internal/remotehost`, `internal/remoteengine` or packaged worker bytes. This is
+sealed-worker plus pinned-production-source recovery evidence, not a claim that
+the packaged GUI or service executable itself performed the restart.
+
+Historical run `36711184781` retains its overall **failed** outcome: its original
+worker completed 30 sessions and 7200.6602421 seconds of active media/input
+(1391 raw samples), then failed at post-crash restart. Those partial successes
+remain historical coverage for candidate run `36696397157`; they do not become
+a repaired-candidate two-hour pass. No 24-hour test is run or claimed.
 
 ## Explicit bounded stability mode
 
 The workflow dispatch input `validation_scope=stability` runs a separate strict
-acceptance phase against the **same originally sealed worker bytes**. Pull
-requests and the default `short` dispatch remain the two short cases. The job
+acceptance phase against the **selected sealed worker bytes**. Pull requests
+run the bounded restart probe and two short cases; a `short` dispatch runs the
+two short cases. The job
 has a 300-minute ceiling, the native subprocess a hard 10800-second ceiling,
 and the native step 185 minutes. The wrapper kills only its owned process tree
 on timeout and uploads the partial sanitized observations on failure.
@@ -127,3 +207,35 @@ worker/Chromium fixture scope only. They do **not** establish full GUI two-hour
 acceptance, independent Windows endpoints, website/cross-account two-hour
 stability, account-token refresh, a controlled network-outage recovery, or
 24-hour idle stability. `network_restore_30s` stays `not_verified`.
+
+## Bounded post-crash restart probe
+
+`validation_scope=restart-probe` / `--phase restart-probe` diagnoses the same
+owned-host restart path independently. Every eligible pull request also runs it
+before the unchanged short cases, in its own step with a separate
+`windows-restart-probe-*` artifact. The native subprocess is capped at **600
+seconds**; the step allows 13 minutes for wrapper setup, owned-tree cleanup and
+failure reporting. The short cases keep their own original 25-minute step and
+still run after a probe failure when dependency setup succeeded.
+
+The probe creates one real signed session, verifies native media, holds actual
+confined keyboard/pointer input, kills only the worker owned by the test host,
+and measures release. It then follows the exact existing same-identity host
+restart, new signed pairing, live media, fresh trusted input and clean-close
+path. Before stopping the crashed host, it observes the exact crashed session
+through the production read-only session API and requires server state `closed`
+and host idle within the bounded acknowledgement observation. `closing`, local
+UI teardown, swallowed close errors, and eventual lease expiration cannot pass.
+The recovered session must also be server-closed and host-idle. These checks do
+not submit additional cleanup calls or retry session creation. The three-hour
+disposable fixture policy and hashed QA host overlay are
+retained for identical restart semantics; the wrapper's ten-minute bound is
+unchanged. No product worker is rebuilt and no deployed account is used.
+
+The report is classified as `restart_probe`, never `stability`. It cannot supply
+30-session or 7200-second acceptance evidence, account-token refresh, automatic
+product restart, or network-outage recovery. Original failed-run evidence stays
+unchanged. Restart awaits have distinct substages. Failure details add only a
+fixed exception-type label and allowlisted source basenames with numeric
+line/column coordinates; raw error messages/stacks, URLs, credentials and
+fixture content are not retained.

@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -194,6 +195,41 @@ def verify_stability_report(report, destination):
             "Explicit post-crash restart check is incomplete")
 
 
+
+def verify_restart_probe(report):
+    require("stability" not in report, "A restart probe cannot be stability acceptance")
+    probe = report.get("restart_probe", {})
+    require(probe.get("status") == "passed" and probe.get("timeout_seconds") == 600 and probe.get("same_identity") is True,
+            "Bounded same-identity restart probe did not pass")
+    recovery = probe.get("recovery", {})
+    require(recovery.get("status") == "passed" and recovery.get("clean_close") is True and
+            0 <= recovery.get("crash_to_live_input_ms", -1) <= 30000 and
+            probe.get("initial_session_id_sha256") != recovery.get("session_id_sha256"), "Fresh recovered session did not pass")
+    for value in (probe.get("initial_session_id_sha256"), recovery.get("session_id_sha256")):
+        require(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None,
+                "Initial and recovered session digests must be complete")
+    closure = recovery.get("crashed_session_closure", {})
+    require(closure.get("server_state") == "closed" and closure.get("host_idle") is True and
+            closure.get("verified_before_restart") is True and
+            closure.get("session_id_sha256") == probe["initial_session_id_sha256"],
+            "Crashed session lacks server-confirmed closure before restart")
+    require(recovery.get("server_state") == "closed" and recovery.get("host_idle") is True,
+            "Recovered session lacks server-confirmed closure")
+    crash = report.get("input", {}).get("worker_crash", {})
+    require(crash.get("passed") is True and all(0 <= crash.get(key, -1) <= 2000 for key in ("key_release_ms", "button_release_ms")),
+            "Crash input release did not pass")
+    activity = recovery.get("activity", {})
+    for position in ("first", "second"):
+        sample = activity.get(position, {})
+        require(len(sample.get("input_events", [])) == 4 and all(event.get("trusted") is True and event.get("target_matches") is True for event in sample["input_events"]),
+                "Recovered trusted input is missing")
+        state = sample.get("media_state", {})
+        require(all(state.get(key) is True for key in ("peer_verified", "host_path_verified", "browser_udp_verified", "input_enabled", "lease_valid", "signal_authenticated")) and
+                state.get("connection_state") == "connected" and state.get("dtls_state") == "connected", "Recovered verified live media is missing")
+    require(all(activity["second"][key] > activity["first"][key] for key in ("frames_decoded", "frames_presented", "bytes_received", "video_time", "input_frames_sent", "native_input_accepted", "native_frames_encoded")),
+            "Recovered media/input is not continuing")
+
+
 def run_case(command, log_path, timeout_seconds=600):
     """Keep the original report and kill only this owned tree on hard timeout."""
     require(timeout_seconds in (600, 10800), "Unsupported native case timeout")
@@ -215,7 +251,7 @@ def main():
     parser.add_argument("--revision", required=True)
     parser.add_argument("--server-revision", required=True)
     parser.add_argument("--version", required=True)
-    parser.add_argument("--phase", choices=("rescan", "native", "stability"), default="native")
+    parser.add_argument("--phase", choices=("rescan", "native", "stability", "restart-probe"), default="native")
     args = parser.parse_args()
     args.client, args.server, args.verified, args.output = (path.resolve() for path in
         (args.client, args.server, args.verified, args.output))
@@ -226,6 +262,7 @@ def main():
         "schema_version": 1, "status": "not_verified", "started_at": datetime.now(timezone.utc).isoformat(),
         "phase": args.phase,
         "scope": "Post-seal Microsoft Defender scan of six original Windows subjects" if args.phase == "rescan" else
+                 "Bounded <=600-second single-session crash and explicit same-identity QA-host restart probe" if args.phase == "restart-probe" else
                  "Thirty actual native sessions and >=7200 seconds of active media/input in one disposable loopback session" if args.phase == "stability" else
                  "Two bounded, same-machine native Windows worker to Chromium fixture cases",
         "production_worker_rebuilt": False, "deployed_server_tested": False,
@@ -314,6 +351,8 @@ def main():
             ]
             if args.phase == "stability":
                 cases = [("native-30-connections-7200s-active", ["--mode", "same-account", "--stability", "30x7200"])]
+            if args.phase == "restart-probe":
+                cases = [("native-restart-probe", ["--mode", "same-account", "--restart-probe", "same-identity"])]
             for name, flags in cases:
                 require(digest(worker_path) == worker_hash, "Worker changed before the next case")
                 destination = args.output / name
@@ -339,14 +378,18 @@ def main():
                     report["harness"]["script_sha256"] == digest(harness_root / "scripts/test-remote-native.mjs") and
                     report["harness"]["website_predicates_sha256"] == digest(harness_root / "tests/remote-native/website-evidence.mjs"),
                     "QA harness source or script identity differs from the recorded workflow")
-                if args.phase == "stability":
+                if args.phase in ("stability", "restart-probe"):
                     expected = {name: digest(harness_root / name) for name in (
-                        "tests/remote-native/stability.mjs", "tests/remote-native/host/main.go", "tests/remote-native/fixture.mjs",
+                        "tests/remote-native/stability.mjs", "tests/remote-native/failure-metadata.mjs", "tests/remote-native/host/main.go", "tests/remote-native/fixture.mjs",
                         "tests/remote-native/controller.mjs", "tests/remote-native/target.html")}
                     require(report["harness"].get("stability_sources") == expected, "Stability QA sources differ")
+                if args.phase == "stability":
                     verify_stability_report(report, destination)
                     receipt["stability"] = {"actual_connections": 30, "actual_active_seconds": report["stability"]["active_window"]["actual_active_seconds"],
                                             "network_restore_30s": "not_verified", "account_token_refresh": "not_verified"}
+                if args.phase == "restart-probe":
+                    verify_restart_probe(report)
+                    receipt["restart_probe"] = report["restart_probe"]
             receipt["worker_unchanged_after"] = digest(worker_path) == worker_hash
         receipt["package_unchanged_after"] = digest(package) == receipt["package"]["sha256"]
         receipt["sources_after"] = {"client": source_state(args.client), "server": source_state(args.server)}

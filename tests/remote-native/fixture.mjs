@@ -13,6 +13,7 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const files = new Map([
   ['/__native-e2e/controller.html', ['controller.html', 'text/html']],
   ['/__native-e2e/controller.mjs', ['controller.mjs', 'text/javascript']],
+  ['/__native-e2e/failure-metadata.mjs', ['failure-metadata.mjs', 'text/javascript']],
   ['/__native-e2e/target.html', ['target.html', 'text/html']],
 ]);
 let app;

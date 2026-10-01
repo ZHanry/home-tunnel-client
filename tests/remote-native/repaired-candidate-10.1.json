@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "repository": "ZHanry/home-tunnel-client",
+  "version": "10.1.0",
+  "revision": "41c0e21fbb3a4c634fbc9d63fcd7453337e4d029",
+  "server_revision": "194ae805f3569dc16d94b7fda71367e5d68fdff5",
+  "run_id": "36795202532",
+  "run_attempt": 1,
+  "artifact_id": "11135066756",
+  "artifact_sha256": "dbf59ff6d73e6e3ce0082a313087f41e26382d8b70324acb8b3a6be1e1c08b62"
+}

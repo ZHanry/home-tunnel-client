@@ -41,10 +41,16 @@ type workerProcess struct {
 	pid         uint32
 	done        chan struct{}
 	err         error
+	exited      bool
 }
 
 func (p *workerProcess) ProcessID() int { return int(p.pid) }
 func (p *workerProcess) Wait() error    { <-p.done; return p.err }
+func (p *workerProcess) Exited() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exited
+}
 func (p *workerProcess) Kill() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -54,9 +60,13 @@ func (p *workerProcess) Kill() error {
 	return windows.TerminateProcess(p.handle, 1)
 }
 func (p *workerProcess) reap() {
-	_, waitErr := windows.WaitForSingleObject(p.handle, windows.INFINITE)
+	status, waitErr := windows.WaitForSingleObject(p.handle, windows.INFINITE)
 	p.mu.Lock()
+	p.exited = waitErr == nil && status == windows.WAIT_OBJECT_0
 	var code uint32
+	if waitErr == nil && !p.exited {
+		waitErr = errors.New("native worker exit was not confirmed")
+	}
 	if waitErr == nil {
 		waitErr = windows.GetExitCodeProcess(p.handle, &code)
 	}

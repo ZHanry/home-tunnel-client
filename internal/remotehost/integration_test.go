@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -106,7 +108,7 @@ func TestRealControlCenterInterop(t *testing.T) {
 			}
 		}
 	}
-	engine := &fakeEngine{available: true, events: make(chan EngineEvent, 8)}
+	engine := &stoppedHostEngine{fakeEngine: &fakeEngine{available: true, events: make(chan EngineEvent, 8)}, wait: make(chan struct{}), waitStarted: make(chan struct{}, 4)}
 	service, e := New(Config{Origin: meta.Origin, Store: testStore(t), Engine: engine, AllowInsecureLoopback: true, AccountToken: func(context.Context) (string, error) { return meta.AccountToken, nil }, InitialTrust: func(context.Context, string, Keyset) error { return nil }})
 	if e != nil {
 		t.Fatal(e)
@@ -341,6 +343,97 @@ assistApproval:
 	rpc("state", nil, &state)
 	if state.State != "closed" || state.Slots != 0 {
 		t.Fatal("cross-account session was not released after native close")
+	}
+	// A failed IPC channel alone must retain the real server's leased slots.
+	// Once the owned process confirms exit, the host sends its ordinary signed
+	// acknowledgment without controller cleanup or waiting for lease expiry.
+	openPairedSession := func(wantStarts int) {
+		t.Helper()
+		rpc("pair", map[string]any{"host_id": service.State(ctx).EndpointID}, &pair)
+		approval = waitApproval("pairing")
+		if e = service.ApprovePairing(ctx, pair.ID, approval.Permissions, approval.Mode, time.Now().Add(10*time.Minute)); e != nil {
+			t.Fatal(e)
+		}
+		waitApproval("pairing_display")
+		rpc("confirm", nil, &confirmed)
+		rpc("create", nil, &session)
+		waitUntil(func() bool {
+			engine.mu.Lock()
+			defer engine.mu.Unlock()
+			return len(engine.started) == wantStarts
+		})
+	}
+	openPairedSession(4)
+	// The crashed generation cannot deliver its acknowledgment. It must
+	// survive both Service replacement and reopening the protected store.
+	var blockedAcks atomic.Int64
+	baseTransport := service.http.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	service.http.Transport = fixtureTransport(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/close-ack") {
+			blockedAcks.Add(1)
+			response := fixtureResponse(map[string]any{"error_code": "RD_TEMPORARY_FAILURE"})
+			response.StatusCode = http.StatusServiceUnavailable
+			return response, nil
+		}
+		return baseTransport.RoundTrip(request)
+	})
+	engine.failed.Store(true)
+	close(engine.events)
+	select {
+	case <-engine.waitStarted:
+	case <-ctx.Done():
+		t.Fatal("host did not wait for verified process exit")
+	}
+	rpc("state", nil, &state)
+	if (state.State == "closed" || state.State == "failed" || state.State == "expired") || state.Slots != 2 || service.State(ctx).ActiveSessionID == "" {
+		t.Fatalf("IPC failure released slots before confirmed native process exit: state=%s slots=%d active=%q", state.State, state.Slots, service.State(ctx).ActiveSessionID)
+	}
+	close(engine.wait)
+	select {
+	case <-runResult:
+	case <-ctx.Done():
+		t.Fatal("crashed host did not finish verified shutdown")
+	}
+	rpc("state", nil, &state)
+	if state.State == "closed" || state.Slots != 2 || service.State(ctx).ActiveSessionID != "" || len(service.config.Store.closeAcks()) != 1 || blockedAcks.Load() != 1 {
+		t.Fatalf("failed close-ack did not retain exact stopped debt: state=%s slots=%d acks=%d", state.State, state.Slots, blockedAcks.Load())
+	}
+	stopRun()
+
+	// Recreate the host from the same protected identity, proving this is an
+	// immediate fresh signed pairing on the original endpoint, not reenrollment.
+	previousID := service.State(ctx).EndpointID
+	nextConfig := service.config
+	nextConfig.Store, e = openStore(service.config.Store.backend)
+	if e != nil {
+		t.Fatal("protected stopped debt could not be reloaded", e)
+	}
+	engine = &stoppedHostEngine{fakeEngine: &fakeEngine{available: true, events: make(chan EngineEvent, 8)}, wait: make(chan struct{}), waitStarted: make(chan struct{}, 4)}
+	nextConfig.Engine = engine
+	service, e = New(nextConfig)
+	if e != nil || service.State(ctx).EndpointID != previousID {
+		t.Fatal("host restart lost identity", e)
+	}
+	runCtx, stopRun = context.WithCancel(ctx)
+	defer stopRun()
+	runResult = make(chan error, 1)
+	go func() { runResult <- service.Run(runCtx) }()
+	waitUntil(func() bool {
+		rpc("state", nil, &state)
+		return state.State == "closed" && state.Slots == 0 && len(service.config.Store.closeAcks()) == 0
+	})
+	openPairedSession(1)
+	if e = service.Stop(ctx, "RD_CANCELLED"); e != nil {
+		t.Fatal(e)
+	}
+	engine.events <- EngineEvent{SessionRef: session.SessionRef, Kind: "closed"}
+	waitUntil(func() bool { return service.State(ctx).ActiveSessionID == "" })
+	rpc("state", nil, &state)
+	if state.State != "closed" || state.Slots != 0 {
+		t.Fatal("restarted host's fresh session did not close cleanly")
 	}
 	stopRun()
 	select {

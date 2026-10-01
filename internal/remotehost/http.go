@@ -77,9 +77,6 @@ type Service struct {
 	// republished is set once this process has re-sent capabilities, so an
 	// upgraded host advertises new transports without being toggled off and on.
 	republished atomic.Bool
-	// owedAcks holds close acknowledgements that failed on the network; the
-	// server keeps the session slot until one arrives, so they are resent.
-	owedAcks map[string]map[string]any
 }
 
 func New(config Config) (*Service, error) {
@@ -133,7 +130,7 @@ func New(config Config) (*Service, error) {
 			}
 		}
 	}
-	return &Service{config: config, origin: origin, http: &client, key: key, disabled: !saved.Enabled, pending: map[string]Session{}, autoApproving: map[string]int64{}, autoAttempted: map[string]int64{}, assistInvites: assists, assistRevoked: map[string]bool{}, autoPairing: map[string]bool{}, autoPairAttempted: map[string]bool{}, owedAcks: map[string]map[string]any{}, approvals: make(chan ApprovalEvent, 8)}, nil
+	return &Service{config: config, origin: origin, http: &client, key: key, disabled: !saved.Enabled, pending: map[string]Session{}, autoApproving: map[string]int64{}, autoAttempted: map[string]int64{}, assistInvites: assists, assistRevoked: map[string]bool{}, autoPairing: map[string]bool{}, autoPairAttempted: map[string]bool{}, approvals: make(chan ApprovalEvent, 8)}, nil
 }
 func (s *Service) Approvals() <-chan ApprovalEvent { return s.approvals }
 
@@ -425,21 +422,33 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 	generation := s.generation
 	s.mu.Unlock()
 	if !enabled {
-		session, present, engineError := s.stopLocal(ctx, "RD_HOST_DISABLED")
+		session, running, engineError := s.stopLocal(ctx, "RD_HOST_DISABLED")
 		if e := s.config.Store.update(func(d *diskState) error {
 			d.Enabled = false
 			revokePersistentGrants(d)
 			clear(d.AssistInvites)
 			return nil
 		}); e != nil {
-			return errors.Join(engineError, e)
+			// Preserve verified stop evidence in the shared Store even when
+			// the durable disable failed. Do not wait on HTTP on this path.
+			var stoppedError error
+			if engineError != nil {
+				_, stoppedError = s.confirmEngineStopped(ctx, running, false)
+			}
+			return errors.Join(engineError, e, stoppedError)
 		}
-		// Native shutdown and the durable disable both precede any HTTP wait.
-		if present {
-			_ = s.request(ctx, "POST", "/sessions/"+url.PathEscape(session.SessionID)+"/close", map[string]any{}, "dpop", nil)
+		// Native shutdown, the durable disable and any verified-stop debt all
+		// precede HTTP waits, including when the server cannot be reached.
+		var stoppedError error
+		var confirmed bool
+		if engineError != nil {
+			confirmed, stoppedError = s.confirmEngineStopped(ctx, running, true)
+		}
+		if running != nil && !confirmed && !s.stopAlreadySettled(running) {
+			_ = s.requestSessionClose(ctx, session, running)
 		}
 		if engineError != nil {
-			return engineError
+			return errors.Join(engineError, stoppedError)
 		}
 	}
 	// Serialize capability revisions, but never hold this lock while stopping capture.

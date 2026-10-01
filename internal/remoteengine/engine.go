@@ -75,6 +75,7 @@ type Engine struct {
 	next          uint64
 	pending       map[uint64]chan response
 	err           error
+	stopConfirmed bool
 	once          sync.Once
 	eventMu       sync.Mutex
 	eventQueue    []*queuedEvent
@@ -97,6 +98,7 @@ type commandProcess struct{ *exec.Cmd }
 
 func (p commandProcess) ProcessID() int { return p.Process.Pid }
 func (p commandProcess) Kill() error    { return p.Process.Kill() }
+func (p commandProcess) Exited() bool   { return p.ProcessState != nil }
 
 // New accepts installation metadata from the verified local release manifest.
 func New(parent context.Context, options Options) (*Engine, error) {
@@ -230,7 +232,16 @@ func (e *Engine) read() {
 		// releasing input. The fail deadline still bounds a malformed worker.
 		_, _ = io.Copy(io.Discard, e.output)
 		_ = e.output.Close()
-		_ = e.process.Wait()
+		waitErr := e.process.Wait()
+		confirmed := waitErr == nil
+		// Nonzero exit status is still proof of death, but arbitrary wait errors
+		// are not. Custom process owners may expose the same OS-backed evidence.
+		if state, ok := e.process.(interface{ Exited() bool }); ok {
+			confirmed = state.Exited()
+		}
+		e.mu.Lock()
+		e.stopConfirmed = confirmed
+		e.mu.Unlock()
 	}()
 	for {
 		var size uint32
@@ -584,6 +595,34 @@ func (e *Engine) RespondProof(ctx context.Context, ref remotehost.SessionRef, re
 }
 func (e *Engine) Events() <-chan remotehost.EngineEvent { return e.events }
 func (e *Engine) Done() <-chan struct{}                 { return e.stopped }
+
+// WaitStopped distinguishes failed IPC from a reaped process. Healthy workers
+// return immediately: native session closure does not end their process.
+func (e *Engine) WaitStopped(ctx context.Context) error {
+	select {
+	case <-e.done:
+	default:
+		return remotehost.ErrUnavailable
+	}
+	// Once reaped, proof remains available even if an unrelated shutdown
+	// operation has already exhausted the caller's deadline.
+	select {
+	case <-e.stopped:
+	default:
+		select {
+		case <-e.stopped:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	e.mu.Lock()
+	confirmed := e.stopConfirmed
+	e.mu.Unlock()
+	if confirmed {
+		return nil
+	}
+	return remotehost.ErrUnavailable
+}
 
 // ProcessID identifies this instance's worker for local lifecycle diagnostics.
 // It is never exposed to a browser or accepted as a remote command target.
