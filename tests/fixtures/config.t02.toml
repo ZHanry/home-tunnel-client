@@ -6,8 +6,10 @@ package_name = "homedesk"
 
 [server]
 host = "192.168.50.10"
+relay_host = "192.168.50.10:21117"
 key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 [net]
+mode = "lan_only"
 whitelist_cidr = "192.168.50.0/24"
-pure_lan_default = true
+source_cidr = ""

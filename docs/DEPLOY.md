@@ -2,6 +2,8 @@
 
 本文对应 T-00 与 P0，目标是在飞牛 NAS 上启动上游 `hbbs`（ID 注册、信令、打洞协调）和 `hbbr`（中继兜底）。Console 将在 T-04 实现，本阶段不会启动。
 
+本文保留纯内网部署边界。显式自建公网部署使用独立的 [DEPLOY_PUBLIC.md](DEPLOY_PUBLIC.md)、`compose.public.yml` 与 `verify-public.sh`，不要放宽本页原内网校验。公网实现与真实跨网验收状态见 [T17_VALIDATION.md](T17_VALIDATION.md)。
+
 ## 1. 安全边界与版本
 
 - 镜像固定为官方 GHCR `ghcr.io/rustdesk/rustdesk-server:1.1.16`，并锁定多架构清单摘要 `sha256:8ecdab65deb7c84652a626380e31d11a8f1fbafd97916d57f95c20628f943c00`，不使用 `latest`。

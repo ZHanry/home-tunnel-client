@@ -1,0 +1,20 @@
+# 仅供隔离命名空间的验收构建；仍须使用测试机，不能计作原交付包实机通过。
+# 私网地址及全零公钥为合成占位值，不对应任何真实部署；默认不访问公网。
+[brand]
+app_name = "HomeDeskAcceptance"
+executable_name = "homedesk-acceptance"
+package_name = "homedesk-acceptance"
+
+[server]
+host = "192.168.50.10"
+relay_host = "192.168.50.10:21117"
+key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[net]
+mode = "lan_only"
+whitelist_cidr = "192.168.50.0/24"
+source_cidr = ""
+
+[console]
+enabled = false
+trusted_path = false

@@ -2317,14 +2317,30 @@ pub(super) mod async_tasks {
     use std::{
         collections::HashMap,
         sync::{
+            atomic::{AtomicBool, AtomicU8, Ordering},
             mpsc::{sync_channel, SyncSender},
             Arc, Mutex,
         },
+        time::{Duration, Instant},
     };
 
-    type TxQueryOnlines = SyncSender<Vec<String>>;
+    // HOMEDESK: 网络配置保存复用既有 Flutter 异步线程，避免 UI 阻塞或创建嵌套 runtime。
+    type NetworkValues = (String, String, String, String, String, String);
+    struct SaveNetworkRequest {
+        values: NetworkValues,
+        deadline: Instant,
+        abandoned: Arc<AtomicBool>,
+        state: Arc<AtomicU8>,
+        response: SyncSender<Result<(String, HashMap<String, String>), String>>,
+    }
+    enum FlutterAsyncTask {
+        QueryOnlines(Vec<String>),
+        // HOMEDESK: 请求携带截止时间和放弃标记，过期排队任务绝不迟到落盘。
+        SaveNetworkProfile(SaveNetworkRequest),
+    }
+    type TxFlutterAsyncTask = SyncSender<FlutterAsyncTask>;
     lazy_static::lazy_static! {
-        static ref TX_QUERY_ONLINES: Arc<Mutex<Option<TxQueryOnlines>>> = Default::default();
+        static ref TX_FLUTTER_ASYNC_TASK: Arc<Mutex<Option<TxFlutterAsyncTask>>> = Default::default();
     }
 
     #[inline]
@@ -2334,19 +2350,50 @@ pub(super) mod async_tasks {
 
     #[allow(dead_code)]
     pub fn stop_flutter_async_runner() {
-        let _ = TX_QUERY_ONLINES.lock().unwrap().take();
+        let _ = TX_FLUTTER_ASYNC_TASK.lock().unwrap().take();
     }
 
     #[tokio::main(flavor = "current_thread")]
     async fn start_flutter_async_runner_() {
         // Only one task is allowed to run at the same time.
-        let (tx_onlines, rx_onlines) = sync_channel::<Vec<String>>(1);
-        TX_QUERY_ONLINES.lock().unwrap().replace(tx_onlines);
+        let (tx, rx) = sync_channel::<FlutterAsyncTask>(1);
+        TX_FLUTTER_ASYNC_TASK.lock().unwrap().replace(tx);
 
         loop {
-            match rx_onlines.recv() {
-                Ok(ids) => {
+            match rx.recv() {
+                Ok(FlutterAsyncTask::QueryOnlines(ids)) => {
                     crate::client::peer_online::query_online_states(ids, handle_query_onlines).await
+                }
+                // HOMEDESK: 执行前再次检查截止时间；IPC 发出后的未知结果通过只读同步收敛。
+                Ok(FlutterAsyncTask::SaveNetworkProfile(request)) => {
+                    if !crate::homedesk_async::save_request_may_execute(
+                        request.abandoned.load(Ordering::SeqCst),
+                        Instant::now(),
+                        request.deadline,
+                    ) {
+                        let _ = request.response.send(Err("保存任务排队超时，未发送到后台；旧配置保持不变".to_owned()));
+                        continue;
+                    }
+                    if !crate::homedesk_async::claim_queued_save(&request.state) {
+                        let _ = request.response.send(Err("保存任务已被调用方放弃，未发送到后台；旧配置保持不变".to_owned()));
+                        continue;
+                    }
+                    let remaining = request.deadline.saturating_duration_since(Instant::now());
+                    let result = match tokio::time::timeout(
+                        remaining,
+                        crate::ipc::set_homedesk_network_profile_async(request.values),
+                    ).await {
+                        Ok(Ok(value)) => {
+                            crate::homedesk_config::mark_profile_confirmed();
+                            Ok(value)
+                        }
+                        Ok(Err(crate::ipc::HomeDeskNetworkSaveError::NotSent(error))) => Err(error),
+                        Ok(Err(crate::ipc::HomeDeskNetworkSaveError::AckUnknown(error))) => {
+                            resync_network_profile_after_unknown(error).await
+                        }
+                        Err(_) => resync_network_profile_after_unknown("后台确认超时".to_owned()).await,
+                    };
+                    let _ = request.response.send(result);
                 }
                 _ => {
                     // unreachable!
@@ -2357,13 +2404,61 @@ pub(super) mod async_tasks {
     }
 
     pub fn query_onlines(ids: Vec<String>) -> ResultType<()> {
-        if let Some(tx) = TX_QUERY_ONLINES.lock().unwrap().as_ref() {
+        if let Some(tx) = TX_FLUTTER_ASYNC_TASK.lock().unwrap().as_ref() {
             // Ignore if the channel is full.
-            let _ = tx.try_send(ids)?;
+            let _ = tx.try_send(FlutterAsyncTask::QueryOnlines(ids))?;
         } else {
             bail!("No tx_query_onlines");
         }
         Ok(())
+    }
+
+    // HOMEDESK: FRB 普通返回值在 Dart 侧是 Future；这里只等待既有异步线程回执，不运行 Tokio。
+    pub fn save_network_profile(values: NetworkValues) -> Result<(String, HashMap<String, String>), String> {
+        let (response, receiver) = sync_channel(1);
+        let Some(tx) = TX_FLUTTER_ASYNC_TASK.lock().unwrap().as_ref().cloned() else {
+            return Err("HomeDesk 异步任务服务尚未就绪".to_owned());
+        };
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(AtomicU8::new(0));
+        let request = SaveNetworkRequest {
+            values,
+            deadline: Instant::now() + Duration::from_secs(4),
+            abandoned: abandoned.clone(),
+            state: state.clone(),
+            response,
+        };
+        crate::homedesk_async::try_enqueue(&tx, FlutterAsyncTask::SaveNetworkProfile(request)).map_err(|error| match error {
+            crate::homedesk_async::EnqueueError::Busy => "HomeDesk 异步任务队列正忙，请稍后重试；配置尚未发送".to_owned(),
+            crate::homedesk_async::EnqueueError::Stopped => "HomeDesk 异步任务服务已停止".to_owned(),
+        })?;
+        match receiver.recv_timeout(Duration::from_secs(8)) {
+            Ok(result) => result,
+            Err(_) => {
+                abandoned.store(true, Ordering::SeqCst);
+                if crate::homedesk_async::abandon_queued_save(&state) {
+                    Err("保存任务排队超时，未发送到后台；旧配置保持不变".to_owned())
+                } else {
+                    crate::homedesk_config::mark_profile_unconfirmed();
+                    Err("保存结果未知且尚未重新同步后台状态；已暂停新连接，请重启客户端后核对当前模式".to_owned())
+                }
+            }
+        }
+    }
+
+    // HOMEDESK: ACK未知时只读同步后台有效组；同步失败则让UI进程连接策略进入拒绝态。
+    async fn resync_network_profile_after_unknown(reason: String) -> Result<(String, HashMap<String, String>), String> {
+        match crate::ipc::get_options_confirmed_async().await {
+            Ok(options) => {
+                crate::ui_interface::set_homedesk_options_cache(options.clone());
+                crate::homedesk_config::mark_profile_confirmed();
+                Ok((format!("保存结果未知（{reason}）；已重新同步后台有效配置，请核对当前模式后重试"), options))
+            }
+            Err(error) => {
+                crate::homedesk_config::mark_profile_unconfirmed();
+                Err(format!("保存结果未知（{reason}），且无法重新同步后台：{error}；已暂停新连接"))
+            }
+        }
     }
 
     fn handle_query_onlines(onlines: Vec<String>, offlines: Vec<String>) {

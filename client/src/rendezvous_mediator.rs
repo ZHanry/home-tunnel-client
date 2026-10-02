@@ -213,7 +213,9 @@ impl RendezvousMediator {
     }
 
     pub async fn start_udp(server: ServerPtr, host: String) -> ResultType<()> {
-        let host = check_port(&host, RENDEZVOUS_PORT);
+        let configured_host = check_port(&host, RENDEZVOUS_PORT);
+        let host = crate::homedesk_config::resolve_configured_endpoint(&configured_host, RENDEZVOUS_PORT, false)
+            .await.map_err(|error| anyhow::anyhow!(error))?.to_string();
         log::info!("start udp: {host}");
         let (mut socket, mut addr) = new_udp_for(&host, CONNECT_TIMEOUT).await?;
         let mut rz = Self {
@@ -410,7 +412,7 @@ impl RendezvousMediator {
                 let pushed_servers = cu
                     .rendezvous_servers
                     .iter()
-                    .filter(|server| crate::homedesk_config::is_private_rendezvous_server(server))
+                    .filter(|server| *server == &crate::homedesk_config::active_profile().server)
                     .cloned()
                     .collect::<Vec<_>>(); // HOMEDESK: 公网服务器不写入持久配置。
                 Config::set_option("rendezvous-servers".to_owned(), pushed_servers.join(","));
@@ -426,7 +428,9 @@ impl RendezvousMediator {
     }
 
     pub async fn start_tcp(server: ServerPtr, host: String) -> ResultType<()> {
-        let host = check_port(&host, RENDEZVOUS_PORT);
+        let configured_host = check_port(&host, RENDEZVOUS_PORT);
+        let host = crate::homedesk_config::resolve_configured_endpoint(&configured_host, RENDEZVOUS_PORT, false)
+            .await.map_err(|error| anyhow::anyhow!(error))?.to_string();
         log::info!("start tcp: {}", hbb_common::websocket::check_ws(&host));
         let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
         let key = crate::get_key(true).await;
@@ -499,6 +503,9 @@ impl RendezvousMediator {
 
     async fn handle_request_relay(&self, rr: RequestRelay, server: ServerPtr) -> ResultType<()> {
         let addr = AddrMangle::decode(&rr.socket_addr);
+        // HOMEDESK: 入站中继同样只能使用当前原子组声明的 relay。
+        let relay_server = crate::homedesk_config::normalize_relay_candidate(&rr.relay_server)
+            .await.map_err(|error| anyhow::anyhow!(error))?;
         let last = *LAST_RELAY_MSG.lock().await;
         *LAST_RELAY_MSG.lock().await = (addr, Instant::now());
         // skip duplicate relay request messages
@@ -512,7 +519,7 @@ impl RendezvousMediator {
 
         self.create_relay(
             rr.socket_addr.into(),
-            rr.relay_server,
+            relay_server,
             rr.uuid,
             server,
             rr.secure,
@@ -535,6 +542,21 @@ impl RendezvousMediator {
         meta: ConnectionMeta,
     ) -> ResultType<()> {
         let peer_addr = AddrMangle::decode(&socket_addr);
+        // HOMEDESK: 在 TCP/relay 建连前拒绝特殊、IPv6 与未获准私网候选。
+        if !crate::homedesk_net::peer_endpoint_allowed(
+            peer_addr,
+            crate::homedesk_config::active_mode(),
+            true,
+            &crate::homedesk_config::active_profile().family_cidr,
+        ) {
+            bail!("网络策略拒绝入站对端地址");
+        }
+        if !crate::homedesk_config::source_allowed(peer_addr) {
+            bail!("网络策略拒绝来源限制外的对端地址");
+        }
+        if !crate::homedesk_config::relay_allowed(&relay_server) {
+            bail!("网络策略拒绝未配置的中继服务器");
+        }
         log::info!(
             "create_relay requested from {:?}, relay_server: {}, uuid: {}, secure: {}",
             peer_addr,
@@ -574,6 +596,10 @@ impl RendezvousMediator {
 
     async fn handle_intranet(&self, fla: FetchLocalAddr, server: ServerPtr) -> ResultType<()> {
         let addr = AddrMangle::decode(&fla.socket_addr);
+        if !crate::homedesk_net::peer_endpoint_allowed(addr, crate::homedesk_config::active_mode(), true, &crate::homedesk_config::active_profile().family_cidr) {
+            bail!("网络策略拒绝局域网候选地址");
+        }
+        if !crate::homedesk_config::source_allowed(addr) { bail!("网络策略拒绝来源限制外的对端地址"); }
         let last = *LAST_MSG.lock().await;
         *LAST_MSG.lock().await = (addr, Instant::now());
         // skip duplicate punch hole messages
@@ -654,6 +680,10 @@ impl RendezvousMediator {
 
     async fn handle_punch_hole(&self, ph: PunchHole, server: ServerPtr) -> ResultType<()> {
         let mut peer_addr = AddrMangle::decode(&ph.socket_addr);
+        if !crate::homedesk_net::peer_endpoint_allowed(peer_addr, crate::homedesk_config::active_mode(), true, &crate::homedesk_config::active_profile().family_cidr) {
+            bail!("网络策略拒绝打洞候选地址");
+        }
+        if !crate::homedesk_config::source_allowed(peer_addr) { bail!("网络策略拒绝来源限制外的对端地址"); }
         let last = *LAST_MSG.lock().await;
         *LAST_MSG.lock().await = (peer_addr, Instant::now());
         // skip duplicate punch hole messages
@@ -832,14 +862,9 @@ impl RendezvousMediator {
         if relay_server.is_empty() {
             relay_server = provided_by_rendezvous_server;
         }
-        // HOMEDESK: hbbs 返回异常地址时，不得建立公网 relay 连接。
-        if crate::homedesk_config::public_services_disabled()
-            && !crate::homedesk_config::is_private_rendezvous_server(&relay_server)
-        {
+        // HOMEDESK: hbbs 返回值不能扩充当前原子组声明的 relay 范围。
+        if !crate::homedesk_config::relay_allowed(&relay_server) {
             relay_server.clear();
-        }
-        if relay_server.is_empty() {
-            relay_server = crate::increase_port(&self.host, 1);
         }
         relay_server
     }
@@ -862,7 +887,8 @@ async fn direct_server(server: ServerPtr) {
         let disabled = !option2bool(
             OPTION_DIRECT_SERVER,
             &Config::get_option(OPTION_DIRECT_SERVER),
-        ) || option2bool("stop-service", &Config::get_option("stop-service"));
+        ) || option2bool("stop-service", &Config::get_option("stop-service"))
+            || crate::homedesk_config::requires_secure_session(); // HOMEDESK: 公网模式关闭无法证明加密的手输 IP 入站监听。
         if !disabled && listener.is_none() {
             port = get_direct_port();
             match hbb_common::tcp::listen_any(port as _).await {

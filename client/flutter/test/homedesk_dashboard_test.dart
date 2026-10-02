@@ -43,12 +43,47 @@ class PreviewConsole extends HomeDeskConsoleApi {
   Future<void> wake(String id) async {}
 }
 
+class _ServiceProbe extends StatefulWidget {
+  final VoidCallback onInitialized;
+  final VoidCallback onDisposed;
+  const _ServiceProbe({required this.onInitialized, required this.onDisposed});
+
+  @override
+  State<_ServiceProbe> createState() => _ServiceProbeState();
+}
+
+class _ServiceProbeState extends State<_ServiceProbe> {
+  final _controller = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.onInitialized();
+  }
+
+  @override
+  void dispose() {
+    widget.onDisposed();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Center(
+      child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: TextField(
+              controller: _controller,
+              decoration: const InputDecoration(labelText: '测试服务会话'))));
+}
+
 Widget host(
     {required PreviewConsole? api,
     required GlobalKey<HomeDeskDashboardState> dashboard,
     GlobalKey? paintKey,
     bool dark = false,
     double scale = 1,
+    WidgetBuilder? servicesBuilder,
     ValueChanged<String>? onConnect}) {
   return MaterialApp(
     theme: ThemeData(
@@ -66,11 +101,14 @@ Widget host(
             brandName: 'HomeDesk',
             devicesBuilder: (_) => HomeDeskDevices(
                 api: api,
-                readOption: (_) => '',
+                readOption: (key) => key == 'homedesk-console-allowed'
+                    ? 'Y'
+                    : '', // HOMEDESK: 注入设备 API 的布局测试显式授权管理台。
                 onConnect: (_, id) => onConnect?.call(id),
                 onManualConnect: () =>
                     dashboard.currentState?.showManualConnection()),
             recentBuilder: (_) => const Center(child: Text('最近连接内容')),
+            servicesBuilder: servicesBuilder,
             localBuilder: (_) => const Center(child: Text('测试凭据：默认不可见')),
             statusBuilder: (_) => const Padding(
                 padding: EdgeInsets.all(14),
@@ -99,6 +137,7 @@ void main() {
         host(api: api, dashboard: key, onConnect: (id) => connected = id));
     await tester.pump();
     expect(find.text('测试凭据：默认不可见'), findsNothing);
+    expect(find.byTooltip('家庭服务'), findsNothing);
     expect(find.text('书房电脑'), findsOneWidget);
     await tester.tap(find.text('手动连接'));
     await tester.pumpAndSettle();
@@ -147,6 +186,69 @@ void main() {
     await tester.pump();
     expect(find.text('书房电脑'), findsOneWidget);
     expect(find.text('客厅电脑'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('服务页按需初始化，导航切换保留会话和设备筛选', (tester) async {
+    tester.view.physicalSize = const Size(960, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final key = GlobalKey<HomeDeskDashboardState>();
+    var initialized = 0;
+    var disposed = 0;
+    await tester.pumpWidget(host(
+        api: PreviewConsole(),
+        dashboard: key,
+        servicesBuilder: (_) => _ServiceProbe(
+            onInitialized: () => initialized++, onDisposed: () => disposed++)));
+    await tester.pump();
+    expect(initialized, 0);
+    final deviceState = tester.state(find.byType(HomeDeskDevices));
+    await tester.tap(find.widgetWithText(ChoiceChip, '书房'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('家庭服务'));
+    await tester.pumpAndSettle();
+    expect(initialized, 1);
+    expect(find.text('查看设备上的服务，打开你的访问地址'), findsOneWidget);
+    expect(find.text('手动连接'), findsNothing);
+    expect(find.text('家庭连接服务未就绪，请检查网络设置'), findsNothing);
+    await tester.enterText(find.byType(TextField), '测试会话保留');
+    await tester.tap(find.byTooltip('家庭设备'));
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(HomeDeskDevices)), same(deviceState));
+    expect(find.text('书房电脑'), findsOneWidget);
+    expect(find.text('客厅电脑'), findsNothing);
+    await tester.tap(find.byTooltip('最近连接'));
+    await tester.pumpAndSettle();
+    expect(find.text('最近连接内容'), findsOneWidget);
+    expect(find.text('手动连接'), findsOneWidget);
+    await tester.tap(find.byTooltip('家庭服务'));
+    await tester.pumpAndSettle();
+    expect(find.text('测试会话保留'), findsOneWidget);
+    expect(initialized, 1);
+    expect(disposed, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    expect(disposed, 1);
+  });
+
+  testWidgets('服务页窄窗口双倍字体不溢出', (tester) async {
+    tester.view.physicalSize = const Size(560, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(host(
+        api: PreviewConsole(empty: true),
+        dashboard: GlobalKey<HomeDeskDashboardState>(),
+        scale: 2,
+        servicesBuilder: (_) => const Center(child: Text('合成家庭服务'))));
+    await tester.pump();
+    await tester.tap(find.byTooltip('家庭服务'));
+    await tester.pumpAndSettle();
+    expect(find.text('合成家庭服务'), findsOneWidget);
+    expect(find.text('手动连接'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });

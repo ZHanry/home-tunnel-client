@@ -23,11 +23,13 @@ package_name = "homedesk"
 
 [server]
 host = "192.168.50.10"
+relay_host = "192.168.50.10:21117"
 key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 [net]
+mode = "lan_only"
 whitelist_cidr = "192.168.50.0/24"
-pure_lan_default = true
+source_cidr = ""
 """
 
     def test_example_brand_values(self) -> None:
@@ -84,13 +86,14 @@ pure_lan_default = true
             config = load_config(path)
             self.assertEqual("192.168.50.10", config.server.host)
             self.assertEqual("192.168.50.0/24", config.net.whitelist_cidr)
-            self.assertTrue(config.net.pure_lan_default)
+            self.assertEqual("lan_only", config.net.mode)
+            self.assertEqual("192.168.50.10:21117", config.server.relay_host)
 
     def test_public_server_and_overbroad_whitelist_are_rejected(self) -> None:
         cases = (
             self._valid_build_config().replace("192.168.50.10", "8.8.8.8"),
             self._valid_build_config().replace("192.168.50.0/24", "192.168.0.0/8"),
-            self._valid_build_config().replace("pure_lan_default = true", "pure_lan_default = false"),
+            self._valid_build_config().replace('mode = "lan_only"', "pure_lan_default = false"),
         )
         for content in cases:
             with self.subTest(content=content):
@@ -99,6 +102,39 @@ pure_lan_default = true
                     path.write_text(content, encoding="utf-8")
                     with self.assertRaises(ValueError):
                         load_config(path)
+
+    def test_self_hosted_requires_explicit_mode_and_accepts_domain(self) -> None:
+        content = self._valid_build_config().replace('mode = "lan_only"', 'mode = "self_hosted"').replace("192.168.50.10", "remote.example.com")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(content, encoding="utf-8")
+            config = load_config(path)
+            self.assertEqual("self_hosted", config.net.mode)
+            self.assertEqual("remote.example.com:21117", config.server.relay_host)
+
+    def test_self_hosted_rejects_numeric_domain_bypasses_and_bad_sources(self) -> None:
+        base = self._valid_build_config().replace('mode = "lan_only"', 'mode = "self_hosted"')
+        cases = [
+            base.replace("192.168.50.10", value)
+            for value in ("127.1", "127.0.1", "100.64.0.1", "999.999.999.999", "01.2.3.4")
+        ] + [base.replace('source_cidr = ""', f'source_cidr = "{value}"') for value in ("garbage", "0.0.0.0/0", "127.0.0.0/8")]
+        for content in cases:
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "config.toml"
+                path.write_text(content, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    load_config(path)
+
+    def test_legacy_true_migrates_but_conflict_is_rejected(self) -> None:
+        legacy = self._valid_build_config().replace('mode = "lan_only"', "pure_lan_default = true")
+        conflict = self._valid_build_config().replace('mode = "lan_only"', 'mode = "lan_only"\npure_lan_default = true')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(legacy, encoding="utf-8")
+            self.assertEqual("lan_only", load_config(path).net.mode)
+            path.write_text(conflict, encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_config(path)
 
     def test_placeholder_example_cannot_produce_client_artifact(self) -> None:
         with self.assertRaises(ValueError):

@@ -3776,14 +3776,36 @@ pub fn try_remove_temp_update_files() {
 
 #[inline]
 pub fn try_kill_broker() {
-    allow_err!(std::process::Command::new("cmd")
-        .arg("/c")
-        .arg(&format!(
-            "taskkill /F /IM {}",
-            WIN_TOPMOST_INJECTED_PROCESS_EXE
-        ))
-        .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
-        .spawn());
+    // HOMEDESK: 只枚举名称/PID，持有句柄再核对映像路径，不读取命令行或环境变量。
+    use winapi::um::{processthreadsapi::{OpenProcess, TerminateProcess},
+        winbase::QueryFullProcessImageNameW, winnt::{PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE}};
+    use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+    let Ok(exe) = std::env::current_exe() else { return; };
+    let Ok(target) = crate::homedesk_process::broker_target(&exe, WIN_TOPMOST_INJECTED_PROCESS_EXE) else { return; };
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return; };
+        let mut entry = PROCESSENTRY32W::default();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut available = Process32FirstW(snapshot, &mut entry).is_ok();
+        while available {
+            let name_len = entry.szExeFile.iter().position(|value| *value == 0).unwrap_or(entry.szExeFile.len());
+            let name = String::from_utf16_lossy(&entry.szExeFile[..name_len]);
+            if name.eq_ignore_ascii_case(WIN_TOPMOST_INJECTED_PROCESS_EXE) {
+                let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, 0, entry.th32ProcessID);
+                if !handle.is_null() {
+                    let mut path = vec![0u16; 32_768];
+                    let mut length = path.len() as u32;
+                    if QueryFullProcessImageNameW(handle, 0, path.as_mut_ptr(), &mut length) != 0 {
+                        let actual = std::path::PathBuf::from(std::ffi::OsString::from_wide(&path[..length as usize]));
+                        if crate::homedesk_process::is_owned_broker(&target, &actual) { TerminateProcess(handle, 0); }
+                    }
+                    CloseHandle(handle);
+                }
+            }
+            available = Process32NextW(snapshot, &mut entry).is_ok();
+        }
+        let _ = WinCloseHandle(snapshot);
+    }
 }
 
 pub fn message_box(text: &str) {

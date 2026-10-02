@@ -4,6 +4,17 @@ use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
+pub struct Reporter {
+    pub sender: mpsc::Sender<Value>,
+    cancel: tokio::sync::watch::Sender<bool>,
+}
+
+impl Drop for Reporter {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(true);
+    }
+}
+
 pub fn retry_seconds(failures: usize) -> u64 {
     match failures {
         0 => 30,
@@ -16,7 +27,7 @@ pub fn start(
     url: String,
     token: String,
     heartbeat: Arc<dyn Fn() -> Option<Value> + Send + Sync>,
-) -> Option<mpsc::Sender<Value>> {
+) -> Option<Reporter> {
     if url.is_empty() || token.is_empty() {
         return None;
     }
@@ -33,32 +44,43 @@ pub fn start(
         }
     };
     let (tx, mut rx) = mpsc::channel::<Value>(256);
+    let (cancel, mut cancelled) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         let url = url.trim_end_matches('/');
         let mut failures = 0;
         let mut event_failures = 0;
         let mut pending = None;
         loop {
+            if *cancelled.borrow() { return; }
             // 每轮先心跳，确保首次会话事件到达前已有设备记录。
             let callback = heartbeat.clone();
-            let payload = tokio::task::spawn_blocking(move || callback())
-                .await
-                .ok()
-                .flatten();
+            let payload = tokio::select! {
+                biased;
+                _ = cancelled.changed() => return,
+                value = tokio::task::spawn_blocking(move || callback()) => value.ok().flatten(),
+            };
+            if *cancelled.borrow() { return; }
             let ok = if let Some(payload) = payload {
-                client
+                tokio::select! {
+                    biased;
+                    _ = cancelled.changed() => return,
+                    response = client
                     .post(format!("{url}/api/v1/heartbeat"))
                     .bearer_auth(&token)
                     .json(&payload)
                     .send()
-                    .await
-                    .map_or(false, |r| r.status().is_success())
+                    => response.map_or(false, |r| r.status().is_success()),
+                }
             } else {
                 false
             };
             if !ok {
                 log::debug!("HomeDesk 心跳未送达，稍后重试");
-                tokio::time::sleep(Duration::from_secs(retry_seconds(failures))).await;
+                tokio::select! {
+                    biased;
+                    _ = cancelled.changed() => return,
+                    _ = tokio::time::sleep(Duration::from_secs(retry_seconds(failures))) => {}
+                }
                 failures = failures.saturating_add(1);
                 continue;
             }
@@ -67,19 +89,28 @@ pub fn start(
             loop {
                 let event = match pending.take() {
                     Some(event) => event,
-                    None => match tokio::time::timeout_at(deadline, rx.recv()).await {
-                        Ok(Some(event)) => event,
-                        Ok(None) => return,
-                        Err(_) => break,
+                    None => tokio::select! {
+                        biased;
+                        _ = cancelled.changed() => return,
+                        value = tokio::time::timeout_at(deadline, rx.recv()) => match value {
+                            Ok(Some(event)) => event,
+                            Ok(None) => return,
+                            Err(_) => break,
+                        }
                     },
                 };
-                match client
+                if *cancelled.borrow() { return; }
+                let response = tokio::select! {
+                    biased;
+                    _ = cancelled.changed() => return,
+                    response = client
                     .post(format!("{url}/api/v1/session"))
                     .bearer_auth(&token)
                     .json(&event)
                     .send()
-                    .await
-                {
+                    => response,
+                };
+                match response {
                     Ok(r) if r.status().is_success() => {
                         event_failures = 0;
                     }
@@ -94,8 +125,11 @@ pub fn start(
                     _ => {
                         pending = Some(event);
                         log::debug!("HomeDesk 会话事件未送达，稍后重试");
-                        tokio::time::sleep(Duration::from_secs(retry_seconds(event_failures)))
-                            .await;
+                        tokio::select! {
+                            biased;
+                            _ = cancelled.changed() => return,
+                            _ = tokio::time::sleep(Duration::from_secs(retry_seconds(event_failures))) => {}
+                        }
                         event_failures = event_failures.saturating_add(1);
                         break;
                     }
@@ -106,7 +140,7 @@ pub fn start(
             }
         }
     });
-    Some(tx)
+    Some(Reporter { sender: tx, cancel })
 }
 
 #[cfg(test)]

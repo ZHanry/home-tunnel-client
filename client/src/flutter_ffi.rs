@@ -961,6 +961,41 @@ pub fn main_get_option_sync(key: String) -> SyncReturn<String> {
     SyncReturn(get_option(key))
 }
 
+// HOMEDESK: 高级设置通过单一 Rust 入口校验并原子保存完整模式组，失败时保留旧配置。
+pub fn main_save_homedesk_network_profile(
+    mode: String,
+    server: String,
+    relay: String,
+    key: String,
+    family_cidr: String,
+    source_cidr: String,
+) -> String {
+    let Some(mode) = crate::homedesk_net::NetworkMode::parse(&mode) else {
+        return "网络模式无效".to_owned();
+    };
+    if !sessions::get_sessions().is_empty() {
+        return "请先断开全部主控会话，再保存网络配置".to_owned();
+    }
+    let _portal_update = crate::homedesk_config::begin_portal_profile_update(); // HOMEDESK: 配置保存的完整 IPC 生命周期暂停服务门户。
+    let values = (mode.as_str().to_owned(), server, relay, key, family_cidr, source_cidr);
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    return match flutter::async_tasks::save_network_profile(values) {
+        Ok((error, options)) => {
+            if error.is_empty() { crate::ui_interface::set_homedesk_options_cache(options); }
+            error
+        }
+        Err(error) => error,
+    };
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let profile = crate::homedesk_config::NetworkProfile {
+            mode, server: values.1, relay: values.2, key: values.3,
+            family_cidr: values.4, source_cidr: values.5,
+        };
+        crate::homedesk_config::save_network_profile(profile).err().unwrap_or_default()
+    }
+}
+
 pub fn main_get_error() -> String {
     get_error()
 }

@@ -1,7 +1,10 @@
 mod keyboard;
 mod homedesk_brand; // HOMEDESK: Isolate the compiled application-name default from upstream code.
+mod homedesk_async; // HOMEDESK: 异步配置任务的可测试截止时间策略。
 mod homedesk_config; // HOMEDESK: 隔离家庭内网服务器、公钥与白名单默认值。
 mod homedesk_net; // HOMEDESK: 独立、可测试的 RFC1918 网络边界。
+#[cfg(windows)]
+mod homedesk_process; // HOMEDESK: 辅助进程按本应用真实目录限定，避免全机同名误伤。
 mod homedesk_report; // HOMEDESK: 有界异步上报传输。
 mod homedesk_console; // HOMEDESK: 设备心跳和成功认证会话生命周期。
 /// cbindgen:ignore

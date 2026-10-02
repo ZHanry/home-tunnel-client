@@ -83,6 +83,11 @@ lazy_static::lazy_static! {
     static ref WAKELOCK_KEEP_AWAKE_OPTION: Arc::<Mutex<Option<bool>>> = Default::default();
 }
 
+// HOMEDESK: 模式切换必须等待所有连接（含尚未认证的握手）退出。
+pub fn has_alive_connections() -> bool {
+    !ALIVE_CONNS.lock().unwrap().is_empty()
+}
+
 #[cfg(feature = "flutter")]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 lazy_static::lazy_static! {
@@ -1368,7 +1373,7 @@ impl Connection {
                 .is_none()
         {
             // HOMEDESK: 明确告知拒绝原因，便于区分白名单与密码错误。
-            self.send_login_error("Only the configured home network can access this device")
+            self.send_login_error("网络策略拒绝来源限制外的连接")
                 .await;
             self.post_alarm_audit(
                 AlarmAuditType::IpWhitelist, //"ip whitelist",

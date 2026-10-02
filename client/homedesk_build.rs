@@ -11,13 +11,16 @@ struct BrandConfig {
 #[derive(Debug, PartialEq)]
 struct BuildConfig {
     brand: BrandConfig,
+    net_mode: String,
     server_host: String,
+    relay_host: String,
     server_key: String,
     whitelist_cidr: String,
-    pure_lan_default: bool,
+    source_cidr: String,
     console_enabled: bool,
     console_url: String,
     console_token: String,
+    console_trusted_path: bool,
 }
 
 pub fn configure() {
@@ -57,19 +60,25 @@ fn configure_inner() -> Result<(), String> {
         config.brand.package_name
     );
     println!(
+        "cargo:rustc-env=HOMEDESK_NET_MODE={}",
+        config.net_mode
+    );
+    println!(
         "cargo:rustc-env=HOMEDESK_SERVER_HOST={}",
         config.server_host
     );
+    println!("cargo:rustc-env=HOMEDESK_RELAY_HOST={}", config.relay_host);
     println!("cargo:rustc-env=HOMEDESK_SERVER_KEY={}", config.server_key);
     println!(
         "cargo:rustc-env=HOMEDESK_WHITELIST_CIDR={}",
         config.whitelist_cidr
     );
     println!(
-        "cargo:rustc-env=HOMEDESK_PURE_LAN_DEFAULT={}",
-        config.pure_lan_default
+        "cargo:rustc-env=HOMEDESK_SOURCE_CIDR={}",
+        config.source_cidr
     );
     println!("cargo:rustc-env=HOMEDESK_CONSOLE_ENABLED={}", config.console_enabled);
+    println!("cargo:rustc-env=HOMEDESK_CONSOLE_TRUSTED_PATH={}", config.console_trusted_path);
     println!("cargo:rustc-env=HOMEDESK_CONSOLE_URL={}", config.console_url);
     println!("cargo:rustc-env=HOMEDESK_CONSOLE_TOKEN={}", config.console_token);
     Ok(())
@@ -113,7 +122,7 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
         };
         let key = key.trim();
         let full_key = format!("{section}.{key}");
-        let value = if matches!(full_key.as_str(), "net.pure_lan_default" | "console.enabled") {
+        let value = if matches!(full_key.as_str(), "net.pure_lan_default" | "console.enabled" | "console.trusted_path") {
             match raw_value.trim() {
                 "true" | "false" => raw_value.trim().to_owned(),
                 _ => return Err(format!("第 {} 行必须为布尔值", index + 1)),
@@ -128,10 +137,14 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
                 | "brand.executable_name"
                 | "brand.package_name"
                 | "server.host"
+                | "server.relay_host"
                 | "server.key"
+                | "net.mode"
                 | "net.whitelist_cidr"
+                | "net.source_cidr"
                 | "net.pure_lan_default"
                 | "console.enabled"
+                | "console.trusted_path"
                 | "console.url"
                 | "console.token"
         ) {
@@ -142,19 +155,40 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
         }
     }
 
+    let legacy_pure_lan = values.get("net.pure_lan_default").map(String::as_str);
+    let net_mode = match values.get("net.mode").map(String::as_str) {
+        Some("lan_only" | "self_hosted") => values["net.mode"].clone(),
+        Some(_) => return Err("net.mode 仅允许 lan_only 或 self_hosted".to_owned()),
+        None if legacy_pure_lan == Some("false") => return Err("旧 net.pure_lan_default=false 不能开启公网，请显式设置 net.mode 和完整服务器配置".to_owned()),
+        None => "lan_only".to_owned(),
+    };
+    if values.contains_key("net.mode") && legacy_pure_lan.is_some() {
+        return Err("net.mode 与旧 net.pure_lan_default 不能同时配置".to_owned());
+    }
+    let server_host = required(&values, "server.host")?;
+    let relay_host = values.get("server.relay_host").cloned().unwrap_or_else(|| {
+        let host = server_host.rsplit_once(':').map_or(server_host.as_str(), |(host, _)| host);
+        format!("{host}:21117")
+    });
+    let console_enabled = values.get("console.enabled").map_or(false, |v| v == "true");
+    let console_trusted_path = values.get("console.trusted_path").map_or(false, |v| v == "true");
+    let console_effective = console_enabled && (net_mode == "lan_only" || console_trusted_path);
     let config = BuildConfig {
         brand: BrandConfig {
             app_name: required(&values, "brand.app_name")?,
             executable_name: required(&values, "brand.executable_name")?,
             package_name: required(&values, "brand.package_name")?,
         },
-        server_host: required(&values, "server.host")?,
+        net_mode,
+        server_host,
+        relay_host,
         server_key: required(&values, "server.key")?,
         whitelist_cidr: required(&values, "net.whitelist_cidr")?,
-        pure_lan_default: required(&values, "net.pure_lan_default")? == "true",
-        console_enabled: values.get("console.enabled").map_or(false, |v| v == "true"),
-        console_url: if values.get("console.enabled").map_or(false, |v| v == "true") { required(&values, "console.url")? } else { String::new() },
-        console_token: if values.get("console.enabled").map_or(false, |v| v == "true") { required(&values, "console.token")? } else { String::new() },
+        source_cidr: values.get("net.source_cidr").cloned().unwrap_or_default(),
+        console_enabled: console_effective,
+        console_url: if console_effective { required(&values, "console.url")? } else { String::new() },
+        console_token: if console_effective { required(&values, "console.token")? } else { String::new() },
+        console_trusted_path,
     };
     validate_brand(&config.brand)?;
     validate_server_net(&config)?;
@@ -319,12 +353,12 @@ fn decode_base64(value: &str) -> Option<Vec<u8>> {
 }
 
 fn validate_server_net(config: &BuildConfig) -> Result<(), String> {
-    let host: Ipv4Addr = config
-        .server_host
-        .parse()
-        .map_err(|_| "server.host 必须是 RFC1918 内网 IPv4 地址".to_owned())?;
-    if !is_rfc1918(host) {
-        return Err("server.host 必须是 RFC1918 内网 IPv4 地址".to_owned());
+    let mode = config.net_mode.as_str();
+    if !valid_endpoint(&config.server_host, mode == "self_hosted") {
+        return Err(if mode == "lan_only" { "lan_only 的 server.host 必须是 RFC1918 IPv4 地址（可带端口）" } else { "self_hosted 的 server.host 必须是有效公网/私网 IPv4 或域名（可带端口）" }.to_owned());
+    }
+    if !valid_endpoint(&config.relay_host, mode == "self_hosted") {
+        return Err("server.relay_host 不符合当前网络模式或端口无效".to_owned());
     }
 
     if decode_base64(&config.server_key).map_or(true, |key| key.len() != 32) {
@@ -354,10 +388,29 @@ fn validate_server_net(config: &BuildConfig) -> Result<(), String> {
     if private_block(network).is_none() || private_block(network) != private_block(broadcast) {
         return Err("net.whitelist_cidr 必须完全位于同一个 RFC1918 内网范围".to_owned());
     }
-    if !config.pure_lan_default {
-        return Err("T-02 阶段要求 net.pure_lan_default = true".to_owned());
+    if !config.source_cidr.is_empty() {
+        let (address, prefix) = config.source_cidr.split_once('/').ok_or("net.source_cidr 必须是 IPv4 CIDR")?;
+        let address: Ipv4Addr = address.parse().map_err(|_| "net.source_cidr 必须是 IPv4 CIDR")?;
+        let prefix: u32 = prefix.parse().map_err(|_| "net.source_cidr 前缀无效")?;
+        if prefix == 0 || prefix > 32 || address.is_unspecified() || address.is_loopback() || address.is_link_local() || address.is_multicast() {
+            return Err("net.source_cidr 地址范围无效或过宽".to_owned());
+        }
     }
     Ok(())
+}
+
+fn valid_endpoint(value: &str, allow_domain_or_public: bool) -> bool {
+    let (host, port) = value.rsplit_once(':').map_or((value, None), |(host, port)| (host, Some(port)));
+    if port.map_or(false, |port| port.parse::<u16>().map_or(true, |port| port == 0)) { return false; }
+    if let Ok(ip) = host.parse::<Ipv4Addr>() {
+        let [a, b, _, _] = ip.octets();
+        return !ip.is_unspecified() && !ip.is_loopback() && !ip.is_link_local() && !ip.is_multicast()
+            && ip != Ipv4Addr::BROADCAST && a < 240 && !(a == 100 && (64..=127).contains(&b)) && (allow_domain_or_public || is_rfc1918(ip));
+    }
+    allow_domain_or_public && host.contains('.')
+        && !host.bytes().all(|c| c.is_ascii_digit() || c == b'.')
+        && !host.rsplit('.').next().map_or(true, |label| label.bytes().all(|c| c.is_ascii_digit()))
+        && host.split('.').all(|label| !label.is_empty() && !label.starts_with('-') && !label.ends_with('-') && label.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'))
 }
 
 #[cfg(test)]
@@ -372,11 +425,12 @@ mod tests {
 
         [server]
         host = "192.168.50.10"
+        relay_host = "192.168.50.10:21117"
         key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
         [net]
+        mode = "lan_only"
         whitelist_cidr = "192.168.50.0/24"
-        pure_lan_default = true
     "#;
 
     #[test]
@@ -384,7 +438,8 @@ mod tests {
         let config = parse_config(VALID_CONFIG).unwrap();
         assert_eq!("192.168.50.10", config.server_host);
         assert_eq!("192.168.50.0/24", config.whitelist_cidr);
-        assert!(config.pure_lan_default);
+        assert_eq!("lan_only", config.net_mode);
+        assert_eq!("192.168.50.10:21117", config.relay_host);
     }
 
     #[test]
@@ -400,9 +455,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_public_network_default() {
-        let content = VALID_CONFIG.replace("pure_lan_default = true", "pure_lan_default = false");
-        assert!(parse_config(&content).is_err());
+    fn accepts_explicit_self_hosted_and_rejects_legacy_false() {
+        let content = VALID_CONFIG
+            .replace("mode = \"lan_only\"", "mode = \"self_hosted\"")
+            .replace("192.168.50.10", "remote.example.com");
+        assert!(parse_config(&content).is_ok());
+        let legacy = VALID_CONFIG.replace("mode = \"lan_only\"", "pure_lan_default = false");
+        assert!(parse_config(&legacy).is_err());
+    }
+
+    #[test]
+    fn self_hosted_rejects_numeric_domain_bypasses_and_bad_sources() {
+        let base = VALID_CONFIG.replace("mode = \"lan_only\"", "mode = \"self_hosted\"");
+        for value in ["127.1", "127.0.1", "100.64.0.1", "999.999.999.999", "01.2.3.4", "240.0.0.1"] {
+            assert!(parse_config(&base.replace("192.168.50.10", value)).is_err(), "{value}");
+        }
+        for value in ["garbage", "0.0.0.0/0", "127.0.0.0/8"] {
+            assert!(parse_config(&base.replace("whitelist_cidr = \"192.168.50.0/24\"", &format!("whitelist_cidr = \"192.168.50.0/24\"\nsource_cidr = \"{value}\""))).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn migrates_legacy_true_and_rejects_mode_conflict() {
+        let legacy = VALID_CONFIG.replace("mode = \"lan_only\"", "pure_lan_default = true");
+        assert_eq!("lan_only", parse_config(&legacy).unwrap().net_mode);
+        let conflict = VALID_CONFIG.replace("mode = \"lan_only\"", "mode = \"lan_only\"\npure_lan_default = true");
+        assert!(parse_config(&conflict).is_err());
     }
 
     #[test]
@@ -442,5 +520,17 @@ mod tests {
         assert!(parse_config(&valid).is_ok());
         assert!(parse_config(&valid.replace("http://192.168.50.10:8080","http://example.com:8080")).is_err());
         assert!(parse_config(&valid.replace("test-only-token-00000000000000000000","short")).is_err());
+    }
+
+    #[test]
+    fn self_hosted_console_token_requires_explicit_trusted_path() {
+        let public = VALID_CONFIG.replace("mode = \"lan_only\"", "mode = \"self_hosted\"");
+        let configured = format!("{public}\n[console]\nenabled = true\nurl = \"http://192.168.50.10:8080\"\ntoken = \"test-only-token-00000000000000000000\"\n");
+        let disabled = parse_config(&configured).unwrap();
+        assert!(!disabled.console_enabled);
+        assert!(disabled.console_token.is_empty());
+        let trusted = parse_config(&configured.replace("enabled = true", "enabled = true\ntrusted_path = true")).unwrap();
+        assert!(trusted.console_enabled);
+        assert!(!trusted.console_token.is_empty());
     }
 }

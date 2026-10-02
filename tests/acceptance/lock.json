@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "server_version": "10.1.0",
+  "api_contract": "1.5.0",
+  "server_revision": "194ae805f3569dc16d94b7fda71367e5d68fdff5",
+  "client_revision": "41c0e21fbb3a4c634fbc9d63fcd7453337e4d029",
+  "release": "https://github.com/ZHanry/home-tunnel-server/releases/tag/v10.1.0",
+  "assets": [
+    {
+      "name": "home-tunnel-server-10.1.0.tar.gz",
+      "component": "server",
+      "url": "https://github.com/ZHanry/home-tunnel-server/releases/download/v10.1.0/home-tunnel-server-10.1.0.tar.gz",
+      "sha256": "dea0300d37f275bc8b97a7069aad48df04c5ef424e9bbc484ffbd2b3d7ff2694"
+    },
+    {
+      "name": "home-tunnel-linux-10.1.0-amd64.tar.gz",
+      "component": "client",
+      "url": "https://github.com/ZHanry/home-tunnel-client/releases/download/v10.1.0/home-tunnel-linux-10.1.0-amd64.tar.gz",
+      "sha256": "208aa80e574af12e51ca650792d45a8c3ae35e7e815d6f69ec04f8f6a90e0624"
+    },
+    {
+      "name": "server-release-manifest.json",
+      "component": "server",
+      "url": "https://github.com/ZHanry/home-tunnel-server/releases/download/v10.1.0/release-manifest.json",
+      "sha256": "966712fb6c1d9b20b41c0230c590edb66397ba05c2ce78c50af00881086035ec"
+    },
+    {
+      "name": "client-release-manifest.json",
+      "component": "client",
+      "url": "https://github.com/ZHanry/home-tunnel-client/releases/download/v10.1.0/release-manifest.json",
+      "sha256": "221260ab9729f987f242880d136866c183861651231e67d99cd04364459fae69"
+    },
+    {
+      "name": "compose.release.yaml",
+      "component": "server",
+      "url": "https://github.com/ZHanry/home-tunnel-server/releases/download/v10.1.0/compose.release.yaml",
+      "sha256": "6e7b3a9894c59e7cfc2d2dbbc3e0cc41f55c58c33865af7d6b3e75af38c9bba3"
+    },
+    {
+      "name": "frps-dependency.json",
+      "component": "server",
+      "url": "https://github.com/ZHanry/home-tunnel-server/releases/download/v10.1.0/frps-dependency.json",
+      "sha256": "8b2d5efec6f92a3b0f3ed32656ec560c7f69949194ac4abb54a17520e625c6ae"
+    }
+  ],
+  "images": {
+    "control-center": "ghcr.io/zhanry/home-tunnel-control-center@sha256:d286c574f229060f3169b7c68fef5094a22c082c5373a23ca0406b2ed6872afd",
+    "traffic-gateway": "ghcr.io/zhanry/home-tunnel-traffic-gateway@sha256:91793c36ec849d0c8722e7379e14520d17d7d8a3484c1142fccb4e3aa93968ff",
+    "frps": "ghcr.io/zhanry/home-tunnel-frps@sha256:b5636ba951da6e27d76caff228fb17b8511695ffbcdca3a04b0bc93d593e6716",
+    "caddy": "caddy:2.10.0-alpine@sha256:ae4458638da8e1a91aafffb231c5f8778e964bca650c8a8cb23a7e8ac557aa3c"
+  },
+  "caddy_digest_source": "https://github.com/ZHanry/home-tunnel-server/blob/194ae805f3569dc16d94b7fda71367e5d68fdff5/tests/release-smoke.compose.yaml#L132"
+}

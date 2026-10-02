@@ -224,6 +224,15 @@ pub fn is_option_fixed(key: &str) -> bool {
 
 #[inline]
 pub fn get_local_option(key: String) -> String {
+    if key == "homedesk-console-allowed" {
+        return if crate::homedesk_config::console_allowed() { "Y" } else { "N" }.to_owned(); // HOMEDESK: Flutter 每次管理台请求前读取动态模式许可。
+    }
+    if key == "homedesk-home-tunnel-allowed" {
+        return if crate::homedesk_config::home_tunnel_allowed() { "Y" } else { "N" }.to_owned(); // HOMEDESK: 独立服务门户实时读取后台已确认的网络许可。
+    }
+    if key == "homedesk-home-tunnel-permission" {
+        return crate::homedesk_config::home_tunnel_permission(); // HOMEDESK: 许可代次阻止快速撤权/恢复后复用旧门户凭据。
+    }
     crate::get_local_option(&key)
 }
 
@@ -245,6 +254,13 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn set_local_option(key: String, value: String) {
+    if key == "homedesk-home-tunnel-origin" {
+        // HOMEDESK: 本机批准的服务 origin 只保存合法 HTTPS 地址，变更即撤销旧门户许可。
+        let Some(origin) = crate::homedesk_config::normalize_portal_origin(&value) else { return; };
+        if LocalConfig::get_option(&key) != origin { crate::homedesk_config::invalidate_portal_permission(); }
+        LocalConfig::set_option(key, origin);
+        return;
+    }
     LocalConfig::set_option(key.clone(), value);
 }
 
@@ -352,6 +368,16 @@ pub fn get_options() -> String {
     serde_json::to_string(&m).unwrap_or_default()
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_homedesk_options_cache(options: HashMap<String, String>) {
+    if Config::get_options() != options {
+        crate::homedesk_config::mark_profile_unconfirmed(); // HOMEDESK: UI 进程收到新配置时同步撤销旧门户许可。
+    }
+    *OPTIONS.lock().unwrap() = options.clone();
+    Config::set_options(options); // HOMEDESK: UI 进程的连接前 guard 与后台服务使用同一已确认原子组。
+    crate::homedesk_config::mark_profile_confirmed();
+}
+
 #[inline]
 pub fn test_if_valid_server(host: String, test_with_proxy: bool) -> String {
     hbb_common::socket_client::test_if_valid_server(&host, test_with_proxy)
@@ -423,10 +449,17 @@ pub fn set_options(mut m: HashMap<String, String>) {
 
 #[inline]
 pub fn set_option(key: String, value: String) {
-    // HOMEDESK: 高级模式也只能保存 RFC1918 ID 服务器，拒绝恢复公网回退。
+    if crate::homedesk_config::public_services_disabled()
+        && (matches!(key.as_str(), "homedesk-net-mode" | "relay-server" | "key")
+            || key.starts_with("homedesk-profile-"))
+    {
+        log::warn!("HomeDesk 拒绝通过通用单项入口修改原子网络组");
+        return;
+    }
+    // HOMEDESK: 通用单项入口不能绕过原子配置组。
     if key == config::keys::OPTION_CUSTOM_RENDEZVOUS_SERVER
         && crate::homedesk_config::public_services_disabled()
-        && !crate::homedesk_config::is_private_rendezvous_server(&value)
+        && value != crate::homedesk_config::active_profile().server
     {
         log::warn!("HomeDesk 拒绝保存空白或非内网 ID 服务器");
         return;
@@ -523,6 +556,10 @@ pub fn get_socks() -> Vec<String> {
 
 #[inline]
 pub fn set_socks(proxy: String, username: String, password: String) {
+    if crate::homedesk_config::public_services_disabled() {
+        log::warn!("HomeDesk 禁止配置网络代理");
+        return;
+    }
     let socks = config::Socks5Server {
         proxy,
         username,
@@ -1519,8 +1556,8 @@ pub async fn change_id_shared_(id: String, old_id: String) -> &'static str {
     let rendezvous_servers = crate::ipc::get_rendezvous_servers(1_000)
         .await
         .into_iter()
-        .filter(|server| crate::homedesk_config::is_private_rendezvous_server(server))
-        .collect::<Vec<_>>(); // HOMEDESK: 改 ID 流程也只能访问家庭内网服务器。
+        .filter(|server| *server == crate::homedesk_config::active_profile().server)
+        .collect::<Vec<_>>(); // HOMEDESK: 改 ID 流程也只能访问当前原子组服务器。
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let rendezvous_servers = crate::homedesk_config::rendezvous_servers(); // HOMEDESK: 移动端保持同一内网边界。
 

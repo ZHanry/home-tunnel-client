@@ -30,13 +30,15 @@ class BrandConfig:
 @dataclass(frozen=True)
 class ServerConfig:
     host: str
+    relay_host: str
     key: str
 
 
 @dataclass(frozen=True)
 class NetConfig:
+    mode: str
     whitelist_cidr: str
-    pure_lan_default: bool
+    source_cidr: str
 
 
 @dataclass(frozen=True)
@@ -156,12 +158,28 @@ _PRIVATE_NETWORKS = tuple(
 def _validate_server_net(
     server: ServerConfig, net: NetConfig, source: Path
 ) -> tuple[ServerConfig, NetConfig]:
-    try:
-        host = ipaddress.ip_address(server.host)
-    except ValueError as error:
-        raise ValueError(f"{source} server.host 必须是 RFC1918 内网 IPv4 地址") from error
-    if not isinstance(host, ipaddress.IPv4Address) or not any(host in item for item in _PRIVATE_NETWORKS):
-        raise ValueError(f"{source} server.host 必须是 RFC1918 内网 IPv4 地址")
+    if net.mode not in ("lan_only", "self_hosted"):
+        raise ValueError(f"{source} net.mode 仅允许 lan_only 或 self_hosted")
+    for key, endpoint in (("server.host", server.host), ("server.relay_host", server.relay_host)):
+        host, separator, port = endpoint.rpartition(":")
+        if not separator:
+            host, port = endpoint, ""
+        if port and (not port.isdecimal() or not 1 <= int(port) <= 65535):
+            raise ValueError(f"{source} {key} 端口无效")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            valid = net.mode == "self_hosted" and "." in host and not all(c.isdigit() or c == "." for c in host) and not host.rsplit(".", 1)[-1].isdigit() and all(
+                label and len(label) <= 63 and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+                for label in host.split(".")
+            )
+        else:
+            valid = isinstance(address, ipaddress.IPv4Address) and not (
+                address.is_unspecified or address.is_loopback or address.is_link_local or address.is_multicast or int(address) >> 28 == 0xF
+                or address in ipaddress.ip_network("100.64.0.0/10")
+            ) and (net.mode == "self_hosted" or any(address in item for item in _PRIVATE_NETWORKS))
+        if not valid:
+            raise ValueError(f"{source} {key} 不符合 {net.mode} 网络边界")
 
     try:
         decoded_key = base64.b64decode(server.key, validate=True)
@@ -178,8 +196,13 @@ def _validate_server_net(
         whitelist.subnet_of(item) for item in _PRIVATE_NETWORKS
     ):
         raise ValueError(f"{source} net.whitelist_cidr 必须完全位于 RFC1918 内网范围")
-    if not net.pure_lan_default:
-        raise ValueError(f"{source} T-02 阶段要求 net.pure_lan_default = true")
+    if net.source_cidr:
+        try:
+            source_net = ipaddress.ip_network(net.source_cidr, strict=False)
+        except ValueError as error:
+            raise ValueError(f"{source} net.source_cidr 必须是有效 IPv4 CIDR") from error
+        if not isinstance(source_net, ipaddress.IPv4Network) or source_net.prefixlen == 0 or source_net.is_loopback or source_net.is_link_local or source_net.is_multicast or source_net.is_unspecified:
+            raise ValueError(f"{source} net.source_cidr 不能允许全部来源")
     return server, net
 
 
@@ -199,21 +222,36 @@ def load_config(path: Path | None = None, repo_root: Path | None = None) -> Buil
     brand = _load_brand_from_values(values["brand"], source)
     server = ServerConfig(
         host=_required_string(values["server"], "server", "host", source),
+        relay_host=str(values["server"].get("relay_host") or ""),
         key=_required_string(values["server"], "server", "key", source),
     )
-    pure_lan_default = values["net"].get("pure_lan_default")
-    if not isinstance(pure_lan_default, bool):
-        raise ValueError(f"{source} 缺少布尔配置 net.pure_lan_default")
+    mode = values["net"].get("mode")
+    legacy = values["net"].get("pure_lan_default")
+    if mode is not None and legacy is not None:
+        raise ValueError(f"{source} net.mode 与旧 net.pure_lan_default 不能同时配置")
+    if mode is None:
+        if legacy is False:
+            raise ValueError(f"{source} 旧 net.pure_lan_default=false 不能隐式开启公网")
+        mode = "lan_only"
+    if not isinstance(mode, str):
+        raise ValueError(f"{source} net.mode 必须是字符串")
+    if not server.relay_host:
+        host = server.host.rsplit(":", 1)[0] if ":" in server.host and server.host.rsplit(":", 1)[-1].isdigit() else server.host
+        server = ServerConfig(host=server.host, relay_host=f"{host}:21117", key=server.key)
     net = NetConfig(
+        mode=mode,
         whitelist_cidr=_required_string(values["net"], "net", "whitelist_cidr", source),
-        pure_lan_default=pure_lan_default,
+        source_cidr=str(values["net"].get("source_cidr") or ""),
     )
     _validate_server_net(server, net, source)
     console = _read_sections(source, {"console"})["console"]
     enabled = console.get("enabled", False)
+    trusted_path = console.get("trusted_path", False)
     if not isinstance(enabled, bool):
         raise ValueError("console.enabled 必须为布尔值")
-    if enabled:
+    if not isinstance(trusted_path, bool):
+        raise ValueError("console.trusted_path 必须为布尔值")
+    if enabled and (net.mode == "lan_only" or trusted_path):
         url = urlsplit(_required_string(console, "console", "url", source))
         try:
             address = ipaddress.ip_address(url.hostname or "")
@@ -295,9 +333,11 @@ def main() -> int:
                     "executable_name": config.executable_name,
                     "package_name": config.package_name,
                     "server_host": build_config.server.host,
+                    "relay_host": build_config.server.relay_host,
                     "server_key_configured": True,
                     "whitelist_cidr": build_config.net.whitelist_cidr,
-                    "pure_lan_default": build_config.net.pure_lan_default,
+                    "net_mode": build_config.net.mode,
+                    "source_cidr": build_config.net.source_cidr,
                     "source": str(config.source),
                 },
                 ensure_ascii=False,

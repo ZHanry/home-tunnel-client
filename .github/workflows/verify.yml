@@ -21,7 +21,13 @@ jobs:
           /tmp/homedesk-build-tests
           rustc --test client/src/homedesk_net.rs -o /tmp/homedesk-net-tests
           /tmp/homedesk-net-tests
-          bash -n server/verify.sh build/ci/prepare-offline.sh build/ci/install-offline.sh
+          rustc --edition=2021 --test client/src/homedesk_process.rs -o /tmp/homedesk-process-tests
+          /tmp/homedesk-process-tests
+          rustc --edition=2021 --test client/libs/portable/src/homedesk_cache.rs -o /tmp/homedesk-cache-tests
+          /tmp/homedesk-cache-tests
+          rustc --test client/src/homedesk_async.rs -o /tmp/homedesk-async-tests
+          /tmp/homedesk-async-tests
+          bash -n server/verify.sh server/verify-public.sh server/public-ops.sh tests/server-public/test-verify-public.sh tests/server-public/run-loopback-smoke.sh build/ci/prepare-offline.sh build/ci/install-offline.sh
           git diff --check
       - name: 固定版本密钥扫描
         run: |
@@ -35,6 +41,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends musl-tools
           bash build/ci/build-console.sh
           python3 server/console/tests/container-smoke.py
+      - name: 公网部署配置与锁定镜像隔离验证
+        run: |
+          docker pull ghcr.io/rustdesk/rustdesk-server:1.1.16@sha256:8ecdab65deb7c84652a626380e31d11a8f1fbafd97916d57f95c20628f943c00
+          bash tests/server-public/test-verify-public.sh
+          bash tests/server-public/run-loopback-smoke.sh
   flutter:
     runs-on: ubuntu-22.04
     steps:
@@ -63,9 +74,11 @@ jobs:
           flutter pub get --enforce-lockfile
           cd ..
           flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart --c-output ./flutter/macos/Runner/bridge_generated.h --llvm-path /usr/lib/llvm-14/lib/libclang.so.1
-      - name: 家庭设备中心与内网请求测试
+      - name: 家庭设备中心、服务门户与请求边界测试
         run: |
           dart --enable-asserts tests/dart/console_api_test.dart
+          dart --enable-asserts tests/dart/tunnel_api_test.dart
+          dart --enable-asserts tests/dart/tunnel_tls_test.dart
           cd client/flutter
-          flutter analyze --no-pub lib/homedesk_console_api.dart lib/homedesk_devices.dart lib/homedesk_dashboard.dart
-          flutter test --no-pub test/homedesk_devices_test.dart test/homedesk_dashboard_test.dart
+          flutter analyze --no-pub --no-fatal-infos lib/homedesk_console_api.dart lib/homedesk_tunnel_api.dart lib/homedesk_tunnel_session.dart lib/homedesk_credentials.dart lib/homedesk_services.dart lib/homedesk_service_editor.dart lib/homedesk_devices.dart lib/homedesk_dashboard.dart lib/homedesk_advanced.dart lib/desktop/pages/desktop_home_page.dart lib/desktop/pages/desktop_setting_page.dart
+          flutter test --no-pub test/homedesk_devices_test.dart test/homedesk_dashboard_test.dart test/homedesk_advanced_test.dart test/homedesk_services_test.dart

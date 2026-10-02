@@ -13,7 +13,6 @@ import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
 import 'package:flutter_hbb/homedesk_advanced.dart'; // HOMEDESK: 控制家庭内网高级设置的显示与解锁。
-import 'package:flutter_hbb/mobile/widgets/dialog.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/printer_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
@@ -482,9 +481,8 @@ class _GeneralState extends State<_General> {
     final incomingOnly = bind.isIncomingOnly();
     final outgoingOnly = bind.isOutgoingOnly();
     final showAutoUpdate = isWindows && bind.mainIsInstalled();
+    // HOMEDESK: 旧布尔开关不再展示；模式只通过网络卡片的完整原子组切换。
     final children = <Widget>[
-      // HOMEDESK: 使用已有配置 IPC 保存开关；关闭后仍保留自建服务器安全基线。
-      _OptionCheckBox(context, '纯内网模式', 'homedesk-pure-lan', isServer: true),
       if (!isWeb && !incomingOnly)
         _OptionCheckBox(context, 'Confirm before closing multiple tabs',
             kOptionEnableConfirmClosingTabs,
@@ -1720,10 +1718,17 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
               if (!hideServer)
                 listTile(
                   icon: Icons.dns_outlined,
-                  title: 'ID/Relay Server',
-                  // HOMEDESK: 高级模式仅展示可修改的家庭内网 ID 服务器。
-                  onTap: () => showServerSettings(gFFI.dialogManager, setState,
-                      homeDeskOnly: true),
+                  title: 'HomeDesk 网络模式',
+                  // HOMEDESK: 只允许通过原子组入口切换模式、服务器、公钥与来源边界。
+                  trailing: Text(
+                      bind.mainGetOptionSync(key: 'homedesk-net-mode') ==
+                              'self_hosted'
+                          ? '自建公网'
+                          : '纯内网'),
+                  onTap: () async {
+                    await showHomeDeskNetworkSettings(context);
+                    if (mounted) setState(() {});
+                  },
                 ),
               if (!hideProxy && !hideServer) divider,
               if (!hideProxy)

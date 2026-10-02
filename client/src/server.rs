@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex, RwLock, Weak},
     time::Duration,
 };
 
@@ -107,6 +107,19 @@ lazy_static::lazy_static! {
     pub static ref CLIENT_SERVER: ServerPtr = new();
 }
 
+// HOMEDESK: 覆盖原生密钥交换开始到连接退出，避免切换模式时遗漏尚未进入 ALIVE_CONNS 的握手。
+static HOMEDESK_CONNECTION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+struct HomeDeskConnectionAttempt;
+impl HomeDeskConnectionAttempt {
+    fn new() -> Self { HOMEDESK_CONNECTION_ATTEMPTS.fetch_add(1, Ordering::SeqCst); Self }
+}
+impl Drop for HomeDeskConnectionAttempt {
+    fn drop(&mut self) { HOMEDESK_CONNECTION_ATTEMPTS.fetch_sub(1, Ordering::SeqCst); }
+}
+pub fn has_homedesk_connection_attempts() -> bool {
+    HOMEDESK_CONNECTION_ATTEMPTS.load(Ordering::SeqCst) > 0
+}
+
 pub struct Server {
     connections: ConnMap,
     services: HashMap<String, Box<dyn Service>>,
@@ -201,6 +214,7 @@ pub async fn create_tcp_connection(
     secure: bool,
     meta: ConnectionMeta,
 ) -> ResultType<()> {
+    let _homedesk_attempt = HomeDeskConnectionAttempt::new();
     let mut stream = stream;
     let id = server.write().unwrap().get_new_id();
     let (sk, pk) = Config::get_key_pair();
@@ -253,6 +267,11 @@ pub async fn create_tcp_connection(
                 bail!("Failed to receive public key");
             }
         }
+    }
+
+    // HOMEDESK: secure=true 只表示尝试握手；公网模式必须检查最终流确已设置会话密钥。
+    if crate::homedesk_config::requires_secure_session() && !stream.is_secured() {
+        bail!("自建公网模式拒绝未完成加密握手的入站会话");
     }
 
     #[cfg(target_os = "macos")]

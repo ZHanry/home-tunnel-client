@@ -140,7 +140,7 @@ impl TelegramBot {
     }
 
     pub fn get() -> ResultType<Option<TelegramBot>> {
-        if crate::homedesk_config::pure_lan_enabled() { return Ok(None); } // HOMEDESK: 离线 TOTP 保留，公网机器人通知关闭。
+        if crate::homedesk_config::public_services_disabled() { return Ok(None); } // HOMEDESK: 两种模式均保留离线 TOTP，并关闭外部机器人通知。
         let data = Config::get_option("bot");
         if data.is_empty() {
             return Ok(None);

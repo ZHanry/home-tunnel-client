@@ -1,13 +1,14 @@
 #![windows_subsystem = "windows"]
 
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf, // HOMEDESK: 路径边界校验已移到独立缓存模块。
     process::{Command, Stdio},
 };
 
 use bin_reader::BinaryReader;
 
 pub mod bin_reader;
+mod homedesk_cache; // HOMEDESK: 缓存作用域、所有权和链接校验放在独立模块。
 #[cfg(windows)]
 mod ui;
 
@@ -15,49 +16,10 @@ mod ui;
 const APP_METADATA: &[u8] = include_bytes!("../app_metadata.toml");
 #[cfg(not(windows))]
 const APP_METADATA: &[u8] = &[];
-const APP_METADATA_CONFIG: &str = "meta.toml";
-const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
-const APP_PREFIX: &str = "rustdesk";
+const APP_PREFIX: &str = env!("HOMEDESK_PORTABLE_NAMESPACE"); // HOMEDESK: 只使用构建期已校验的品牌缓存命名空间。
 const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
 #[cfg(windows)]
 const SET_FOREGROUND_WINDOW_ENV_KEY: &str = "SET_FOREGROUND_WINDOW";
-
-fn is_timestamp_matches(dir: &Path, ts: &mut u64) -> bool {
-    let Ok(app_metadata) = std::str::from_utf8(APP_METADATA) else {
-        return true;
-    };
-    for line in app_metadata.lines() {
-        if line.starts_with(META_LINE_PREFIX_TIMESTAMP) {
-            if let Ok(stored_ts) = line.replace(META_LINE_PREFIX_TIMESTAMP, "").parse::<u64>() {
-                *ts = stored_ts;
-                break;
-            }
-        }
-    }
-    if *ts == 0 {
-        return true;
-    }
-
-    if let Ok(content) = std::fs::read_to_string(dir.join(APP_METADATA_CONFIG)) {
-        for line in content.lines() {
-            if line.starts_with(META_LINE_PREFIX_TIMESTAMP) {
-                if let Ok(stored_ts) = line.replace(META_LINE_PREFIX_TIMESTAMP, "").parse::<u64>() {
-                    return *ts == stored_ts;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn write_meta(dir: &Path, ts: u64) {
-    let meta_file = dir.join(APP_METADATA_CONFIG);
-    if ts != 0 {
-        let content = format!("{}{}", META_LINE_PREFIX_TIMESTAMP, ts);
-        // Ignore is ok here
-        let _ = std::fs::write(meta_file, content);
-    }
-}
 
 fn setup(
     reader: BinaryReader,
@@ -66,36 +28,61 @@ fn setup(
     _args: &Vec<String>,
     _ui: &mut bool,
 ) -> Option<PathBuf> {
-    let dir = if let Some(dir) = dir {
-        dir
-    } else {
-        // home dir
-        if let Some(dir) = dirs::data_local_dir() {
-            dir.join(APP_PREFIX)
-        } else {
-            eprintln!("not found data local dir");
-            return None;
-        }
+    // HOMEDESK: 只准备本包版本目录；任何校验或删除失败都停止解包。
+    let Some(base) = dir.or_else(dirs::data_local_dir) else {
+        eprintln!("无法确定便携缓存目录，已停止启动");
+        return None;
     };
-
-    let mut ts = 0;
-    if clear || !is_timestamp_matches(&dir, &mut ts) {
+    let mut manifest = reader.exe.clone();
+    for file in &reader.files {
+        manifest.push_str(&file.path);
+        manifest.push_str(&String::from_utf8_lossy(file.md5_code));
+    }
+    let package_id = format!("{:x}", md5::compute(manifest));
+    let cache = match homedesk_cache::CacheScope::new(&base, APP_PREFIX, APP_METADATA, &package_id)
+        .and_then(|scope| scope.prepare(clear)) {
+        Ok(cache) => cache,
+        Err(error) => { eprintln!("便携缓存安全检查失败，已停止启动：{error}"); return None; }
+    };
+    if cache.changed() {
         #[cfg(windows)]
         if _args.is_empty() {
             *_ui = true;
             ui::setup();
         }
-        std::fs::remove_dir_all(&dir).ok();
     }
     for file in reader.files.iter() {
-        file.write_to_file(&dir);
+        let target = match cache.target(&file.path) { // HOMEDESK: 解包前禁止路径越界及重解析点。
+            Ok(target) => target,
+            Err(error) => { eprintln!("便携包文件路径校验失败：{error}"); return None; }
+        };
+        file.write_to_file(cache.path());
+        let verified = cache.target(&file.path).is_ok() && std::fs::read(&target)
+            .map(|bytes| format!("{:x}", md5::compute(bytes)) == String::from_utf8_lossy(file.md5_code))
+            .unwrap_or(false); // HOMEDESK: 上游写文件忽略错误，本处必须验证结果后才能启动。
+        if !verified { eprintln!("便携包文件写入或完整性校验失败，已停止启动"); return None; }
     }
-    write_meta(&dir, ts);
     #[cfg(windows)]
-    win::copy_runtime_broker(&dir);
+    { // HOMEDESK: 辅助程序目标也须校验链接边界，复制失败不接管其他进程。
+        let target = match cache.target(win::WIN_TOPMOST_INJECTED_PROCESS_EXE) {
+            Ok(target) => target,
+            Err(error) => { eprintln!("辅助程序缓存路径无效：{error}"); return None; }
+        };
+        if let Err(error) = win::copy_runtime_broker(&target) {
+            eprintln!("辅助程序复制失败，已停止启动且未终止其他进程：{error}");
+            return None;
+        }
+    }
     #[cfg(linux)]
-    reader.configure_permission(&dir);
-    Some(dir.join(&reader.exe))
+    reader.configure_permission(cache.path());
+    if let Err(error) = cache.mark_ready() { // HOMEDESK: 全部文件验证完成才落盘就绪元数据。
+        eprintln!("便携缓存就绪标记写入失败：{error}");
+        return None;
+    }
+    match cache.target(&reader.exe) { // HOMEDESK: 最终启动文件也必须位于本包版本目录。
+        Ok(exe) if exe.is_file() => Some(exe),
+        _ => { eprintln!("便携包启动程序无效，已停止启动"); None }
+    }
 }
 
 fn use_null_stdio() -> bool {
@@ -207,35 +194,31 @@ fn main() {
             args = vec!["--quick_support".to_owned()];
         }
         execute(exe, args, ui);
+    } else {
+        std::process::exit(1); // HOMEDESK: 解包或所有权校验失败不能返回成功退出码。
     }
 }
 
 #[cfg(windows)]
 mod win {
-    use std::{fs, os::windows::process::CommandExt, path::Path, process::Command};
+    use std::{fs, io, path::Path}; // HOMEDESK: 复制缓存不再启动全机 taskkill。
 
     // Used for privacy mode(magnifier impl).
     pub const RUNTIME_BROKER_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
-    pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_rustdesk.exe";
+    pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = env!("HOMEDESK_PORTABLE_BROKER_EXE"); // HOMEDESK: 与主客户端保持相同品牌辅助进程名。
 
-    pub(super) fn copy_runtime_broker(dir: &Path) {
+    pub(super) fn copy_runtime_broker(target_file: &Path) -> io::Result<()> { // HOMEDESK: 只复制已校验的当前版本目标，错误向上传递。
         let src = RUNTIME_BROKER_EXE;
-        let tgt = WIN_TOPMOST_INJECTED_PROCESS_EXE;
-        let target_file = dir.join(tgt);
         if target_file.exists() {
             if let (Ok(src_file), Ok(tgt_file)) = (fs::read(src), fs::read(&target_file)) {
                 let src_md5 = format!("{:x}", md5::compute(&src_file));
                 let tgt_md5 = format!("{:x}", md5::compute(&tgt_file));
                 if src_md5 == tgt_md5 {
-                    return;
+                    return Ok(());
                 }
             }
         }
-        let _allow_err = Command::new("taskkill")
-            .args(&["/F", "/IM", "RuntimeBroker_rustdesk.exe"])
-            .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
-            .output();
-        let _allow_err = std::fs::copy(src, &format!("{}\\{}", dir.to_string_lossy(), tgt));
+        fs::copy(src, target_file).map(|_| ()) // HOMEDESK: 在用文件复制失败时拒绝继续，不接管其他实例。
     }
 
     /// Check if the executable is a Quick Support version.

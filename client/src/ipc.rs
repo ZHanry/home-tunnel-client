@@ -335,6 +335,11 @@ pub enum Data {
     OnlineStatus(Option<(i64, bool)>),
     Config((String, Option<String>)),
     Options(Option<HashMap<String, String>>),
+    // HOMEDESK: 完整网络组必须在后台服务内校验、一次落盘并确认重启触发。
+    HomeDeskNetworkProfile {
+        request: Option<(String, String, String, String, String, String)>,
+        response: Option<(String, HashMap<String, String>)>,
+    },
     NatType(Option<i32>),
     ConfirmedKey(Option<(Vec<u8>, Vec<u8>)>),
     RawMessage(Vec<u8>),
@@ -931,15 +936,49 @@ async fn handle(data: Data, stream: &mut Connection) {
                 allow_err!(stream.send(&Data::Options(None)).await);
             }
         },
+        Data::HomeDeskNetworkProfile { request, response: _ } => {
+            let mut result = "缺少 HomeDesk 网络配置".to_owned();
+            if let Some((mode, server_host, relay, key, family_cidr, source_cidr)) = request {
+                result = if crate::server::has_alive_connections() || crate::server::has_homedesk_connection_attempts() {
+                    "请先断开全部被控会话和正在进行的握手，再保存网络配置".to_owned()
+                } else if let Some(mode) = crate::homedesk_net::NetworkMode::parse(&mode) {
+                    let profile = crate::homedesk_config::NetworkProfile {
+                        mode,
+                        server: server_host,
+                        relay,
+                        key,
+                        family_cidr,
+                        source_cidr,
+                    };
+                    match crate::homedesk_config::save_network_profile(profile) {
+                        Ok(()) => {
+                            crate::homedesk_console::refresh_policy();
+                            crate::rendezvous_mediator::RendezvousMediator::restart();
+                            String::new()
+                        }
+                        Err(error) => error,
+                    }
+                } else {
+                    "网络模式无效".to_owned()
+                };
+            }
+            allow_err!(stream.send(&Data::HomeDeskNetworkProfile {
+                request: None,
+                response: Some((result, Config::get_options())),
+            }).await);
+        }
         Data::NatType(_) => {
             let t = Config::get_nat_type();
             allow_err!(stream.send(&Data::NatType(Some(t))).await);
         }
         Data::SyncConfig(Some(configs)) => {
-            let (config, config2) = *configs;
+            let (config, mut config2) = *configs;
             let _chk = CheckIfRestart::new();
+            // HOMEDESK: 服务同步可更新设备身份等上游状态，但不能部分替换原子网络组或恢复代理。
+            crate::homedesk_config::sanitize_options(&mut config2.options);
             Config::set(config);
             Config2::set(config2);
+            Config::set_socks(None);
             allow_err!(stream.send(&Data::SyncConfig(None)).await);
         }
         Data::SyncConfig(None) => {
@@ -1715,14 +1754,15 @@ pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>) {
         let a = urls.next().unwrap_or_default().to_owned();
         let b: Vec<String> = urls.map(|x| x.to_owned()).collect();
         if crate::homedesk_config::public_services_disabled() {
+            let configured = crate::homedesk_config::active_profile().server;
             let mut private = b
                 .into_iter()
-                .filter(|server| crate::homedesk_config::is_private_rendezvous_server(server))
+                .filter(|server| server == &configured)
                 .collect::<Vec<_>>();
-            let primary = if crate::homedesk_config::is_private_rendezvous_server(&a) {
+            let primary = if a == configured {
                 a
             } else {
-                crate::homedesk_config::compiled_server().to_owned()
+                configured
             };
             private.retain(|server| server != &primary);
             (primary, private) // HOMEDESK: IPC 响应异常时也回退到构建期私有服务器。
@@ -1810,9 +1850,8 @@ pub async fn get_rendezvous_servers(ms_timeout: u64) -> Vec<String> {
     if let Ok(Some(v)) = get_config_async("rendezvous_servers", ms_timeout).await {
         let mut servers = v.split(',').map(|x| x.to_owned()).collect::<Vec<_>>();
         if crate::homedesk_config::public_services_disabled() {
-            servers.retain(|server| {
-                crate::homedesk_config::is_private_rendezvous_server(server)
-            }); // HOMEDESK: 通用 IPC 读取也不向调用方返回公共服务器。
+            let configured = crate::homedesk_config::active_profile().server;
+            servers.retain(|server| server == &configured); // HOMEDESK: 通用 IPC 只返回当前原子组服务器。
         }
         return servers;
     }
@@ -1820,6 +1859,39 @@ pub async fn get_rendezvous_servers(ms_timeout: u64) -> Vec<String> {
         return crate::homedesk_config::rendezvous_servers(); // HOMEDESK: IPC 失败时回退构建期私有服务器。
     }
     return Config::get_rendezvous_servers();
+}
+
+// HOMEDESK: 区分“未发送”和“已发送但ACK未知”，调用方据此决定是否只读重同步。
+#[derive(Debug)]
+pub enum HomeDeskNetworkSaveError {
+    NotSent(String),
+    AckUnknown(String),
+}
+
+pub async fn set_homedesk_network_profile_async(
+    values: (String, String, String, String, String, String),
+) -> Result<(String, HashMap<String, String>), HomeDeskNetworkSaveError> {
+    let mut connection = match connect(1_000, "").await {
+        Ok(connection) => connection,
+        Err(error) => return Err(HomeDeskNetworkSaveError::NotSent(format!("无法连接 HomeDesk 后台服务：{error}"))),
+    };
+    connection.send(&Data::HomeDeskNetworkProfile { request: Some(values), response: None }).await
+        .map_err(|error| HomeDeskNetworkSaveError::NotSent(format!("未能发送网络配置：{error}")))?;
+    let response = connection.next_timeout(3_000).await
+        .map_err(|error| HomeDeskNetworkSaveError::AckUnknown(format!("等待后台确认失败：{error}")))?;
+    match response {
+        Some(Data::HomeDeskNetworkProfile { request: _, response: Some(value) }) => Ok(value),
+        _ => Err(HomeDeskNetworkSaveError::AckUnknown("HomeDesk 后台服务未确认网络配置保存结果".to_owned())),
+    }
+}
+
+pub async fn get_options_confirmed_async() -> ResultType<HashMap<String, String>> {
+    let mut connection = connect(1_500, "").await?;
+    connection.send(&Data::Options(None)).await?;
+    match connection.next_timeout(2_500).await? {
+        Some(Data::Options(Some(value))) => Ok(value),
+        _ => bail!("后台未返回有效 Options 快照"),
+    }
 }
 
 #[inline]

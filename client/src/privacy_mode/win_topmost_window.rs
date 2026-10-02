@@ -30,7 +30,7 @@ use winapi::{
 pub(super) const PRIVACY_MODE_IMPL: &str = "privacy_mode_impl_mag";
 
 pub const ORIGIN_PROCESS_EXE: &'static str = "C:\\Windows\\System32\\RuntimeBroker.exe";
-pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = "RuntimeBroker_rustdesk.exe";
+pub const WIN_TOPMOST_INJECTED_PROCESS_EXE: &'static str = concat!("RuntimeBroker_", env!("HOMEDESK_EXECUTABLE_NAME"), ".exe"); // HOMEDESK: 辅助进程按构建品牌命名，避免误伤 RustDesk 或其他验收实例。
 pub const INJECTED_PROCESS_EXE: &'static str = WIN_TOPMOST_INJECTED_PROCESS_EXE;
 pub(super) const PRIVACY_WINDOW_CLASS: &'static str = "RustDeskPrivacyWindowClass";
 pub(super) const PRIVACY_WINDOW_NAME: &'static str = "RustDeskPrivacyWindow";

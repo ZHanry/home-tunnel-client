@@ -7,10 +7,15 @@ import '../../client/flutter/lib/homedesk_console_api.dart';
 class LocalTransport implements HttpClient {
   final HttpClient inner;
   final Uri local;
+  void Function()? afterOpen;
   LocalTransport(this.inner, this.local);
   @override
-  Future<HttpClientRequest> openUrl(String method, Uri url) =>
-      inner.openUrl(method, local.resolve(url.path));
+  Future<HttpClientRequest> openUrl(String method, Uri url) async {
+    final request = await inner.openUrl(method, local.resolve(url.path));
+    afterOpen?.call();
+    return request;
+  }
+
   @override
   set findProxy(String Function(Uri)? value) {
     inner.findProxy = value;
@@ -22,7 +27,8 @@ class LocalTransport implements HttpClient {
   }
 
   @override
-  void close({bool force = false}) => inner.close(force: force);
+  // 各逻辑客户端共享此测试传输；底层连接由测试结束时统一关闭。
+  void close({bool force = false}) {}
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -53,12 +59,14 @@ Future<void> main() async {
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   final local = Uri.parse('http://127.0.0.1:${server.port}');
   final inner = HttpClient();
+  LocalTransport? latestTransport;
   int requests = 0, mode = 0;
   final seen = <String>[];
+  final seenTokens = <String>[];
   final subscription = server.listen((request) async {
     requests++;
-    assert(request.headers.value(HttpHeaders.authorizationHeader) ==
-        'Bearer test-only-token');
+    seenTokens
+        .add(request.headers.value(HttpHeaders.authorizationHeader) ?? '');
     seen.add(request.uri.path);
     request.response.headers.contentType = ContentType.json;
     if (mode == 1) {
@@ -106,8 +114,60 @@ Future<void> main() async {
     }
     assert(unauthorized);
     api.close();
-  }, createHttpClient: (_) => LocalTransport(inner, local));
+    mode = 0;
+
+    // 许可撤销后，轮询/WOL 不得继续携带旧 Token 发请求。
+    var allowed = true;
+    final blocked = HomeDeskConsoleApi('http://192.168.50.10:8080', 'old-token',
+        isAllowed: () => allowed);
+    allowed = false;
+    var denied = false;
+    try {
+      await blocked.devices();
+    } on FormatException {
+      denied = true;
+    }
+    assert(denied && requests == 4);
+    final blockedWake = HomeDeskConsoleApi(
+        'http://192.168.50.10:8080', 'old-token',
+        isAllowed: () => allowed);
+    denied = false;
+    try {
+      await blockedWake.wake('123456');
+    } on FormatException {
+      denied = true;
+    }
+    assert(denied && requests == 4);
+
+    // openUrl 返回后撤销许可时，授权头和请求体都不能发送。
+    allowed = true;
+    final duringOpen = HomeDeskConsoleApi(
+        'http://192.168.50.10:8080', 'during-open-token',
+        isAllowed: () => allowed);
+    latestTransport!.afterOpen = () => allowed = false;
+    denied = false;
+    try {
+      await duringOpen.devices();
+    } on FormatException {
+      denied = true;
+    }
+    assert(denied && requests == 4);
+
+    // 恢复后必须新建客户端并使用新配置，而不是恢复旧 Token。
+    allowed = true;
+    final restored = HomeDeskConsoleApi(
+        'http://192.168.50.10:8080', 'new-token',
+        isAllowed: () => allowed);
+    await restored.devices();
+    assert(requests == 5 && seenTokens.last == 'Bearer new-token');
+    restored.close();
+  }, createHttpClient: (_) {
+    final transport = LocalTransport(inner, local);
+    latestTransport = transport;
+    return transport;
+  });
   await subscription.cancel();
   await server.close(force: true);
+  inner.close(force: true);
   print('通过：地址限制、设备 ID 过滤、Bearer、设备读取、WOL 请求、禁止重定向、401 错误。');
 }

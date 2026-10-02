@@ -167,7 +167,7 @@ async fn do_download(
     auto_del_dur: Option<Duration>,
     mut rx_cancel: UnboundedReceiver<()>,
 ) -> ResultType<bool> {
-    if !crate::homedesk_config::allows_http(&url) { hbb_common::bail!("纯内网模式不允许从家庭网段以外下载"); } // HOMEDESK: 下载前检查，禁止公网解析。
+    if !crate::homedesk_config::allows_http(&url) { hbb_common::bail!("HomeDesk 网络策略不允许从家庭网段以外下载"); } // HOMEDESK: 两种模式均在下载前检查，公网信令授权不扩展为 HTTP 权限。
     let client = create_http_client_async_with_url(&url).await;
 
     let mut is_all_downloaded = false;

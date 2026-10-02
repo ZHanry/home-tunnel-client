@@ -1,0 +1,174 @@
+# HOMEDESK: 独立验收栈；无固定容器名、外部网络或生产卷，默认仅回环端口。
+services:
+  control-center:
+    image: ${CONTROL_IMAGE:?必须使用锁定镜像}
+    labels: &acceptance-labels
+      io.homedesk.acceptance.scope: ${ACCEPTANCE_PROJECT:?缺少验收项目名}
+    init: true
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      PUBLIC_BASE_URL: https://127.0.0.1:18443
+      TUNNEL_DOMAIN: services.acceptance.test
+      PUBLIC_FRPS_HOST: "127.0.0.1"
+      PUBLIC_FRPS_PORT: "17000"
+      SQLITE_PATH: /data/home-tunnel.db
+      DOWNLOADS_DIRECTORY: /app/downloads
+      COOKIE_SECURE: "true"
+      INTERNAL_SERVICE_KEY_FILE: /run/secrets/internal_service_key
+      FRPS_PLUGIN_KEY_FILE: /run/secrets/frps_plugin_key
+      LEASE_SIGNING_KEY_FILE: /run/secrets/lease_signing_key
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
+      FRPS_TLS_CERT_FILE: /run/secrets/frps_tls_cert
+      BOOTSTRAP_ADMIN_USERNAME: acceptance-admin
+      L4_PORT_POOL_ENABLED: "true"
+      L4_TUNNEL_ENABLED: "false"
+      L4_PORT_START: "11000"
+      L4_PORT_END: "11009"
+      GATEWAY_HEALTH_URL: http://traffic-gateway:8080/healthz
+      FRPS_HOST: frps
+      FRPS_PORT: "7000"
+      CADDY_HOST: caddy
+      CADDY_PORT: "443"
+      RD_ENABLED: "false"
+    secrets:
+      - internal_service_key
+      - frps_plugin_key
+      - lease_signing_key
+      - bootstrap_admin_password
+      - frps_tls_cert
+    volumes:
+      - sqlite-data:/data
+      - ./downloads:/app/downloads:ro
+    networks: [control, edge]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,uid=10001,gid=10001,mode=0700"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 320m
+    cpus: "0.50"
+    pids_limit: 96
+    logging: &logging
+      driver: local
+      options: { max-size: 5m, max-file: "2" }
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  traffic-gateway:
+    image: ${GATEWAY_IMAGE:?必须使用锁定镜像}
+    labels: *acceptance-labels
+    init: true
+    restart: "no"
+    environment:
+      PORT: "8080"
+      CONTROL_CENTER_URL: http://control-center:8080
+      FRPS_VHOST_HOST: frps
+      FRPS_VHOST_PORT: "8080"
+      INTERNAL_SERVICE_KEY_FILE: /run/secrets/internal_service_key
+    secrets: [internal_service_key]
+    depends_on:
+      control-center: { condition: service_healthy }
+    networks: [control, edge]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,uid=10001,gid=10001,mode=0700"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 160m
+    cpus: "0.35"
+    pids_limit: 96
+    logging: *logging
+
+  frps:
+    image: ${FRPS_IMAGE:?必须使用锁定镜像}
+    labels: *acceptance-labels
+    init: true
+    restart: "no"
+    environment:
+      PUBLIC_FRPS_PORT: "17000"
+      L4_TUNNEL_ENABLED: "true"
+      L4_PORT_START: "11000"
+      L4_PORT_END: "11009"
+    secrets: [frps_plugin_key, frps_tls_cert, frps_tls_key]
+    depends_on:
+      control-center: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:17000:7000/tcp"
+      - "127.0.0.1:11000-11009:11000-11009/tcp"
+      - "127.0.0.1:11000-11009:11000-11009/udp"
+    networks: [control, edge]
+    read_only: true
+    tmpfs: ["/run/frp:size=8m,uid=10001,gid=10001,mode=0700", "/tmp:size=8m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: "0.25"
+    pids_limit: 96
+    logging: *logging
+
+  caddy:
+    image: ${CADDY_IMAGE:?必须使用锁定镜像}
+    labels: *acceptance-labels
+    restart: "no"
+    ports: ["127.0.0.1:18443:443/tcp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    secrets: [edge_cert, edge_key]
+    depends_on:
+      control-center: { condition: service_healthy }
+      traffic-gateway: { condition: service_started }
+    networks: [control, edge]
+    read_only: true
+    tmpfs: ["/data:size=16m", "/config:size=8m", "/tmp:size=8m"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: "0.25"
+    pids_limit: 96
+    logging: *logging
+
+  fixture-backend:
+    # 复用已锁定的 Node 运行时镜像，不额外引入未固定的后端镜像。
+    image: ${CONTROL_IMAGE:?必须使用锁定镜像}
+    labels: *acceptance-labels
+    profiles: [fixtures]
+    entrypoint: [node, /fixtures/backend.mjs]
+    environment:
+      ACCEPTANCE_MARKER: ${ACCEPTANCE_PROJECT}
+    volumes: ["./backend.mjs:/fixtures/backend.mjs:ro"]
+    secrets: [edge_cert, edge_key]
+    ports:
+      - "127.0.0.1:${FIXTURE_HTTP_PORT:-18090}:18080/tcp"
+      - "127.0.0.1:${FIXTURE_HTTPS_PORT:-18454}:18444/tcp"
+      - "127.0.0.1:${FIXTURE_TCP_PORT:-18091}:12000/tcp"
+      - "127.0.0.1:${FIXTURE_UDP_PORT:-18092}:12001/udp"
+    networks: [edge]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 96m
+    pids_limit: 48
+    logging: *logging
+
+volumes:
+  sqlite-data:
+    labels: *acceptance-labels
+networks:
+  control:
+    internal: true
+    labels: *acceptance-labels
+  edge:
+    labels: *acceptance-labels
+secrets:
+  internal_service_key: { file: ./secrets/internal_service_key }
+  frps_plugin_key: { file: ./secrets/frps_plugin_key }
+  lease_signing_key: { file: ./secrets/lease_signing_key }
+  bootstrap_admin_password: { file: ./secrets/bootstrap_admin_password }
+  frps_tls_cert: { file: ./secrets/frps_tls_cert.pem }
+  frps_tls_key: { file: ./secrets/frps_tls_key.pem }
+  edge_cert: { file: ./secrets/edge.crt }
+  edge_key: { file: ./secrets/edge.key }

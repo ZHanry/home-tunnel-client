@@ -7,10 +7,13 @@ class HomeDeskConsoleApi {
   final Uri base;
   final String _token;
   final HttpClient _http;
+  final bool Function()? _isAllowed;
+  bool _closed = false;
 
-  HomeDeskConsoleApi(String url, this._token)
+  HomeDeskConsoleApi(String url, this._token, {bool Function()? isAllowed})
       : base = Uri.parse(url),
-        _http = HttpClient() {
+        _http = HttpClient(),
+        _isAllowed = isAllowed {
     final octets = base.host.split('.').map(int.tryParse).toList();
     final decimalHost =
         RegExp(r'^(0|[1-9][0-9]{0,2})(\.(0|[1-9][0-9]{0,2})){3}$')
@@ -39,16 +42,28 @@ class HomeDeskConsoleApi {
     _http.connectionTimeout = const Duration(seconds: 5);
   }
 
+  void _ensureAllowed() {
+    if (_closed || (_isAllowed != null && !_isAllowed!())) {
+      close();
+      throw const FormatException('设备中心当前不可达，可通过设备 ID 连接。');
+    }
+  }
+
   Future<dynamic> _request(String path, [Map<String, dynamic>? body]) async {
+    _ensureAllowed();
     final request = await _http
         .openUrl(body == null ? 'GET' : 'POST', base.resolve(path))
         .timeout(const Duration(seconds: 5));
+    // openUrl 期间网络模式可能已切换；在写入 Token 前重新确认许可。
+    _ensureAllowed();
     request.followRedirects = false;
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
     if (body != null) {
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode(body));
     }
+    // request.close 才会实际发送请求，禁止使用已撤销模式下的缓存 Token。
+    _ensureAllowed();
     final response = await request.close().timeout(const Duration(seconds: 5));
     final bytes = <int>[];
     await for (final chunk in response.timeout(const Duration(seconds: 5))) {
@@ -82,5 +97,9 @@ class HomeDeskConsoleApi {
     await _request('/api/v1/wol', {'device_id': id});
   }
 
-  void close() => _http.close(force: true);
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _http.close(force: true);
+  }
 }

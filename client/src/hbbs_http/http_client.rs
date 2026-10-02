@@ -17,7 +17,7 @@ macro_rules! configure_http_client {
         let mut builder = $builder.no_proxy();
         // HOMEDESK: 禁止 HTTP 重定向绕过首次 URL 检查。
         builder = builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if !crate::homedesk_config::allows_http(attempt.url().as_str()) { attempt.error("纯内网模式拒绝外部重定向") }
+            if !crate::homedesk_config::allows_http(attempt.url().as_str()) { attempt.error("HomeDesk 网络策略拒绝外部重定向") }
             else if attempt.previous().len() >= 5 { attempt.error("重定向次数过多") }
             else { attempt.follow() }
         }));

@@ -8,14 +8,18 @@ package_name = "homedesk"
 
 [server]
 host = "REPLACE_WITH_SERVER_IP"
+relay_host = "REPLACE_WITH_RELAY_HOST:21117"
 key = "REPLACE_WITH_HBBS_PUBLIC_KEY"
 
 [net]
+mode = "lan_only"
 whitelist_cidr = "REPLACE_WITH_HOME_CIDR"
-pure_lan_default = true
+# 可选；公网模式下限制被控端接受的来源 IPv4 CIDR。留空表示仅依赖设备认证。
+source_cidr = ""
 
 [console]
 enabled = false
+# 公网模式只有显式确认 Console 位于家庭内网或受控 VPN 时才嵌入口令。
+trusted_path = false
 url = "http://REPLACE_WITH_SERVER_IP:8080"
 token = "REPLACE_WITH_RANDOM_TOKEN_AT_LEAST_32_CHARS"
-

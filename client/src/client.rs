@@ -58,7 +58,7 @@ use hbb_common::{
     rand,
     rendezvous_proto::*,
     sha2::{Digest, Sha256},
-    socket_client::{connect_tcp, connect_tcp_local, ipv4_to_ipv6, new_direct_udp_for},
+    socket_client::{connect_tcp, connect_tcp_local, new_direct_udp_for},
     sodiumoxide::{base64, crypto::sign},
     timeout,
     tokio::{
@@ -258,6 +258,9 @@ impl Client {
         // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
             // HOMEDESK: 在域名解析和 TCP 建连前限制直接输入的网络地址。
+            if crate::homedesk_config::requires_secure_session() {
+                bail!("自建公网模式请使用设备 ID；手输 IP 入口不能证明端到端加密");
+            }
             if crate::homedesk_config::pure_lan_enabled() && !crate::homedesk_net::address_in_whitelist(peer, &Config::get_option(keys::OPTION_WHITELIST)) {
                 bail!("纯内网模式仅允许家庭白名单内的地址，请检查设备 IP");
             }
@@ -277,6 +280,9 @@ impl Client {
         // Allow connect to {domain}:{port}
         if hbb_common::is_domain_port_str(peer) {
             // HOMEDESK: 纯内网模式不解析任意域名，仅允许白名单内 IPv4 加端口。
+            if crate::homedesk_config::requires_secure_session() {
+                bail!("自建公网模式请使用设备 ID；手输域名入口不能证明端到端加密");
+            }
             if crate::homedesk_config::pure_lan_enabled() && !peer.rsplit_once(':').map_or(false, |(ip, _)| crate::homedesk_net::address_in_whitelist(ip, &Config::get_option(keys::OPTION_WHITELIST))) {
                 bail!("纯内网模式请使用家庭设备 ID 或内网 IP");
             }
@@ -294,19 +300,27 @@ impl Client {
         }
 
         let other_server = interface.get_lch().read().unwrap().other_server.clone();
+        let active_profile = crate::homedesk_config::active_profile();
         let (peer, other_server, key, token) = if let Some((a, b, c)) = other_server.as_ref() {
-            (a.as_ref(), b.as_ref(), c.as_ref(), "")
+            if b != &active_profile.server {
+                bail!("HomeDesk 仅允许连接当前模式配置的自建服务器");
+            }
+            if !crate::homedesk_net::configured_key_allowed(c, &active_profile.key) {
+                bail!("连接参数中的服务器公钥与当前原子配置组不一致");
+            }
+            (a.as_ref(), b.as_ref(), active_profile.key.as_str(), "")
         } else {
-            (peer, "", key, token)
+            if !crate::homedesk_net::configured_key_allowed(key, &active_profile.key) {
+                bail!("连接参数中的服务器公钥与当前原子配置组不一致");
+            }
+            (peer, "", active_profile.key.as_str(), token)
         };
         let (rendezvous_server, servers, contained) = if other_server.is_empty() {
             crate::get_rendezvous_server(1_000).await
         } else {
             // HOMEDESK: 显式 @public 和任意公网 ID 服务器都不能绕过纯内网边界。
-            if crate::homedesk_config::public_services_disabled()
-                && !crate::homedesk_config::is_private_rendezvous_server(other_server)
-            {
-                bail!("HomeDesk 仅允许连接家庭内网服务器");
+            if other_server != crate::homedesk_config::active_profile().server {
+                bail!("HomeDesk 仅允许连接当前模式配置的自建服务器");
             }
             if other_server == PUBLIC_SERVER {
                 (
@@ -405,7 +419,12 @@ impl Client {
         bool,
     )> {
         let mut start = Instant::now();
-        let mut socket = connect_tcp(&*rendezvous_server, CONNECT_TIMEOUT).await;
+        let resolved_server = crate::homedesk_config::resolve_configured_endpoint(
+            &rendezvous_server,
+            hbb_common::config::RENDEZVOUS_PORT,
+            false,
+        ).await.map_err(|error| hbb_common::anyhow::anyhow!(error))?;
+        let mut socket = connect_tcp(resolved_server, CONNECT_TIMEOUT).await;
         debug_assert!(!servers.contains(&rendezvous_server));
         let rtt = start.elapsed();
         log::debug!("TCP connection establishment time used: {:?}", rtt);
@@ -413,7 +432,8 @@ impl Client {
             log::info!("try the other servers: {:?}", servers);
             for server in servers {
                 let server = check_port(server, RENDEZVOUS_PORT);
-                socket = connect_tcp(&*server, CONNECT_TIMEOUT).await;
+                let Ok(resolved) = crate::homedesk_config::resolve_configured_endpoint(&server, RENDEZVOUS_PORT, false).await else { continue; };
+                socket = connect_tcp(resolved, CONNECT_TIMEOUT).await;
                 if socket.is_ok() {
                     rendezvous_server = server;
                     break;
@@ -524,15 +544,21 @@ impl Client {
                             is_local = ph.is_local();
                             signed_id_pk = ph.pk.into();
                             relay_server = ph.relay_server;
-                            // HOMEDESK: 私有 hbbs 不得把客户端引向公网 relay。
-                            if crate::homedesk_config::public_services_disabled()
-                                && !crate::homedesk_config::is_private_rendezvous_server(
-                                    &relay_server,
-                                )
-                            {
-                                relay_server.clear();
+                            if relay_server.is_empty() {
+                                relay_server = crate::homedesk_config::active_profile().relay;
                             }
+                            // HOMEDESK: hbbs 返回值不能扩充配置外的 relay 范围。
+                            relay_server = crate::homedesk_config::normalize_relay_candidate(&relay_server)
+                                .await.unwrap_or_default();
                             peer_addr = AddrMangle::decode(&ph.socket_addr);
+                            if !crate::homedesk_net::peer_endpoint_allowed(
+                                peer_addr,
+                                crate::homedesk_config::active_mode(),
+                                is_local,
+                                &crate::homedesk_config::active_profile().family_cidr,
+                            ) {
+                                bail!("网络策略拒绝信令服务器返回的对端地址");
+                            }
                             feedback = ph.feedback;
                             let s = udp.0.take();
                             if ph.is_udp && s.is_some() {
@@ -572,11 +598,13 @@ impl Client {
                                 }
                             }
                         }
+                        let relay_server = crate::homedesk_config::normalize_relay_candidate(&rr.relay_server)
+                            .await.map_err(|error| anyhow!(error))?;
                         signed_id_pk = rr.pk().into();
                         let fut = Self::create_relay(
                             &peer,
                             rr.uuid,
-                            rr.relay_server,
+                            relay_server,
                             &key,
                             conn_type,
                             my_addr.is_ipv4(),
@@ -599,6 +627,14 @@ impl Client {
                         log::info!("{:?} used to establish {typ} connection", start.elapsed());
                         let pk =
                             Self::secure_connection(&peer, signed_id_pk, &key, &mut conn).await?;
+                        // HOMEDESK: 上游握手的若干错误路径返回 Ok；公网模式必须同时确认流加密与对端公钥。
+                        if !crate::homedesk_net::secure_session_allowed(
+                            crate::homedesk_config::active_mode(),
+                            conn.is_secured(),
+                            pk.is_some(),
+                        ) {
+                            bail!("自建公网模式拒绝未完成身份验证的加密会话");
+                        }
                         return Ok((
                             (conn, typ == "IPv6", pk, kcp, typ),
                             (feedback, rendezvous_server),
@@ -680,6 +716,15 @@ impl Client {
         &'static str,
     )> {
         let direct_failures = interface.get_lch().read().unwrap().direct_failures;
+        // HOMEDESK: 连接前按当前请求的本地标记与家庭 CIDR 检查对端候选。
+        if !crate::homedesk_net::peer_endpoint_allowed(
+            peer,
+            crate::homedesk_config::active_mode(),
+            is_local,
+            &crate::homedesk_config::active_profile().family_cidr,
+        ) {
+            bail!("网络策略拒绝对端候选地址");
+        }
         let mut connect_timeout = 0;
         const MIN: u64 = 1000;
         if is_local || peer_nat_type == NatType::SYMMETRIC {
@@ -774,6 +819,14 @@ impl Client {
                 bail!(e);
             }
         };
+        // HOMEDESK: 在所有直连/中继统一返回点阻止上游非安全回退进入 UI Continue。
+        if !crate::homedesk_net::secure_session_allowed(
+            crate::homedesk_config::active_mode(),
+            conn.is_secured(),
+            pk.is_some(),
+        ) {
+            bail!("自建公网模式拒绝未完成身份验证的加密会话");
+        }
         log::debug!("{} punch secure_connection ok", punch_type);
         Ok((conn, direct, pk, kcp, typ))
     }
@@ -785,12 +838,9 @@ impl Client {
         key: &str,
         conn: &mut Stream,
     ) -> ResultType<Option<Vec<u8>>> {
+        let active_key = crate::homedesk_config::active_profile().key;
         let rs_pk = get_rs_pk(if key.is_empty() {
-            if crate::homedesk_config::public_services_disabled() {
-                crate::homedesk_config::compiled_key() // HOMEDESK: 空参数也回退到构建期 hbbs 公钥。
-            } else {
-                config::RS_PUB_KEY
-            }
+            &active_key // HOMEDESK: 空参数只使用当前原子组公钥。
         } else {
             key
         });
@@ -877,7 +927,12 @@ impl Client {
 
         for i in 1..=3 {
             // use different socket due to current hbbs implementation requiring different nat address for each attempt
-            let mut socket = connect_tcp(rendezvous_server, CONNECT_TIMEOUT)
+            let rendezvous_addr = crate::homedesk_config::resolve_configured_endpoint(
+                rendezvous_server,
+                RENDEZVOUS_PORT,
+                false,
+            ).await.map_err(|error| anyhow!(error))?;
+            let mut socket = connect_tcp(rendezvous_addr, CONNECT_TIMEOUT)
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
@@ -932,18 +987,18 @@ impl Client {
         relay_server: String,
         key: &str,
         conn_type: ConnType,
-        ipv4: bool,
+        _ipv4: bool,
     ) -> ResultType<Stream> {
-        // HOMEDESK: 在真正建连前执行最后一道 relay 私网校验。
-        if crate::homedesk_config::public_services_disabled()
-            && !crate::homedesk_config::is_private_rendezvous_server(&relay_server)
-        {
-            bail!("HomeDesk 仅允许家庭内网中继服务器");
+        // HOMEDESK: 在真正建连前执行最后一道当前原子组 relay 校验。
+        if !crate::homedesk_config::relay_allowed(&relay_server) {
+            bail!("HomeDesk 仅允许当前模式配置的中继服务器");
         }
-        let mut conn = connect_tcp(
-            ipv4_to_ipv6(check_port(relay_server, RELAY_PORT), ipv4),
-            CONNECT_TIMEOUT,
-        )
+        let relay_addr = crate::homedesk_config::resolve_configured_endpoint(
+            &relay_server,
+            RELAY_PORT,
+            true,
+        ).await.map_err(|error| anyhow!(error))?;
+        let mut conn = connect_tcp(relay_addr, CONNECT_TIMEOUT)
         .await
         .with_context(|| "Failed to connect to relay server")?;
         let mut msg_out = RendezvousMessage::new();
@@ -1836,7 +1891,7 @@ impl LoginConfigHandler {
             let args = server_key.next().unwrap_or_default();
             let key = if server == PUBLIC_SERVER {
                 if crate::homedesk_config::public_services_disabled() {
-                    crate::homedesk_config::compiled_key().to_owned() // HOMEDESK: 禁止把公共公钥带入连接状态。
+                    crate::homedesk_config::active_profile().key // HOMEDESK: 禁止把公共公钥带入连接状态。
                 } else {
                     config::RS_PUB_KEY.to_owned()
                 }
@@ -4144,15 +4199,16 @@ pub mod peer_online {
     async fn create_online_stream() -> ResultType<Stream> {
         let (rendezvous_server, _servers, _contained) =
             crate::get_rendezvous_server(READ_TIMEOUT).await;
-        let tmp: Vec<&str> = rendezvous_server.split(":").collect();
-        if tmp.len() != 2 {
+        // HOMEDESK: 在线状态端口沿用已验证连接服务器的解析结果，域名不能再次解析到特殊地址。
+        let mut online_server = crate::homedesk_config::resolve_configured_endpoint(
+            &rendezvous_server,
+            hbb_common::config::RENDEZVOUS_PORT,
+            false,
+        ).await.map_err(|error| hbb_common::anyhow::anyhow!(error))?;
+        if online_server.port() <= 1 {
             bail!("Invalid server address: {}", rendezvous_server);
         }
-        let port: u16 = tmp[1].parse()?;
-        if port == 0 {
-            bail!("Invalid server address: {}", rendezvous_server);
-        }
-        let online_server = format!("{}:{}", tmp[0], port - 1);
+        online_server.set_port(online_server.port() - 1);
         connect_tcp(online_server, CONNECT_TIMEOUT).await
     }
 

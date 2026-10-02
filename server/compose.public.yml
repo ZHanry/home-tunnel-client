@@ -1,0 +1,45 @@
+name: homedesk-public
+
+x-homedesk-public-service: &homedesk-public-service
+  image: ghcr.io/rustdesk/rustdesk-server:1.1.16@sha256:8ecdab65deb7c84652a626380e31d11a8f1fbafd97916d57f95c20628f943c00
+  volumes:
+    - ./public-data:/root
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 128
+  logging:
+    driver: local
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  hbbs:
+    <<: *homedesk-public-service
+    container_name: homedesk-public-hbbs
+    command:
+      - hbbs
+      - -k
+      - _
+      - -r
+      - "${HOMEDESK_PUBLIC_RELAY_HOST:?请在 server/.env.public 中设置公网中继域名或公网 IPv4}:${HOMEDESK_PUBLIC_RELAY_PORT:?请设置固定中继端口 21117}"
+    ports:
+      - "${HOMEDESK_PUBLIC_BIND_IP:?请设置主机实际绑定的单个 IPv4}:21115:21115/tcp"
+      - "${HOMEDESK_PUBLIC_BIND_IP:?请设置主机实际绑定的单个 IPv4}:21116:21116/tcp"
+      - "${HOMEDESK_PUBLIC_BIND_IP:?请设置主机实际绑定的单个 IPv4}:21116:21116/udp"
+    depends_on:
+      - hbbr
+
+  hbbr:
+    <<: *homedesk-public-service
+    container_name: homedesk-public-hbbr
+    command:
+      - hbbr
+      - -k
+      - _
+    ports:
+      - "${HOMEDESK_PUBLIC_BIND_IP:?请设置主机实际绑定的单个 IPv4}:21117:21117/tcp"

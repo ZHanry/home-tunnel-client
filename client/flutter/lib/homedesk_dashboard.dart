@@ -1,10 +1,13 @@
 // HOMEDESK: 家庭设备中心布局独立于远控协议和上游页面逻辑。
 import 'package:flutter/material.dart';
 
+enum _DashboardPage { devices, recent, services }
+
 class HomeDeskDashboard extends StatefulWidget {
   final String brandName;
   final WidgetBuilder devicesBuilder;
   final WidgetBuilder recentBuilder;
+  final WidgetBuilder? servicesBuilder;
   final WidgetBuilder localBuilder;
   final WidgetBuilder statusBuilder;
   final VoidCallback onSettings;
@@ -19,15 +22,44 @@ class HomeDeskDashboard extends StatefulWidget {
       required this.statusBuilder,
       required this.onSettings,
       required this.onConnect,
-      this.onNetworkSettings});
+      this.onNetworkSettings,
+      this.servicesBuilder});
 
   @override
   State<HomeDeskDashboard> createState() => HomeDeskDashboardState();
 }
 
 class HomeDeskDashboardState extends State<HomeDeskDashboard> {
-  bool _recent = false;
+  _DashboardPage _page = _DashboardPage.devices;
+  final Set<_DashboardPage> _initializedPages = {_DashboardPage.devices};
   ThemeData? _dialogTheme;
+
+  void _selectPage(_DashboardPage page) {
+    setState(() {
+      _page = page;
+      _initializedPages.add(page);
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeDeskDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.servicesBuilder == null) {
+      _initializedPages.remove(_DashboardPage.services);
+      if (_page == _DashboardPage.services) _page = _DashboardPage.devices;
+    }
+  }
+
+  Widget _buildPage(
+      BuildContext context, _DashboardPage page, WidgetBuilder? builder) {
+    // 服务页首次点击才初始化；切换导航保留会话和设备筛选，不重复创建轮询。
+    if (!_initializedPages.contains(page) || builder == null) {
+      return const SizedBox.shrink();
+    }
+    return TickerMode(
+        enabled: _page == page,
+        child: KeyedSubtree(key: ValueKey(page), child: builder(context)));
+  }
 
   Future<void> showManualConnection() async {
     final id = await showDialog<String>(
@@ -193,12 +225,28 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                   ],
                                 )),
                             const SizedBox(height: 22),
-                            _nav(context, Icons.devices_rounded, '家庭设备',
-                                () => setState(() => _recent = false), compact,
-                                selected: !_recent),
-                            _nav(context, Icons.history_rounded, '最近连接',
-                                () => setState(() => _recent = true), compact,
-                                selected: _recent),
+                            _nav(
+                                context,
+                                Icons.devices_rounded,
+                                '家庭设备',
+                                () => _selectPage(_DashboardPage.devices),
+                                compact,
+                                selected: _page == _DashboardPage.devices),
+                            _nav(
+                                context,
+                                Icons.history_rounded,
+                                '最近连接',
+                                () => _selectPage(_DashboardPage.recent),
+                                compact,
+                                selected: _page == _DashboardPage.recent),
+                            if (widget.servicesBuilder != null)
+                              _nav(
+                                  context,
+                                  Icons.apps_rounded,
+                                  '家庭服务',
+                                  () => _selectPage(_DashboardPage.services),
+                                  compact,
+                                  selected: _page == _DashboardPage.services),
                             const Spacer(),
                             _nav(context, Icons.computer_rounded, '本机信息',
                                 _showLocal, compact),
@@ -217,15 +265,25 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(_recent ? '最近连接' : '家庭设备',
+                                      Text(
+                                          switch (_page) {
+                                            _DashboardPage.devices => '家庭设备',
+                                            _DashboardPage.recent => '最近连接',
+                                            _DashboardPage.services => '家庭服务',
+                                          },
                                           style: const TextStyle(
                                               fontSize: 26,
                                               fontWeight: FontWeight.w700)),
                                       const SizedBox(height: 6),
                                       Text(
-                                          _recent
-                                              ? '快速回到上次使用的电脑'
-                                              : '家里的电脑，在这里轻松连接',
+                                          switch (_page) {
+                                            _DashboardPage.devices =>
+                                              '家里的电脑，在这里轻松连接',
+                                            _DashboardPage.recent =>
+                                              '快速回到上次使用的电脑',
+                                            _DashboardPage.services =>
+                                              '查看设备上的服务，打开你的访问地址',
+                                          },
                                           style: TextStyle(
                                               fontSize: 13,
                                               color: colors.onSurfaceVariant)),
@@ -235,6 +293,11 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                     icon:
                                         const Icon(Icons.add_rounded, size: 20),
                                     label: const Text('手动连接'));
+                                if (_page == _DashboardPage.services) {
+                                  return Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: title);
+                                }
                                 if (header.maxWidth < 530 ||
                                     MediaQuery.textScalerOf(context).scale(1) >
                                         1.5) {
@@ -257,10 +320,22 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                               child: Padding(
                                   padding: EdgeInsets.symmetric(
                                       horizontal: compact ? 18 : 28),
-                                  child: _recent
-                                      ? widget.recentBuilder(context)
-                                      : widget.devicesBuilder(context))),
-                          if (!_recent)
+                                  child: IndexedStack(
+                                    index: _page.index,
+                                    children: [
+                                      _buildPage(
+                                          context,
+                                          _DashboardPage.devices,
+                                          widget.devicesBuilder),
+                                      _buildPage(context, _DashboardPage.recent,
+                                          widget.recentBuilder),
+                                      _buildPage(
+                                          context,
+                                          _DashboardPage.services,
+                                          widget.servicesBuilder),
+                                    ],
+                                  ))),
+                          if (_page == _DashboardPage.devices)
                             Container(
                                 margin:
                                     const EdgeInsets.fromLTRB(18, 12, 18, 12),

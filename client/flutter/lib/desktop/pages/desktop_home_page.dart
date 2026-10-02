@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/homedesk_devices.dart'; // HOMEDESK: 独立家庭设备墙。
 import 'package:flutter_hbb/homedesk_dashboard.dart'; // HOMEDESK: 家庭设备中心主布局。
+import 'package:flutter_hbb/homedesk_services.dart'; // HOMEDESK: 家庭服务统一入口。
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -69,6 +70,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       brandName: appName,
       devicesBuilder: (_) => HomeDeskDevices(onManualConnect: () => _dashboardKey.currentState?.showManualConnection()),
       recentBuilder: (_) => const ConnectionPage(),
+      servicesBuilder: (_) => HomeDeskServices(onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network)), // HOMEDESK: 服务页使用独立账号和联网许可。
       localBuilder: (_) => buildLeftPane(context),
       statusBuilder: (_) => const OnlineStatusWidget(),
       onSettings: () => DesktopTabPage.onAddSetting(),

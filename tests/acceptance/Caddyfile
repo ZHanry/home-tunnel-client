@@ -1,0 +1,21 @@
+# HOMEDESK: 仅测试环境自己的证书，不申请公网证书、不修改系统信任。
+{
+    auto_https off
+    admin off
+}
+:443 {
+    tls /run/secrets/edge_cert /run/secrets/edge_key
+    @internal path /internal*
+    handle @internal {
+        respond 404
+    }
+    @api host 127.0.0.1 localhost console.acceptance.test
+    handle @api {
+        reverse_proxy control-center:8080
+    }
+    @services host *.services.acceptance.test
+    handle @services {
+        reverse_proxy traffic-gateway:8080
+    }
+    respond 404
+}

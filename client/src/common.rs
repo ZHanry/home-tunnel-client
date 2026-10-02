@@ -633,11 +633,13 @@ async fn test_nat_type_() -> ResultType<bool> {
         crate::homedesk_config::rendezvous_servers()
             .into_iter()
             .next()
-            .unwrap_or_else(|| crate::homedesk_config::compiled_server().to_owned())
+            .unwrap_or_else(|| crate::homedesk_config::active_profile().server)
     } else {
         Config::get_rendezvous_server()
     };
-    let server2 = crate::increase_port(&server1, -1);
+    let resolved_server1 = crate::homedesk_config::resolve_configured_endpoint(&server1, RENDEZVOUS_PORT, false)
+        .await.map_err(|error| anyhow!(error))?.to_string();
+    let resolved_server2 = crate::increase_port(&resolved_server1, -1);
     let mut msg_out = RendezvousMessage::new();
     let serial = Config::get_serial();
     msg_out.set_test_nat_request(TestNatRequest {
@@ -648,7 +650,7 @@ async fn test_nat_type_() -> ResultType<bool> {
     let mut port2 = 0;
     let mut local_addr = None;
     for i in 0..2 {
-        let server = if i == 0 { &*server1 } else { &*server2 };
+        let server = if i == 0 { &*resolved_server1 } else { &*resolved_server2 };
         let mut socket =
             socket_client::connect_tcp_local(server, local_addr, CONNECT_TIMEOUT).await?;
         if i == 0 {
@@ -672,9 +674,7 @@ async fn test_nat_type_() -> ResultType<bool> {
                     let rendezvous_servers = cu
                         .rendezvous_servers
                         .iter()
-                        .filter(|server| {
-                            crate::homedesk_config::is_private_rendezvous_server(server)
-                        })
+                        .filter(|server| *server == &crate::homedesk_config::active_profile().server)
                         .cloned()
                         .collect::<Vec<_>>(); // HOMEDESK: NAT 响应中的公共回退服务器不落盘。
                     Config::set_option(
@@ -712,12 +712,13 @@ pub async fn get_rendezvous_server(ms_timeout: u64) -> (String, Vec<String>, boo
             a = lic.host;
         }
     }
-    // HOMEDESK: 丢弃旧配置、IPC 或许可证注入的公网服务器，避免回退到 RustDesk 公共服务。
+    // HOMEDESK: 丢弃旧配置、IPC 或许可证注入的其他服务器，只接受当前原子组。
     if crate::homedesk_config::public_services_disabled() {
-        if !crate::homedesk_config::is_private_rendezvous_server(&a) {
-            a = crate::homedesk_config::compiled_server().to_owned();
+        let configured = crate::homedesk_config::active_profile().server;
+        if a != configured {
+            a = configured.clone();
         }
-        b.retain(|server| crate::homedesk_config::is_private_rendezvous_server(server));
+        b.retain(|server| server == &configured);
     }
     let mut b: Vec<String> = b
         .drain(..)
@@ -1100,14 +1101,8 @@ fn get_api_server_(api: String, custom: String) -> String {
     if !api.is_empty() && !crate::homedesk_config::public_services_disabled() {
         return api.to_owned();
     }
-    // HOMEDESK: 纯内网构建的 API 地址只允许从私有 rendezvous 地址派生。
-    let custom = if crate::homedesk_config::public_services_disabled()
-        && !crate::homedesk_config::is_private_rendezvous_server(&custom)
-    {
-        crate::homedesk_config::compiled_server().to_owned()
-    } else {
-        custom
-    };
+    // HOMEDESK: 上游账户 API 在两种模式均关闭，避免把公网信令授权扩大成 HTTP 权限。
+    let custom = if crate::homedesk_config::public_services_disabled() { String::new() } else { custom };
     let s0 = get_custom_rendezvous_server(custom);
     if !s0.is_empty() {
         let s = crate::increase_port(&s0, -2);
@@ -1226,7 +1221,7 @@ fn get_tcp_proxy_addr() -> String {
         crate::homedesk_config::rendezvous_servers()
             .into_iter()
             .next()
-            .unwrap_or_else(|| crate::homedesk_config::compiled_server().to_owned())
+            .unwrap_or_else(|| crate::homedesk_config::active_profile().server)
     } else {
         Config::get_rendezvous_server()
     }; // HOMEDESK: HTTP TCP 代理不连接公共 rendezvous。
@@ -1854,9 +1849,9 @@ pub fn decode64<T: AsRef<[u8]>>(input: T) -> Result<Vec<u8>, base64::DecodeError
 }
 
 pub async fn get_key(sync: bool) -> String {
-    // HOMEDESK: 固定使用构建期 hbbs 公钥，拒绝文件名或旧 IPC 配置覆盖。
+    // HOMEDESK: 固定使用当前原子组 hbbs 公钥，拒绝文件名或旧 IPC 配置覆盖。
     if crate::homedesk_config::public_services_disabled() {
-        return crate::homedesk_config::compiled_key().to_owned();
+        return crate::homedesk_config::active_profile().key;
     }
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
@@ -1875,7 +1870,7 @@ pub async fn get_key(sync: bool) -> String {
     };
     if key.is_empty() {
         key = if crate::homedesk_config::public_services_disabled() {
-            crate::homedesk_config::compiled_key().to_owned() // HOMEDESK: 最终兜底仍使用构建期私有公钥。
+            crate::homedesk_config::active_profile().key // HOMEDESK: 最终兜底仍使用当前原子组公钥。
         } else {
             config::RS_PUB_KEY.to_owned()
         };
@@ -2380,7 +2375,7 @@ pub fn is_udp_disabled() -> bool {
 
 // this crate https://github.com/yoshd/stun-client supports nat type
 async fn stun_ipv6_test(stun_server: &str) -> ResultType<(SocketAddr, String)> {
-    if crate::homedesk_config::pure_lan_enabled() { bail!("纯内网模式不访问公网 STUN 服务"); } // HOMEDESK: 阻止公网地址探测与 DNS。
+    if !crate::homedesk_config::public_stun_allowed() { bail!("HomeDesk 未启用经审核的 STUN 服务"); } // HOMEDESK: 两种模式都不访问上游硬编码公共 STUN。
     use std::net::ToSocketAddrs;
     use stunclient::StunClient;
     let local_addr = SocketAddr::from(([0u16; 8], 0)); // [::]:0
@@ -2405,7 +2400,7 @@ async fn stun_ipv6_test(stun_server: &str) -> ResultType<(SocketAddr, String)> {
 }
 
 async fn stun_ipv4_test(stun_server: &str) -> ResultType<(SocketAddr, String)> {
-    if crate::homedesk_config::pure_lan_enabled() { bail!("纯内网模式不访问公网 STUN 服务"); } // HOMEDESK: 阻止公网地址探测与 DNS。
+    if !crate::homedesk_config::public_stun_allowed() { bail!("HomeDesk 未启用经审核的 STUN 服务"); } // HOMEDESK: 两种模式都不访问上游硬编码公共 STUN。
     use std::net::ToSocketAddrs;
     use stunclient::StunClient;
     let local_addr = SocketAddr::from(([0u8; 4], 0));

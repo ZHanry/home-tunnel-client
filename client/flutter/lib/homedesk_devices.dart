@@ -7,12 +7,15 @@ import 'models/platform_model.dart';
 
 class HomeDeskDevices extends StatefulWidget {
   final HomeDeskConsoleApi? api;
+  final HomeDeskConsoleApi Function(String url, String token,
+      {bool Function()? isAllowed})? apiBuilder;
   final void Function(BuildContext, String)? onConnect;
   final VoidCallback? onManualConnect;
   final String Function(String)? readOption;
   const HomeDeskDevices(
       {Key? key,
       this.api,
+      this.apiBuilder,
       this.onConnect,
       this.onManualConnect,
       this.readOption})
@@ -29,22 +32,80 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
   bool _loading = false;
   String _message = '';
   String _room = '全部';
+  String? _apiFingerprint;
+  int _apiGeneration = 0;
+
+  String _readOption(String key) => (widget.readOption ??
+      (String key) => bind.mainGetLocalOption(key: key))(key);
+
+  bool get _isConsoleAllowed {
+    // 注入 API 保持既有预览和 widget 测试兼容；生产路径必须读取 Rust 的动态许可。
+    if (widget.api != null && widget.readOption == null) return true;
+    final allowed = _readOption('homedesk-console-allowed');
+    return (widget.api != null && allowed.isEmpty) || allowed == 'Y';
+  }
+
+  void _revokeConsole() {
+    _api?.close();
+    _api = null;
+    _apiFingerprint = null;
+    _apiGeneration++;
+    _devices = [];
+    _waking.clear();
+    _message = '设备中心当前不可达，可通过设备 ID 连接。';
+  }
+
+  bool _ensureConsole() {
+    if (!_isConsoleAllowed) {
+      if (_api != null || _devices.isNotEmpty || _message.isEmpty) {
+        if (mounted) {
+          setState(_revokeConsole);
+        } else {
+          _revokeConsole();
+        }
+      }
+      return false;
+    }
+    if (widget.api != null) {
+      if (_api == null) {
+        _api = widget.api;
+        _apiGeneration++;
+      }
+      return true;
+    }
+    try {
+      final url = _readOption('homedesk-console-url');
+      final token = _readOption('homedesk-console-token');
+      final fingerprint = '$url\u0000$token';
+      if (url.isEmpty) {
+        if (_api != null) _revokeConsole();
+        _message = '家庭设备服务尚未连接，你仍可通过设备 ID 连接。';
+        return false;
+      }
+      if (_api != null && _apiFingerprint == fingerprint) return true;
+      if (_api != null) {
+        _api!.close();
+        _api = null;
+        _devices = [];
+        _waking.clear();
+        _apiGeneration++;
+      }
+      _api = widget.apiBuilder
+              ?.call(url, token, isAllowed: () => _isConsoleAllowed) ??
+          HomeDeskConsoleApi(url, token, isAllowed: () => _isConsoleAllowed);
+      _apiFingerprint = fingerprint;
+      _apiGeneration++;
+      return true;
+    } catch (_) {
+      _message = '家庭设备服务配置有误，你仍可使用手动连接。';
+      return false;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     try {
-      _api = widget.api;
-      if (_api == null) {
-        final read = widget.readOption ??
-            (String key) => bind.mainGetLocalOption(key: key);
-        final url = read('homedesk-console-url');
-        if (url.isEmpty) {
-          _message = '家庭设备服务尚未连接，你仍可通过设备 ID 或内网 IP 连接。';
-          return;
-        }
-        _api = HomeDeskConsoleApi(url, read('homedesk-console-token'));
-      }
       _refresh();
       _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
     } catch (_) {
@@ -53,11 +114,16 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
   }
 
   Future<void> _refresh() async {
-    if (_loading || _api == null) return;
+    if (!_ensureConsole() || _api == null || _loading) return;
+    final api = _api!;
+    final generation = _apiGeneration;
     _loading = true;
     try {
-      final result = await _api!.devices();
-      if (!mounted) return;
+      final result = await api.devices();
+      if (!mounted ||
+          !_ensureConsole() ||
+          _api != api ||
+          _apiGeneration != generation) return;
       setState(() {
         _devices = result;
         _waking.removeWhere(
@@ -65,20 +131,38 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
         _message = result.isEmpty ? '打开其他电脑上的客户端，接入家庭设备服务后，它们就会出现在这里。' : '';
       });
     } catch (_) {
-      if (mounted) setState(() => _message = '设备状态暂未更新，你仍可尝试连接或手动连接。');
+      if (mounted &&
+          _ensureConsole() &&
+          _api == api &&
+          _apiGeneration == generation) {
+        setState(() {
+          _message = '设备状态暂未更新，你仍可尝试连接或手动连接。';
+        });
+      }
     } finally {
       _loading = false;
+      if (mounted && _api != api && _isConsoleAllowed) _refresh();
     }
   }
 
   Future<void> _wake(String id) async {
-    if (_api == null || _waking.contains(id)) return;
+    if (!_ensureConsole() || _api == null || _waking.contains(id)) return;
+    final api = _api!;
+    final generation = _apiGeneration;
     setState(() => _waking.add(id));
     try {
-      await _api!.wake(id);
-      if (mounted) setState(() => _message = '已发送唤醒，等待设备上线');
+      await api.wake(id);
+      if (mounted &&
+          _ensureConsole() &&
+          _api == api &&
+          _apiGeneration == generation) {
+        setState(() => _message = '已发送唤醒，等待设备上线');
+      }
     } catch (_) {
-      if (mounted) {
+      if (mounted &&
+          _ensureConsole() &&
+          _api == api &&
+          _apiGeneration == generation) {
         setState(() {
           _waking.remove(id);
           _message = '唤醒失败，请检查有线网卡配置';
@@ -87,7 +171,9 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
     }
     // 离线设备未响应时允许重新尝试，避免按钮永久不可用。
     await Future<void>.delayed(const Duration(seconds: 30));
-    if (mounted) setState(() => _waking.remove(id));
+    if (mounted && _apiGeneration == generation) {
+      setState(() => _waking.remove(id));
+    }
   }
 
   @override
@@ -113,7 +199,7 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
                     TextStyle(fontSize: 13, color: colors.onSurfaceVariant))),
         IconButton(
             tooltip: '刷新设备',
-            onPressed: _api == null ? null : _refresh,
+            onPressed: _isConsoleAllowed ? _refresh : null,
             icon: const Icon(Icons.refresh_rounded, size: 20)),
       ]),
       if (rooms.isNotEmpty)
