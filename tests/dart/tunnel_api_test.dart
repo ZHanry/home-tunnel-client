@@ -479,6 +479,21 @@ Future<void> main() async {
         h.seen.last['path'] == '/api/v1/auth/session/close', '退出不能旋转 FRP 设备凭据');
   });
 
+  await test('本机接入码使用未绑定管理会话，不登记设备或发布服务', (h) async {
+    final api = h.api();
+    await api.login(username: 'demo', password: 'fixture-password');
+    const code = 'fixture-single-use-enrollment-code';
+    h.overrides['/api/v1/client/enrollment-codes'] = (request, body) async {
+      expect(request.method == 'POST' && body.length == 1 && body['name'] == '本机', '只提交接入码名称');
+      await jsonResponse(request, {'id':uuid(17),'name':'本机','code':code,
+        'expires_at':DateTime.now().toUtc().add(const Duration(minutes:10)).toIso8601String()}, status:201);
+    };
+    expect(await api.createEnrollmentCode('本机') == code, '返回一次性代码');
+    expect(api.userId == uuid(99999), '绑定所属账号 UUID');
+    expect(!h.seen.any((r) => r['path']=='/api/v1/devices/register' ||
+      (r['path']=='/api/v1/client/connections' && r['method']=='POST')), '管理会话不变成设备会话，也不发布默认服务');
+  });
+
   await test('MFA 仅由用户手动提交，不自动重试', (h) async {
     var attempts = 0;
     h.overrides['/api/v1/auth/login'] = (request, body) async {

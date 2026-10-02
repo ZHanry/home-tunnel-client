@@ -2,7 +2,7 @@
 
 HomeDesk 是基于 RustDesk 的家庭自建远控方案，目标是保留断公网可用的纯内网能力，并可显式选择自建公网 P2P 模式；同时为家庭设备提供设备清单、远程开机与会话审计。
 
-桌面首页新增“家庭服务”，可在已确认的自建公网模式下登录自己的 home-tunnel，查看设备与服务、创建/编辑/启停/删除服务、管理设备标签/收藏、打开网页或复制 TCP/UDP 端点。Windows 支持 DPAPI 加密的“记住登录”；其他平台保持内存会话。完整设计见 [`docs/PORTAL_INTEGRATION_PLAN.md`](docs/PORTAL_INTEGRATION_PLAN.md)，使用方式见 [`docs/HOME_TUNNEL_PORTAL.md`](docs/HOME_TUNNEL_PORTAL.md)。
+桌面首页新增“家庭服务”，可在已确认的自建公网模式下登录自己的 home-tunnel，查看和管理设备与服务。Windows 完整包登录后自动登记本机并运行包内受管 Agent，默认不发布服务；支持 DPAPI 加密记住登录和设备凭据。其他平台暂只提供门户管理。完整设计见 [`docs/PORTAL_INTEGRATION_PLAN.md`](docs/PORTAL_INTEGRATION_PLAN.md)，使用方式见 [`docs/HOME_TUNNEL_PORTAL.md`](docs/HOME_TUNNEL_PORTAL.md)。
 
 2026-09-22 已实现 `lan_only`（默认）与 `self_hosted` 双模式的客户端、配置迁移、网络策略、中文设置与独立公网部署工具；保持上游直连优先、中继兜底，Console 继续限制在内网或显式可信 VPN 路径。配置、网络、HTTP 撤权、界面和本地容器测试已通过，Windows Rust/Flutter Release 构建通过。**真实跨网 P2P、NAT、中继会话与生产部署仍待实机验收，不能把本地通过等同于公网发布完成。** 配置入口见 [`docs/CLIENT_NETWORK.md`](docs/CLIENT_NETWORK.md)，实际证据见 [`docs/T17_VALIDATION.md`](docs/T17_VALIDATION.md)。
 

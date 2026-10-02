@@ -423,7 +423,7 @@ void main() {
     expect(api.logins, 1);
     expect(find.text('家庭 NAS'), findsWidgets);
     expect(find.text('家庭相册'), findsOneWidget);
-    expect(find.text('隧道设备已连接'), findsOneWidget);
+    expect(find.text('设备心跳在线'), findsOneWidget);
     await tester.ensureVisible(find.text('打开服务'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('打开服务'));
@@ -434,11 +434,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened.single.toString(), 'https://album.example.com');
     expect(copied.single, 'edge.example.com:10000');
-    await tester.ensureVisible(find.text('打开管理台'));
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('tunnel-account-menu')));
+    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('打开管理台'));
     await tester.pumpAndSettle();
     expect(opened.last.toString(), 'https://console.example.com');
+    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('退出登录'));
     await tester.pumpAndSettle();
     expect(api.logouts, 1);
@@ -512,6 +516,31 @@ void main() {
             .widget<FilledButton>(find.byKey(const ValueKey('tunnel-login')))
             .onPressed,
         isNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('单台设备空服务只保留一个新增入口，长名称在大字体下不溢出', (tester) async {
+    tester.view.physicalSize = const Size(420, 620);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = PortalFixtureApi()
+      ..result = HomeTunnelCatalog(devices: const [
+        HomeTunnelDevice(
+            id: 'fixture-local',
+            name: '书房电脑 · 一个较长的家庭设备名称',
+            platform: 'windows',
+            online: true),
+      ], services: []);
+    await tester.pumpWidget(portalHost(page: fixturePage(api), scale: 2));
+    await enterCredentials(tester);
+    expect(find.byKey(const ValueKey('tunnel-device-filter')), findsNothing);
+    expect(find.text('添加服务'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('还没有发布服务'), 160,
+        scrollable: find.byType(Scrollable).first);
+    expect(find.text('设备心跳在线'), findsOneWidget);
+    expect(find.text('隧道设备已连接'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -842,6 +871,8 @@ void main() {
     await tester.pumpAndSettle();
     await enterCredentials(tester);
     expect(api.rememberRequested, isTrue);
+    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('tunnel-forget')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('tunnel-forget')));
     await tester.pumpAndSettle();
@@ -1039,6 +1070,8 @@ void main() {
           const HomeTunnelApiException('无法清除安全存储。', 'SECURE_STORE_ERROR');
     await tester.pumpWidget(portalHost(page: fixturePage(api)));
     await enterCredentials(tester);
+    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('退出登录'));
     await tester.pumpAndSettle();
     expect(api.closed, isTrue);
@@ -1081,7 +1114,7 @@ void main() {
 
   if (Platform.environment.containsKey('HOMEDESK_SERVICES_PREVIEW')) {
     testWidgets('导出合成服务门户预览', (tester) async {
-      tester.view.physicalSize = const Size(1080, 800);
+      tester.view.physicalSize = const Size(780, 600);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -1133,6 +1166,24 @@ void main() {
               Directory(Platform.environment['HOMEDESK_SERVICES_PREVIEW']!)
                 ..createSync(recursive: true);
           File('${output.path}/services-${dark ? 'dark' : 'light'}.png')
+              .writeAsBytesSync(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+        api.result = HomeTunnelCatalog(devices: const [
+          HomeTunnelDevice(
+              id: 'fixture-local',
+              name: '书房电脑 · HomeDesk',
+              platform: 'windows',
+              online: true),
+        ], services: []);
+        await tester.tap(find.byKey(const ValueKey('tunnel-refresh')));
+        await tester.pumpAndSettle();
+        await tester.runAsync(() async {
+          final image = await boundary.toImage(pixelRatio: 1);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final output =
+              Directory(Platform.environment['HOMEDESK_SERVICES_PREVIEW']!);
+          File('${output.path}/services-${dark ? 'dark' : 'light'}-empty.png')
               .writeAsBytesSync(bytes!.buffer.asUint8List());
           image.dispose();
         });

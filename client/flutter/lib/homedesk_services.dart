@@ -1,5 +1,6 @@
 // HOMEDESK: 桌面服务门户独立于 RustDesk 会话与家庭 Console。
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'homedesk_credentials.dart';
+import 'homedesk_local_agent.dart';
 import 'homedesk_service_editor.dart';
 import 'homedesk_tunnel_api.dart';
 import 'homedesk_tunnel_session.dart';
@@ -46,6 +48,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   final _mfa = TextEditingController();
   HomeTunnelApi? _api;
   HomeTunnelCatalog? _catalog;
+  HomeDeskLocalAgent? _localAgent;
   Timer? _timer;
   late final HomeDeskCredentialStorage _credentialStore;
   final Map<String, HomeDeskServiceDraft> _serviceDrafts = {};
@@ -90,6 +93,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
 
   void _revoke() {
     final api = _api;
+    if (_localAgent != null) unawaited(_localAgent!.stop());
+    _localAgent = null;
     _generation++;
     if (api != null) unawaited(_revokeApi(api, _generation));
     _api = null;
@@ -206,6 +211,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         _catalog = catalog;
         _message = '已恢复记住的登录。';
       });
+      await _attachLocal(api, generation);
     } catch (error) {
       if (!mounted || generation != _generation) return;
       api?.close();
@@ -237,6 +243,11 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     unawaited(_restoreRemembered());
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_ensureAllowed()) return;
+      if (_localAgent != null) {
+        final before = _localAgent!.description;
+        _localAgent!.poll();
+        if (mounted && before != _localAgent!.description) setState(() {});
+      }
       _ticks++;
       if (_ticks % 30 == 0 && _api?.isSignedIn == true && _entityBusy.isEmpty) {
         _refresh();
@@ -258,6 +269,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       return;
     }
     _selectDraftOwner(origin, _username.text.trim());
+    if (_localAgent != null) await _localAgent!.stop();
+    _localAgent = null;
     _api?.close();
     _api = null;
     _apiPermission = null;
@@ -299,6 +312,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       final catalog = await api.catalog();
       if (!_current(api, generation)) return;
       setState(() => _catalog = catalog);
+      await _attachLocal(api, generation);
     } catch (error) {
       if (!mounted || generation != _generation) return;
       if (api != null && !_current(api, generation)) return;
@@ -321,6 +335,35 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       : error is HomeDeskCredentialException
           ? error.message
           : '服务暂时无法连接，请检查地址、证书和网络后重试。';
+
+  Future<void> _attachLocal(HomeTunnelApi api, int generation) async {
+    // 合成预览/组件注入保持无真实后台进程；生产仅在许可有效且身份已校验后接入。
+    if (widget.apiBuilder != null ||
+        widget.readOption != null ||
+        !_current(api, generation) ||
+        _catalog == null) return;
+    if (!Platform.isWindows) return;
+    _localAgent ??= HomeDeskLocalAgent(
+        send: (value) => bind.mainSetLocalOption(
+            key: 'homedesk-tunnel-agent-command', value: value),
+        read: () => bind.mainGetLocalOption(key: 'homedesk-tunnel-agent-state'),
+        permission: _readPermission,
+        isAllowed: () => _current(api, generation),
+        name: '${Platform.localHostname} · ${bind.mainGetAppNameSync()}');
+    try {
+      final catalog = await _localAgent!.attach(api, _catalog!);
+      if (_current(api, generation) && mounted) {
+        setState(() => _catalog = catalog);
+      }
+    } on HomeDeskAgentException catch (_) {
+      if (mounted && _current(api, generation)) setState(() {});
+    } catch (_) {
+      if (_localAgent != null) {
+        _localAgent!.error = const HomeDeskAgentException('RUNTIME_FAILED');
+        if (mounted) setState(() {});
+      }
+    }
+  }
 
   void _selectDraftOwner(String origin, String username) {
     final owner = '$origin\u0000$username';
@@ -375,6 +418,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
 
   Future<void> _logout() async {
     final api = _api;
+    final localAgent = _localAgent;
+    _localAgent = null;
     setState(() {
       _generation++;
       _api = null;
@@ -392,6 +437,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _message = '';
     });
     final generation = _generation;
+    if (localAgent != null) await localAgent.stop();
     if (api == null) {
       return;
     }
@@ -797,10 +843,19 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     super.dispose();
   }
 
-  Widget _messageBox() => Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Text(_message,
-          style: TextStyle(color: Theme.of(context).colorScheme.error)));
+  Widget _messageBox() {
+    final colors = Theme.of(context).colorScheme;
+    final informational = _message == '访问地址已复制。' ||
+        _message == '操作已完成。' ||
+        _message == '已恢复记住的登录。' ||
+        _message.startsWith('已取消记住登录');
+    return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Text(_message,
+            style: TextStyle(
+                color:
+                    informational ? colors.onSurfaceVariant : colors.error)));
+  }
 
   Widget _loginForm() => SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 24),
@@ -958,8 +1013,13 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   Widget _serviceTile(HomeTunnelService service) {
     final colors = Theme.of(context).colorScheme;
     final address = service.webUrl?.toString() ?? service.endpoint;
-    return Padding(
-        padding: const EdgeInsets.only(top: 14),
+    return Container(
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: colors.onSurface.withOpacity(0.025),
+            border: Border.all(color: colors.outlineVariant),
+            borderRadius: BorderRadius.circular(12)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Wrap(
               spacing: 10,
@@ -969,12 +1029,11 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                 Text(service.name.isEmpty ? '未命名服务' : service.name,
                     style: const TextStyle(
                         fontWeight: FontWeight.w600, fontSize: 15)),
-                Text(service.proxyType.toUpperCase(),
-                    style: TextStyle(
-                        color: colors.onSurfaceVariant, fontSize: 12)),
-                Text(_status(service),
-                    style: TextStyle(
-                        color: colors.onSurfaceVariant, fontSize: 12)),
+                _badge(service.proxyType.toUpperCase()),
+                _badge(_status(service),
+                    attention: service.enabled &&
+                        (service.status == 'Error' ||
+                            service.status == 'Degraded')),
               ]),
           const SizedBox(height: 6),
           SelectableText(address ?? '访问地址尚未分配',
@@ -1020,176 +1079,339 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         ]));
   }
 
-  Widget _groupCard(_ServiceGroup group) => Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Card(
-          child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                        spacing: 12,
-                        runSpacing: 6,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          const Icon(Icons.dns_outlined, size: 22),
-                          Text(group.name.isEmpty ? '未命名设备' : group.name,
-                              style: const TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.w700)),
-                          Text(
-                              group.online == null
-                                  ? '设备状态未知'
-                                  : group.online!
-                                      ? '隧道设备已连接'
-                                      : '隧道设备离线',
-                              style: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                  fontSize: 12)),
-                          if (group.device?.favorite == true)
-                            const Icon(Icons.star_rounded, size: 18),
-                        ]),
-                    if (group.device?.tags.isNotEmpty == true)
-                      Padding(
-                          padding: const EdgeInsets.only(top: 10),
-                          child: Wrap(spacing: 6, runSpacing: 6, children: [
-                            for (final tag in group.device!.tags)
-                              Chip(label: Text(tag)),
-                          ])),
-                    if (group.device != null)
-                      Padding(
-                          padding: const EdgeInsets.only(top: 10),
-                          child: Wrap(spacing: 8, runSpacing: 8, children: [
-                            OutlinedButton.icon(
-                                key: ValueKey('add-service-${group.id}'),
-                                onPressed: _busy ||
-                                        _entityBusy.contains(group.id)
-                                    ? null
-                                    : () => _editService(deviceId: group.id),
-                                icon: const Icon(Icons.add_rounded, size: 18),
-                                label: const Text('添加服务')),
-                            TextButton.icon(
-                                key: ValueKey('edit-device-${group.id}'),
-                                onPressed:
-                                    _busy || _entityBusy.contains(group.id)
-                                        ? null
-                                        : () => _editDevice(group.device!),
-                                icon: const Icon(Icons.tune_rounded, size: 18),
-                                label: const Text('管理设备')),
-                          ])),
-                    if (group.services.isEmpty)
-                      const Padding(
-                          padding: EdgeInsets.only(top: 14),
-                          child: Text('这台设备还没有服务，可以在这里添加。')),
-                    for (final service in group.services) _serviceTile(service),
-                  ]))));
+  Widget _badge(String label, {bool attention = false}) {
+    final colors = Theme.of(context).colorScheme;
+    final color = attention ? colors.error : colors.onSurfaceVariant;
+    return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+            color: color.withOpacity(0.09),
+            borderRadius: BorderRadius.circular(7)),
+        child: Text(label, style: TextStyle(color: color, fontSize: 12)));
+  }
+
+  Widget _groupCard(_ServiceGroup group) {
+    final colors = Theme.of(context).colorScheme;
+    final local = _localAgent?.deviceId == group.id;
+    return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Card(
+            child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                                padding: const EdgeInsets.only(top: 3),
+                                child: Icon(Icons.dns_outlined,
+                                    size: 22, color: colors.primary)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                  Text(
+                                      group.name.isEmpty ? '未命名设备' : group.name,
+                                      style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w700)),
+                                  const SizedBox(height: 8),
+                                  Wrap(spacing: 8, runSpacing: 6, children: [
+                                    if (local) _badge('本机'),
+                                    _badge(group.online == null
+                                        ? '心跳未知'
+                                        : group.online!
+                                            ? '设备心跳在线'
+                                            : '设备心跳离线'),
+                                    _badge('${group.services.length} 项服务'),
+                                    if (group.device?.favorite == true)
+                                      const Icon(Icons.star_rounded, size: 18),
+                                  ]),
+                                ])),
+                            if (group.device != null)
+                              IconButton(
+                                  key: ValueKey('edit-device-${group.id}'),
+                                  tooltip: '管理设备',
+                                  onPressed:
+                                      _busy || _entityBusy.contains(group.id)
+                                          ? null
+                                          : () => _editDevice(group.device!),
+                                  icon:
+                                      const Icon(Icons.tune_rounded, size: 20)),
+                          ]),
+                      if (group.device?.tags.isNotEmpty == true)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Wrap(spacing: 6, runSpacing: 6, children: [
+                              for (final tag in group.device!.tags) _badge(tag),
+                            ])),
+                      if (group.services.isEmpty)
+                        Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(top: 20),
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 24, horizontal: 16),
+                            decoration: BoxDecoration(
+                                color: colors.onSurface.withOpacity(0.025),
+                                borderRadius: BorderRadius.circular(12)),
+                            child: Column(children: [
+                              Icon(Icons.widgets_outlined,
+                                  size: 30, color: colors.onSurfaceVariant),
+                              const SizedBox(height: 10),
+                              const Text('还没有发布服务',
+                                  textAlign: TextAlign.center,
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.w600)),
+                              const SizedBox(height: 6),
+                              Text('点击“添加服务”，选择要访问的网页或端口。',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      color: colors.onSurfaceVariant,
+                                      fontSize: 12)),
+                            ])),
+                      for (final service in group.services)
+                        _serviceTile(service),
+                    ]))));
+  }
+
+  Widget _accountHeader(HomeTunnelApi api) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(children: [
+      CircleAvatar(
+          radius: 20,
+          backgroundColor: colors.primary.withOpacity(0.12),
+          child: Icon(Icons.person_outline_rounded,
+              color: colors.primary, size: 22)),
+      const SizedBox(width: 12),
+      Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(api.displayName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 3),
+        Text(api.base.host,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: colors.onSurfaceVariant, fontSize: 12)),
+      ])),
+      IconButton(
+          key: const ValueKey('tunnel-refresh'),
+          tooltip: _busy ? '正在刷新…' : '刷新',
+          onPressed: _busy ? null : _refresh,
+          icon: const Icon(Icons.refresh_rounded, size: 22)),
+      PopupMenuButton<String>(
+          key: const ValueKey('tunnel-account-menu'),
+          tooltip: '账号操作',
+          enabled: !_busy,
+          onSelected: (action) {
+            if (action == 'management') _openManagement();
+            if (action == 'forget') _forgetRemembered();
+            if (action == 'logout') _logout();
+          },
+          itemBuilder: (_) => [
+                const PopupMenuItem(value: 'management', child: Text('打开管理台')),
+                if (api.rememberedLogin)
+                  const PopupMenuItem(
+                      key: ValueKey('tunnel-forget'),
+                      value: 'forget',
+                      child: Text('取消记住登录')),
+                const PopupMenuItem(value: 'logout', child: Text('退出登录')),
+              ],
+          icon: const Icon(Icons.more_horiz_rounded)),
+    ]);
+  }
+
+  Widget _connectionNotice() {
+    final agent = _localAgent;
+    if (agent == null) return const SizedBox();
+    final colors = Theme.of(context).colorScheme;
+    final failed = agent.error != null;
+    final pending =
+        agent.agentState == 'Degraded' || agent.agentState == 'Error';
+    final attention = failed || pending;
+    final title = failed
+        ? '本机接入未完成'
+        : pending
+            ? '服务隧道待连接'
+            : agent.isAttaching
+                ? '正在接入本机…'
+                : '本机接入已启动';
+    return Container(
+        margin: const EdgeInsets.only(top: 16),
+        decoration: BoxDecoration(
+            color:
+                (attention ? colors.error : colors.primary).withOpacity(0.06),
+            border: Border.all(
+                color: (attention ? colors.error : colors.primary)
+                    .withOpacity(0.2)),
+            borderRadius: BorderRadius.circular(12)),
+        child: ExpansionTile(
+            key: const ValueKey('tunnel-connection-notice'),
+            shape: const Border(),
+            collapsedShape: const Border(),
+            leading: Icon(
+                attention ? Icons.info_outline_rounded : Icons.link_rounded,
+                color: attention ? colors.error : colors.primary,
+                size: 22),
+            title: Text(title,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            subtitle: attention
+                ? Text(
+                    '账号已登录${agent.deviceId.isNotEmpty ? '，本机已登记' : ''}。展开查看连接说明。',
+                    style:
+                        TextStyle(color: colors.onSurfaceVariant, fontSize: 12))
+                : null,
+            children: [
+              Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(agent.description,
+                            style: TextStyle(color: colors.onSurfaceVariant)),
+                        if (pending)
+                          const Padding(
+                              padding: EdgeInsets.only(top: 8),
+                              child: Text(
+                                  '请确认服务器的 FRPS 入站端口已开放。设备心跳在线仅代表管理连接可用。',
+                                  style: TextStyle(fontSize: 12))),
+                        if (failed)
+                          TextButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () async {
+                                      setState(() => _busy = true);
+                                      await _attachLocal(_api!, _generation);
+                                      if (mounted) {
+                                        setState(() => _busy = false);
+                                      }
+                                    },
+                              child: const Text('重试本机接入')),
+                      ])),
+            ]));
+  }
+
+  Widget _catalogToolbar(HomeTunnelCatalog? catalog) =>
+      LayoutBuilder(builder: (context, constraints) {
+        final heading = Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text('我的服务',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+              Text(
+                  '${catalog?.devices.length ?? 0} 台设备 · ${catalog?.services.length ?? 0} 项服务',
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 12)),
+            ]);
+        if (catalog == null || catalog.devices.isEmpty) return heading;
+        final add = FilledButton.icon(
+            key: const ValueKey('tunnel-add-service'),
+            onPressed: _busy
+                ? null
+                : () => _editService(
+                    deviceId: _deviceId.isEmpty ? null : _deviceId),
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('添加服务'));
+        if (constraints.maxWidth >= 440 &&
+            MediaQuery.textScalerOf(context).scale(14) <= 20) {
+          return Row(children: [
+            Expanded(child: heading),
+            const SizedBox(width: 12),
+            add
+          ]);
+        }
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [heading, const SizedBox(height: 12), add]);
+      });
 
   Widget _catalogView() {
     final api = _api!;
     final catalog = _catalog;
     final groups = _groups();
-    return CustomScrollView(slivers: [
-      SliverToBoxAdapter(
-          child: Padding(
-              padding: const EdgeInsets.only(bottom: 18),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Text('${api.displayName} · ${api.base.host}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w600)),
-                          OutlinedButton.icon(
-                              key: const ValueKey('tunnel-refresh'),
-                              onPressed: _busy ? null : _refresh,
-                              icon: const Icon(Icons.refresh_rounded, size: 18),
-                              label: Text(_busy ? '正在刷新…' : '刷新')),
-                          TextButton.icon(
-                              onPressed: _openManagement,
-                              icon: const Icon(Icons.open_in_new_rounded,
-                                  size: 18),
-                              label: const Text('打开管理台')),
-                          TextButton(
-                              onPressed: _logout, child: const Text('退出登录')),
-                          if (api.rememberedLogin)
-                            TextButton(
-                                key: const ValueKey('tunnel-forget'),
-                                onPressed: _busy ? null : _forgetRemembered,
-                                child: const Text('取消记住登录')),
-                        ]),
-                    const SizedBox(height: 12),
-                    Text(
-                        '${catalog?.devices.length ?? 0} 台隧道设备 · ${catalog?.services.length ?? 0} 项服务'),
-                    const SizedBox(height: 8),
-                    const Text('这里显示服务连接状态，远程桌面请使用“家庭设备”或设备 ID。',
-                        style: TextStyle(fontSize: 12)),
-                    if (catalog != null && catalog.devices.isNotEmpty)
-                      Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: FilledButton.icon(
-                              key: const ValueKey('tunnel-add-service'),
-                              onPressed: _busy
-                                  ? null
-                                  : () => _editService(
-                                      deviceId:
-                                          _deviceId.isEmpty ? null : _deviceId),
-                              icon: const Icon(Icons.add_rounded, size: 18),
-                              label: const Text('添加服务'))),
-                    if (catalog != null &&
-                        !catalog.capabilities.tcpCanCreate &&
-                        !catalog.capabilities.udpCanCreate)
-                      const Padding(
-                          padding: EdgeInsets.only(top: 8),
-                          child: Text('TCP / UDP 新建能力尚未由服务端开放，当前可添加网页服务。',
-                              style: TextStyle(fontSize: 12))),
-                    if (catalog != null && catalog.devices.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      DropdownButtonFormField<String>(
-                          key: const ValueKey('tunnel-device-filter'),
-                          value: _deviceId,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                              labelText: '查看设备', border: OutlineInputBorder()),
-                          items: [
-                            const DropdownMenuItem(
-                                value: '', child: Text('全部设备')),
-                            for (final device in catalog.devices)
-                              DropdownMenuItem(
-                                  value: device.id,
-                                  child: Text(
-                                      device.name.isEmpty
-                                          ? '未命名设备'
-                                          : device.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis)),
-                          ],
-                          onChanged: (value) =>
-                              setState(() => _deviceId = value ?? '')),
-                    ],
-                    if (_message.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      _messageBox()
-                    ],
-                    if (_busy || _entityBusy.isNotEmpty)
-                      const Padding(
-                          padding: EdgeInsets.only(top: 12),
-                          child: LinearProgressIndicator()),
-                    if (catalog != null && groups.isEmpty)
-                      const Padding(
-                          padding: EdgeInsets.only(top: 20),
-                          child: Text('还没有设备和服务，可以在管理台接入你的设备。')),
-                  ]))),
-      SliverList(
-          delegate: SliverChildBuilderDelegate(
-              (context, index) => _groupCard(groups[index]),
-              childCount: groups.length)),
-      const SliverToBoxAdapter(child: SizedBox(height: 24)),
+    return Column(children: [
+      _accountHeader(api),
+      const SizedBox(height: 8),
+      Expanded(
+          child: CustomScrollView(slivers: [
+        SliverToBoxAdapter(
+            child: Padding(
+                padding: const EdgeInsets.only(bottom: 18),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _connectionNotice(),
+                      const SizedBox(height: 24),
+                      _catalogToolbar(catalog),
+                      if (catalog != null &&
+                          !catalog.capabilities.tcpCanCreate &&
+                          !catalog.capabilities.udpCanCreate)
+                        const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: Text('TCP / UDP 新建能力尚未由服务端开放，当前可添加网页服务。',
+                                style: TextStyle(fontSize: 12))),
+                      if (catalog != null && catalog.devices.length > 1) ...[
+                        const SizedBox(height: 16),
+                        ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 320),
+                            child: DropdownButtonFormField<String>(
+                                key: const ValueKey('tunnel-device-filter'),
+                                value: _deviceId,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                    labelText: '查看设备',
+                                    border: OutlineInputBorder()),
+                                items: [
+                                  const DropdownMenuItem(
+                                      value: '', child: Text('全部设备')),
+                                  for (final device in catalog.devices)
+                                    DropdownMenuItem(
+                                        value: device.id,
+                                        child: Text(
+                                            device.name.isEmpty
+                                                ? '未命名设备'
+                                                : device.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis)),
+                                ],
+                                onChanged: (value) =>
+                                    setState(() => _deviceId = value ?? ''))),
+                      ],
+                      if (_message.isNotEmpty) ...[
+                        const SizedBox(height: 14),
+                        _messageBox()
+                      ],
+                      if (_busy || _entityBusy.isNotEmpty)
+                        const Padding(
+                            padding: EdgeInsets.only(top: 12),
+                            child: LinearProgressIndicator()),
+                      if (catalog != null && groups.isEmpty)
+                        const Padding(
+                            padding: EdgeInsets.only(top: 20),
+                            child: Text(
+                                '当前账号尚无接入设备。登录后会自动接入本机；其他设备也可使用接入码登记。默认不发布服务。')),
+                    ]))),
+        SliverList(
+            delegate: SliverChildBuilderDelegate(
+                (context, index) => _groupCard(groups[index]),
+                childCount: groups.length)),
+        SliverToBoxAdapter(
+            child: Text('家庭服务用于网页和端口转发。远程桌面请使用设备 ID 连接。',
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 12))),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ])),
     ]);
   }
 

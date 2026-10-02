@@ -161,7 +161,7 @@ class _OnlineStatusWidgetState extends State<OnlineStatusWidget> {
           : stateGlobal.svcStatus.value == SvcStatus.connecting
               ? translate("connecting_status")
               : stateGlobal.svcStatus.value == SvcStatus.notReady
-                  ? '家庭连接服务未就绪，请检查网络设置' // HOMEDESK: 给出可执行的下一步。
+                  ? '远控 ID 服务器未连接，请检查自建服务器端口' // HOMEDESK: 远控状态不冒充账号或隧道登录状态。
                   : translate('Ready'),
       style: TextStyle(fontSize: em),
       maxLines: 2, overflow: TextOverflow.ellipsis, // HOMEDESK: 适配窄窗口和大字体。

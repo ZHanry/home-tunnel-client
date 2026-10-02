@@ -52,7 +52,9 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
     _apiGeneration++;
     _devices = [];
     _waking.clear();
-    _message = '设备中心当前不可达，可通过设备 ID 连接。';
+    _message = _readOption('homedesk-console-enabled') == 'N'
+        ? '未启用内网家庭设备中心。已接入的服务设备请在“家庭服务”查看，远控使用设备 ID。'
+        : '设备中心当前不可达，可通过设备 ID 连接。';
   }
 
   bool _ensureConsole() {
@@ -304,7 +306,8 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
               child: Icon(Icons.devices_rounded,
                   size: 36, color: colors.onPrimaryContainer)),
           const SizedBox(height: 24),
-          Text(_loading ? '正在查找家庭设备' : '从连接第一台电脑开始',
+          Text(_loading ? '正在查找家庭设备' : _readOption('homedesk-console-enabled') == 'N'
+              ? '家庭设备中心未启用' : '从连接第一台电脑开始',
               textAlign: TextAlign.center,
               style:
                   const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),

@@ -2468,13 +2468,12 @@ class _AboutState extends State<_About> {
               const SelectionArea(
                 child: Text('基于 RustDesk 开源项目开发 · AGPL-3.0'),
               ),
-              // HOMEDESK: 两秒内连续点击版本号五次，解锁并持久化高级模式。
+              // HOMEDESK: 普通文本避免 SelectionArea 抢走点击，保留五次点击解锁和持久化。
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: _onVersionTap,
-                child: SelectionArea(
-                    child: Text('${translate('Version')}: $version')
-                        .marginSymmetric(vertical: 4.0)),
+                child: Text('${translate('Version')}: $version')
+                    .marginSymmetric(vertical: 4.0),
               ),
               SelectionArea(
                   child: Text('${translate('Build Date')}: $buildDate')

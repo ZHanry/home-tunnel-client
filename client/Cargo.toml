@@ -105,6 +105,7 @@ qrcode-generator = "4.1"
 winapi = { version = "0.3", features = [
     "winuser",
     "wincrypt",
+    "jobapi2", # HOMEDESK: 用现有 winapi 的 Job Object 管理本实例隧道子进程。
     "shellscalingapi",
     "pdh",
     "synchapi",

@@ -26,6 +26,7 @@ pub struct PortalProfileUpdate;
 pub fn begin_portal_profile_update() -> PortalProfileUpdate {
     PORTAL_PROFILE_UPDATES.fetch_add(1, Ordering::SeqCst);
     PORTAL_PERMISSION_EPOCH.fetch_add(1, Ordering::SeqCst);
+    crate::homedesk_tunnel_runtime::stop_all(); // HOMEDESK: 模式保存开始先撤销后台联网。
     PortalProfileUpdate
 }
 impl Drop for PortalProfileUpdate {
@@ -38,11 +39,13 @@ impl Drop for PortalProfileUpdate {
 pub fn mark_profile_unconfirmed() {
     PORTAL_PERMISSION_EPOCH.fetch_add(1, Ordering::SeqCst);
     PROFILE_CONFIRMED.store(false, Ordering::SeqCst);
+    crate::homedesk_tunnel_runtime::stop_all(); // HOMEDESK: 后台确认失效不保留隧道进程。
 }
 pub fn mark_profile_confirmed() { PROFILE_CONFIRMED.store(true, Ordering::SeqCst); }
 
 pub fn invalidate_portal_permission() {
     PORTAL_PERMISSION_EPOCH.fetch_add(1, Ordering::SeqCst);
+    crate::homedesk_tunnel_runtime::stop_all(); // HOMEDESK: 批准地址变更同步终止旧 Agent。
 }
 
 // HOMEDESK: 记住记录不能自行授予端点许可，批准地址须来自本机显式填写的 HTTPS origin。
@@ -248,6 +251,8 @@ pub fn console_allowed() -> bool {
         CONSOLE_TRUSTED_PATH == "true",
     )
 }
+
+pub fn console_configured() -> bool { CONSOLE_ENABLED == "true" }
 
 pub fn allows_http(url: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(url) else { return false; };

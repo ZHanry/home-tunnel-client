@@ -224,6 +224,12 @@ pub fn is_option_fixed(key: &str) -> bool {
 
 #[inline]
 pub fn get_local_option(key: String) -> String {
+    if key == "homedesk-tunnel-agent-state" {
+        return crate::homedesk_tunnel_runtime::status(); // HOMEDESK: 仅返回公开进程状态。
+    }
+    if key == "homedesk-console-enabled" {
+        return if crate::homedesk_config::console_configured() { "Y" } else { "N" }.to_owned(); // HOMEDESK: 区分未配置与连接失败。
+    }
     if key == "homedesk-console-allowed" {
         return if crate::homedesk_config::console_allowed() { "Y" } else { "N" }.to_owned(); // HOMEDESK: Flutter 每次管理台请求前读取动态模式许可。
     }
@@ -254,6 +260,10 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn set_local_option(key: String, value: String) {
+    if key == "homedesk-tunnel-agent-command" {
+        crate::homedesk_tunnel_runtime::command(&value); // HOMEDESK: 接入码仅交给 stdin，不进入 LocalConfig。
+        return;
+    }
     if key == "homedesk-home-tunnel-origin" {
         // HOMEDESK: 本机批准的服务 origin 只保存合法 HTTPS 地址，变更即撤销旧门户许可。
         let Some(origin) = crate::homedesk_config::normalize_portal_origin(&value) else { return; };
