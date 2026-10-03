@@ -14,7 +14,7 @@ def main():
     args=parser.parse_args()
     root=Path(__file__).resolve().parents[2]
     baseline_path=Path(__file__).with_name('gitleaks-baseline.json')
-    baseline=json.loads(baseline_path.read_text()) if baseline_path.is_file() else {}
+    baseline=json.loads(baseline_path.read_text(encoding='utf-8')) if baseline_path.is_file() else {}
     raw=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z'],cwd=root)
     with tempfile.TemporaryDirectory(prefix='homedesk-secret-scan-') as temp:
         for path in raw.decode('utf-8').split('\0'):
@@ -29,7 +29,8 @@ def main():
         unexpected=0
         reviewed=0
         if result.returncode and report.is_file():
-            for finding in json.loads(report.read_text()):
+            # Gitleaks JSON 固定为 UTF-8；Windows 默认代码页会破坏中文路径，导致基线匹配失败。
+            for finding in json.loads(report.read_text(encoding='utf-8')):
                 path=Path(finding['File'])
                 try:path=path.relative_to(temp)
                 except ValueError:pass
