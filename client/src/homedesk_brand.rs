@@ -10,7 +10,7 @@ pub fn init() {
             Err(poisoned) => poisoned.into_inner(),
         };
         if app_name.as_str() == "RustDesk" {
-            *app_name = env!("HOMEDESK_APP_NAME").to_owned();
+            *app_name = env!("HOMEDESK_CONFIG_NAMESPACE").to_owned(); // HOMEDESK: 升级保留身份命名空间，显示品牌独立。
         }
     });
 }

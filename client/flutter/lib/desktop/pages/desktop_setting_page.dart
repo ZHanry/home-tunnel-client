@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/homedesk_service_address.dart'; // HOMEDESK: 网络设置集中配置账号和服务地址。
+import 'package:flutter_hbb/homedesk_settings_shell.dart'; // HOMEDESK: 与首页一致的设置布局和卡片。
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
@@ -22,7 +24,7 @@ import 'package:flutter_hbb/plugin/widgets/desktop_settings.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:url_launcher/url_launcher_string.dart';
+// HOMEDESK: 关于页不再提供上游品牌外链，移除对应启动依赖。
 
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
@@ -38,7 +40,7 @@ const double _kRadioLeftMargin = 10;
 const double _kListViewBottomMargin = 15;
 const double _kTitleFontSize = 20;
 const double _kContentFontSize = 15;
-const Color _accentColor = MyTheme.accent;
+// HOMEDESK: 控件颜色从共享主题读取，避免设置页保留旧蓝色。
 const String _kSettingPageControllerTag = 'settingPageController';
 const String _kSettingPageTabKeyTag = 'settingPageTabKey';
 
@@ -78,6 +80,14 @@ class DesktopSettingPage extends StatefulWidget {
   ];
 
   DesktopSettingPage({Key? key, required this.initialTabkey}) : super(key: key);
+
+  static void selectSection(SettingsTabKey page) { // HOMEDESK: 从主页重开设置时定位正确分类。
+    final index = tabKeys.indexOf(page);
+    if (index < 0 || !Get.isRegistered<PageController>(tag: _kSettingPageControllerTag)) return;
+    final controller = Get.find<PageController>(tag: _kSettingPageControllerTag);
+    Get.find<Rx<SettingsTabKey>>(tag: _kSettingPageTabKeyTag).value = page;
+    if (controller.hasClients) controller.jumpToPage(index);
+  }
 
   @override
   State<DesktopSettingPage> createState() =>
@@ -271,6 +281,24 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    // HOMEDESK: 桌面设置使用横向分类和完整内容宽度，保留原状态与安全遮罩。
+    if (!isWeb) {
+      return Obx(() {
+        final tabs = _settingTabs();
+        return _buildBlock(children: [Expanded(child: HomeDeskSettingsShell(
+          labels: tabs.map((tab) => translate(tab.label)).toList(),
+          icons: tabs.map((tab) => tab.unselected).toList(),
+          selected: DesktopSettingPage.tabKeys.indexOf(selectedTab.value),
+          onSelected: (index) {
+            selectedTab.value = DesktopSettingPage.tabKeys[index];
+            controller.jumpToPage(index);
+          },
+          onBack: () => DesktopTabPage.onHome(),
+          child: PageView(controller: controller,
+            physics: const NeverScrollableScrollPhysics(), children: _children()),
+        ))]);
+      });
+    }
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.background,
       body: _buildBlock(
@@ -304,8 +332,8 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
     final settingsText = Text(
       translate('Settings'),
       textAlign: TextAlign.left,
-      style: const TextStyle(
-        color: _accentColor,
+      style: TextStyle(
+        color: Theme.of(context).colorScheme.primary, // HOMEDESK: 与主页一致。
         fontSize: _kTitleFontSize,
         fontWeight: FontWeight.w400,
       ),
@@ -368,17 +396,17 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
             Container(
               width: 4,
               height: _kTabHeight * 0.7,
-              color: selected ? _accentColor : null,
+              color: selected ? Theme.of(context).colorScheme.primary : null, // HOMEDESK: 统一强调色。
             ),
             Icon(
               selected ? tab.selected : tab.unselected,
-              color: selected ? _accentColor : null,
+              color: selected ? Theme.of(context).colorScheme.primary : null, // HOMEDESK: 统一强调色。
               size: 20,
             ).marginOnly(left: 13, right: 10),
             Text(
               translate(tab.label),
               style: TextStyle(
-                  color: selected ? _accentColor : null,
+                  color: selected ? Theme.of(context).colorScheme.primary : null, // HOMEDESK: 统一强调色。
                   fontWeight: FontWeight.w400,
                   fontSize: _kContentFontSize),
             ),
@@ -1613,6 +1641,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
         // HOMEDESK: 解锁后无需重启设置页即可显示服务器入口。
         child: Obx(() => Column(children: [
               network(context),
+              const Padding(padding: EdgeInsets.fromLTRB(18, 0, 18, 14), child: HomeDeskServiceAddress()), // HOMEDESK: 与设置卡片对齐，保存仍由原生校验。
             ])),
       ),
     ]).marginOnly(bottom: _kListViewBottomMargin);
@@ -1673,7 +1702,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
             );
 
       return ListTile(
-        leading: Icon(icon, color: _accentColor),
+        leading: Icon(icon, color: Theme.of(context).colorScheme.primary), // HOMEDESK: 统一强调色。
         title: titleWidget,
         enabled: !locked,
         onTap: onTap,
@@ -1718,7 +1747,7 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
               if (!hideServer)
                 listTile(
                   icon: Icons.dns_outlined,
-                  title: 'HomeDesk 网络模式',
+                  title: '$appName 网络模式', // HOMEDESK: 标题随构建品牌变化。
                   // HOMEDESK: 只允许通过原子组入口切换模式、服务器、公钥与来源边界。
                   trailing: Text(
                       bind.mainGetOptionSync(key: 'homedesk-net-mode') ==
@@ -2438,22 +2467,18 @@ class _AboutState extends State<_About> {
   @override
   Widget build(BuildContext context) {
     return futureBuilder(future: () async {
-      final license = await bind.mainGetLicense();
       final version = await bind.mainGetVersion();
       final buildDate = await bind.mainGetBuildDate();
       final fingerprint = await bind.mainGetFingerprint();
       return {
-        'license': license,
         'version': version,
         'buildDate': buildDate,
         'fingerprint': fingerprint
       };
     }(), hasData: (data) {
-      final license = data['license'].toString();
       final version = data['version'].toString();
       final buildDate = data['buildDate'].toString();
       final fingerprint = data['fingerprint'].toString();
-      const linkStyle = TextStyle(decoration: TextDecoration.underline);
       final scrollController = ScrollController();
       return SingleChildScrollView(
         controller: scrollController,
@@ -2482,49 +2507,8 @@ class _AboutState extends State<_About> {
                 SelectionArea(
                     child: Text('${translate('Fingerprint')}: $fingerprint')
                         .marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString('https://rustdesk.com/privacy.html');
-                  },
-                  child: Text(
-                    translate('Privacy Statement'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString('https://rustdesk.com');
-                  },
-                  child: Text(
-                    translate('Website'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              Container(
-                decoration: const BoxDecoration(color: Color(0xFF2c8cff)),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 24, horizontal: 8),
-                child: SelectionArea(
-                    child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Copyright © ${DateTime.now().toString().substring(0, 4)} Purslane Tech Pte. Ltd.\n$license',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          Text(
-                            translate('Slogan_tip'),
-                            style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white),
-                          )
-                        ],
-                      ),
-                    ),
-                  ],
-                )),
-              ).marginSymmetric(vertical: 4.0)
+              // HOMEDESK: 移除上游宣传区块及品牌外链，开源版权以普通文字保留。
+              const SelectionArea(child: Text('Copyright © 2026 Purslane Tech Pte. Ltd.\n许可证与第三方声明见随包文件。')),
             ],
           ).marginOnly(left: _kContentHMargin)
         ]),
@@ -2542,36 +2526,8 @@ Widget _Card(
     {required String title,
     required List<Widget> children,
     List<Widget>? title_suffix}) {
-  return Row(
-    children: [
-      Flexible(
-        child: SizedBox(
-          width: _kCardFixedWidth,
-          child: Card(
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                        child: Text(
-                      translate(title),
-                      textAlign: TextAlign.start,
-                      style: const TextStyle(
-                        fontSize: _kTitleFontSize,
-                      ),
-                    )),
-                    ...?title_suffix
-                  ],
-                ).marginOnly(left: _kContentHMargin, top: 10, bottom: 10),
-                ...children
-                    .map((e) => e.marginOnly(top: 4, right: _kContentHMargin)),
-              ],
-            ).marginOnly(bottom: 10),
-          ).marginOnly(left: _kCardLeftMargin, top: 15),
-        ),
-      ),
-    ],
-  );
+  // HOMEDESK: 卡片由独立组件统一排版，设置动作保持原接线。
+  return HomeDeskSettingsCard(title: translate(title), children: children, titleSuffix: title_suffix);
 }
 
 // ignore: non_constant_identifier_names

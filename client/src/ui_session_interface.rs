@@ -1681,6 +1681,7 @@ impl<T: InvokeUiSession> Session<T> {
 }
 
 pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
+    fn homedesk_connection_path(&self, _path: &str) {} // HOMEDESK: 不改变已有会话协议。
     fn set_cursor_data(&self, cd: CursorData);
     fn set_cursor_id(&self, id: String);
     fn set_cursor_position(&self, cp: CursorPosition);
@@ -1766,6 +1767,9 @@ impl<T: InvokeUiSession> FileManager for Session<T> {}
 
 #[async_trait]
 impl<T: InvokeUiSession> Interface for Session<T> {
+    fn homedesk_connection_path(&self, path: &str) {
+        self.ui_handler.homedesk_connection_path(path); // HOMEDESK: 仅转发被动连接观测。
+    }
     fn get_lch(&self) -> Arc<RwLock<LoginConfigHandler>> {
         return self.lc.clone();
     }

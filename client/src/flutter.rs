@@ -744,6 +744,11 @@ impl InvokeUiSession for FlutterHandler {
         );
     }
 
+    // HOMEDESK: 连接路径作为独立 UI 事件，不传出对端地址或其他凭据。
+    fn homedesk_connection_path(&self, path: &str) {
+        self.push_event("homedesk_connection_path", &[("path", path)], &[]);
+    }
+
     fn set_fingerprint(&self, fingerprint: String) {
         self.push_event("fingerprint", &[("fingerprint", &fingerprint)], &[]);
     }

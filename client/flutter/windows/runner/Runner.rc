@@ -91,7 +91,7 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "Purslane Tech Pte. Ltd." "\0"
+            VALUE "CompanyName", HOMEDESK_APP_NAME "\0" // HOMEDESK: 产品发布品牌；上游版权保留。
             // HOMEDESK: Keep Windows file metadata aligned with the configured brand.
             VALUE "FileDescription", HOMEDESK_FILE_DESCRIPTION "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"

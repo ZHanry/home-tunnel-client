@@ -271,6 +271,8 @@ class FfiModel with ChangeNotifier {
     cachedPeerData.streamType = streamType;
     _secure = secure;
     _direct = direct;
+    parent.target?.qualityMonitorModel.updateConnectionDetails(
+        streamType: streamType, secure: secure, direct: direct); // HOMEDESK: 实际会话信息更新中文质量面板。
     try {
       var connectionType = ConnectionTypeState.find(peerId);
       connectionType.setSecure(secure);
@@ -347,6 +349,8 @@ class FfiModel with ChangeNotifier {
         handleSyncPeerInfo(evt, sessionId, peerId);
       } else if (name == 'sync_platform_additions') {
         handlePlatformAdditions(evt, sessionId, peerId);
+      } else if (name == 'homedesk_connection_path') { // HOMEDESK: 仅接收连接观测事件。
+        parent.target?.qualityMonitorModel.updateConnectionDetails(path: evt['path']);
       } else if (name == 'connection_ready') {
         setConnectionType(peerId, evt['secure'] == 'true',
             evt['direct'] == 'true', evt['stream_type'] ?? '');
@@ -3539,6 +3543,9 @@ class CursorModel with ChangeNotifier {
 }
 
 class QualityMonitorData {
+  String connectionPath = 'unknown'; // HOMEDESK: 不从网络模式推测路径。
+  String? streamType; // HOMEDESK: 实际会话传输协议。
+  bool? secure; // HOMEDESK: 实际会话加密状态。
   String? speed;
   String? fps;
   String? delay;
@@ -3556,6 +3563,21 @@ class QualityMonitorModel with ChangeNotifier {
 
   bool get show => _show;
   QualityMonitorData get data => _data;
+
+  // HOMEDESK: 路径未知时明确展示未知；直连/中继由已有握手结果确认。
+  void updateConnectionDetails({String? path, String? streamType, bool? secure, bool? direct, bool reset = false}) {
+    if (reset || path == 'unknown') {
+      _data.connectionPath = 'unknown'; _data.streamType = null; _data.secure = null;
+      _data.speed = null; _data.fps = null; _data.delay = null; // HOMEDESK: 重连时不展示上一轮采样。
+      _data.targetBitrate = null; _data.codecFormat = null; _data.chroma = null;
+    }
+    if (path != null && ['lan', 'p2p', 'relay', 'direct_unknown'].contains(path)) _data.connectionPath = path;
+    if (direct == false) _data.connectionPath = 'relay';
+    if (direct == true && _data.connectionPath == 'unknown') _data.connectionPath = 'direct_unknown';
+    if (streamType != null) _data.streamType = streamType;
+    if (secure != null) _data.secure = secure;
+    notifyListeners();
+  }
 
   checkShowQualityMonitor(SessionID sessionId) async {
     final show = await bind.sessionGetToggleOption(
@@ -4016,6 +4038,7 @@ class FFI {
     await imageModel.update(null);
     cursorModel.clear();
     ffiModel.clear();
+    qualityMonitorModel.updateConnectionDetails(reset: true); // HOMEDESK: 所有模型初始化后才清理质量状态。
     canvasModel.clear();
     inputModel.resetModifiers();
     // Dispose relative mouse mode resources to ensure cursor is restored

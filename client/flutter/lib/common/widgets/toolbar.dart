@@ -901,7 +901,7 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         await bind.sessionToggleOption(sessionId: sessionId, value: option);
         ffi.qualityMonitorModel.checkShowQualityMonitor(sessionId);
       },
-      child: Text(translate('Show quality monitor'))));
+      child: const Text('显示连接质量'))); // HOMEDESK: 家庭客户端质量面板入口统一中文。
   // mute
   if (isDefaultConn && perms['audio'] != false) {
     final option = 'disable-audio';

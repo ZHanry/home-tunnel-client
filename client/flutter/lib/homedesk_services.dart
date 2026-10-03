@@ -8,6 +8,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'homedesk_credentials.dart';
+import 'homedesk_account.dart';
+import 'homedesk_device_label.dart';
 import 'homedesk_local_agent.dart';
 import 'homedesk_service_editor.dart';
 import 'homedesk_tunnel_api.dart';
@@ -26,6 +28,7 @@ class HomeDeskServices extends StatefulWidget {
   final Future<void> Function(String)? onCopy;
   final Future<void> Function(String)? saveOrigin;
   final HomeDeskCredentialStorage Function()? credentialStoreFactory;
+  final HomeDeskAccount? account;
 
   const HomeDeskServices(
       {super.key,
@@ -35,13 +38,41 @@ class HomeDeskServices extends StatefulWidget {
       this.onOpenUrl,
       this.onCopy,
       this.saveOrigin,
-      this.credentialStoreFactory});
+      this.credentialStoreFactory,
+      this.account});
 
   @override
   State<HomeDeskServices> createState() => _HomeDeskServicesState();
 }
 
 class _HomeDeskServicesState extends State<HomeDeskServices> {
+  bool _accountQueued = false;
+  HomeTunnelApi? _publishedApi;
+  void _changeState(VoidCallback action) {
+    super.setState(action);
+    if (widget.account == null || _accountQueued) return;
+    _accountQueued = true;
+    scheduleMicrotask(() {
+      _accountQueued = false;
+      if (!mounted) return;
+      final api = _api;
+      if (api != null && api.isSignedIn) {
+        _publishedApi = api;
+        final generation = _generation;
+        widget.account!
+            .publish(api, _catalog, _localAgent?.deviceId ?? '', _editDevice,
+                onCatalog: (value) {
+          if (_current(api, generation)) {
+            _changeState(() => _applyCatalog(value));
+          }
+        });
+      } else {
+        widget.account!.clear(_publishedApi);
+        _publishedApi = null;
+      }
+    });
+  }
+
   final _origin = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
@@ -105,6 +136,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     _rememberLogin = false;
     _entityBusy.clear();
     _clearSecrets();
+    _origin.text = _approvedOrigin() ?? '';
     _message = '网络配置或许可已变化，请确认自建公网模式后重新登录。';
   }
 
@@ -113,7 +145,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       await api.revoke();
     } catch (_) {
       if (mounted && generation == _generation) {
-        setState(() => _message = '网络会话已关闭，但无法确认清除该会话保存的登录。请检查本机安全存储。');
+        _changeState(() => _message = '网络会话已关闭，但无法确认清除该会话保存的登录。请检查本机安全存储。');
       }
     }
   }
@@ -123,7 +155,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final changed = _api != null && _apiPermission != _readPermission();
     if (allowed != _allowed || changed) {
       if (mounted) {
-        setState(() {
+        _changeState(() {
           _allowed = allowed;
           if (!allowed || changed) _revoke();
         });
@@ -167,7 +199,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     if (!_allowed) return;
     final initialGeneration = _generation;
     final permission = _readPermission();
-    setState(() => _busy = true);
+    _changeState(() => _busy = true);
     HomeTunnelApi? api;
     var generation = initialGeneration;
     try {
@@ -181,7 +213,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       final approved = _approvedOrigin();
       if (approved == null || homeTunnelOrigin(account.origin) != approved) {
         if (mounted) {
-          setState(() => _message = '保存的账号与本机批准地址不一致，未恢复登录。请手动登录。');
+          _changeState(() => _message = '保存的账号与本机批准地址不一致，未恢复登录。请手动登录。');
         }
         return;
       }
@@ -192,14 +224,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _api = api;
       _apiPermission = permission;
       generation = ++_generation;
-      setState(() {
+      _changeState(() {
         _rememberLogin = true;
         _message = '正在恢复记住的登录…';
       });
       final restored = await api.restore();
       if (!_current(api, generation)) return;
       if (!restored) {
-        setState(() {
+        _changeState(() {
           _rememberLogin = false;
           _message = '没有可以恢复的登录，请重新输入密码。';
         });
@@ -207,7 +239,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       }
       final catalog = await api.catalog();
       if (!_current(api, generation)) return;
-      setState(() {
+      _changeState(() {
         _catalog = catalog;
         _message = '已恢复记住的登录。';
       });
@@ -218,14 +250,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _api = null;
       _apiPermission = null;
       if (mounted && generation == _generation) {
-        setState(() {
+        _changeState(() {
           _rememberLogin = false;
           _message = '保存的登录未能恢复，请重新登录。${_errorMessage(error)}';
         });
       }
     } finally {
       if (mounted && generation == _generation) {
-        setState(() => _busy = false);
+        _changeState(() => _busy = false);
       }
     }
   }
@@ -235,7 +267,11 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     super.initState();
     _credentialStore = widget.credentialStoreFactory?.call() ??
         HomeDeskCredentialStore(
-            applicationSupportDirectory: getApplicationSupportDirectory);
+            applicationSupportDirectory: () async {
+              final approved = bind.mainGetLocalOption(key: 'homedesk-credential-support');
+              if (approved.isEmpty) return await getApplicationSupportDirectory();
+              return Directory(approved);
+            }); // HOMEDESK: 显示品牌更名后仍由原生批准旧身份目录。
     _allowed = _readAllowed();
     final approved = _approvedOrigin();
     if (approved != null) _origin.text = approved;
@@ -246,7 +282,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       if (_localAgent != null) {
         final before = _localAgent!.description;
         _localAgent!.poll();
-        if (mounted && before != _localAgent!.description) setState(() {});
+        if (mounted && before != _localAgent!.description) _changeState(() {});
       }
       _ticks++;
       if (_ticks % 30 == 0 && _api?.isSignedIn == true && _entityBusy.isEmpty) {
@@ -258,31 +294,33 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   Future<void> _login() async {
     if (_busy || !_ensureAllowed()) return;
     if (_username.text.trim().isEmpty || _password.text.isEmpty) {
-      setState(() => _message = '请输入账号和密码。');
+      _changeState(() => _message = '请输入账号和密码。');
       return;
     }
     String origin;
     try {
       origin = homeTunnelOrigin(_origin.text.trim());
     } catch (_) {
-      setState(() => _message = '请输入有效的 HTTPS 服务端地址，不包含路径或账号信息。');
+      _changeState(() => _message = '请输入有效的 HTTPS 服务端地址，不包含路径或账号信息。');
       return;
     }
     _selectDraftOwner(origin, _username.text.trim());
-    if (_localAgent != null) await _localAgent!.stop();
+    final previousAgent = _localAgent;
     _localAgent = null;
     _api?.close();
     _api = null;
     _apiPermission = null;
     final generation = ++_generation;
     HomeTunnelApi? api;
-    setState(() {
+    _changeState(() {
       _busy = true;
       _message = '';
       _catalog = null;
       _deviceId = '';
     });
     try {
+      if (previousAgent != null) await previousAgent.stop();
+      if (!mounted || generation != _generation) return;
       // 本机明确批准的 origin 独立保存；写入会变更许可代次，随后再固定新代次。
       await _credentialStore.clear();
       await (widget.saveOrigin?.call(origin) ??
@@ -308,15 +346,15 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           mfaCode: _mfa.text.trim().isEmpty ? null : _mfa.text.trim(),
           rememberLogin: _rememberLogin && _credentialStore.supported);
       if (!_current(api, generation)) return;
-      setState(_clearSecrets);
+      _changeState(_clearSecrets);
       final catalog = await api.catalog();
       if (!_current(api, generation)) return;
-      setState(() => _catalog = catalog);
+      _changeState(() => _catalog = catalog);
       await _attachLocal(api, generation);
     } catch (error) {
       if (!mounted || generation != _generation) return;
       if (api != null && !_current(api, generation)) return;
-      setState(() {
+      _changeState(() {
         _message = _errorMessage(error);
         final code = error is HomeTunnelApiException ? error.code : '';
         _needsMfa = code == 'MFA_REQUIRED' || code == 'MFA_INVALID';
@@ -325,7 +363,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       });
     } finally {
       if (mounted && _generation == generation) {
-        setState(() => _busy = false);
+        _changeState(() => _busy = false);
       }
     }
   }
@@ -353,14 +391,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     try {
       final catalog = await _localAgent!.attach(api, _catalog!);
       if (_current(api, generation) && mounted) {
-        setState(() => _catalog = catalog);
+        _changeState(() => _catalog = catalog);
       }
     } on HomeDeskAgentException catch (_) {
-      if (mounted && _current(api, generation)) setState(() {});
+      if (mounted && _current(api, generation)) _changeState(() {});
     } catch (_) {
       if (_localAgent != null) {
         _localAgent!.error = const HomeDeskAgentException('RUNTIME_FAILED');
-        if (mounted) setState(() {});
+        if (mounted) _changeState(() {});
       }
     }
   }
@@ -389,19 +427,19 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final api = _api;
     if (api == null || !api.isSignedIn) return;
     final generation = _generation;
-    setState(() {
+    _changeState(() {
       _busy = true;
       _message = '';
     });
     try {
       final catalog = await api.catalog();
       if (!_current(api, generation)) return;
-      setState(() {
+      _changeState(() {
         _applyCatalog(catalog);
       });
     } catch (error) {
       if (!_current(api, generation)) return;
-      setState(() {
+      _changeState(() {
         _message = _errorMessage(error);
         if (!api.isSignedIn) {
           _catalog = null;
@@ -411,7 +449,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       });
     } finally {
       if (mounted && identical(_api, api) && _generation == generation) {
-        setState(() => _busy = false);
+        _changeState(() => _busy = false);
       }
     }
   }
@@ -420,7 +458,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final api = _api;
     final localAgent = _localAgent;
     _localAgent = null;
-    setState(() {
+    _changeState(() {
       _generation++;
       _api = null;
       _apiPermission = null;
@@ -450,7 +488,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           ((error is HomeTunnelApiException &&
                   error.code == 'SECURE_STORE_ERROR') ||
               error is HomeDeskCredentialException)) {
-        setState(() => _message = '本次会话已关闭，但无法确认清除保存的登录。请检查本机安全存储后再试。');
+        _changeState(() => _message = '本次会话已关闭，但无法确认清除保存的登录。请检查本机安全存储后再试。');
       }
     } finally {
       api.close();
@@ -461,21 +499,23 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final api = _api;
     if (api == null || _busy || !_ensureAllowed()) return;
     final generation = _generation;
-    setState(() => _busy = true);
+    _changeState(() => _busy = true);
     try {
       await api.forgetRememberedLogin();
       if (_current(api, generation)) {
-        setState(() {
+        _changeState(() {
           _rememberLogin = false;
           _message = '已取消记住登录。本次会话仍可继续使用。';
         });
       }
     } catch (error) {
       if (_current(api, generation)) {
-        setState(() => _message = _errorMessage(error));
+        _changeState(() => _message = _errorMessage(error));
       }
     } finally {
-      if (mounted && generation == _generation) setState(() => _busy = false);
+      if (mounted && generation == _generation) {
+        _changeState(() => _busy = false);
+      }
     }
   }
 
@@ -488,12 +528,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       throw const HomeTunnelApiException(
           '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
     }
-    setState(() => _entityBusy.add(key));
+    _changeState(() => _entityBusy.add(key));
     try {
       return await action();
     } finally {
       if (mounted && generation == _generation) {
-        setState(() => _entityBusy.remove(key));
+        _changeState(() => _entityBusy.remove(key));
       }
     }
   }
@@ -502,14 +542,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     try {
       final catalog = await api.catalog();
       if (_current(api, generation)) {
-        setState(() {
+        _changeState(() {
           _applyCatalog(catalog);
           _message = '操作已完成。';
         });
       }
     } catch (error) {
       if (_current(api, generation)) {
-        setState(() {
+        _changeState(() {
           _message = '操作已完成，但列表暂未刷新。请刷新查看当前设置。';
           if (!api.isSignedIn) {
             _catalog = null;
@@ -523,7 +563,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   void _mutationFailed(String key, Object error) {
     final code = error is HomeTunnelApiException ? error.code : '';
     if (!mounted) return;
-    setState(() {
+    _changeState(() {
       if (code == 'MUTATION_UNKNOWN' || code.contains('VERSION_CONFLICT')) {
         _needsReview.add(key);
       }
@@ -591,7 +631,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
             onDraftChanged: (draft) => _serviceDrafts[key] = draft,
             onReviewConfirmed: () {
               if (_current(api, generation)) {
-                setState(() => _needsReview.remove(key));
+                _changeState(() => _needsReview.remove(key));
               }
             },
             onReview: () => _operate(key, api, generation, () async {
@@ -600,7 +640,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                     throw const HomeTunnelApiException(
                         '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
                   }
-                  setState(() => _applyCatalog(latest));
+                  _changeState(() => _applyCatalog(latest));
                   if (service == null) {
                     final target =
                         _serviceDrafts[key]?.deviceId ?? initial.deviceId;
@@ -735,7 +775,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
             onDraftChanged: (draft) => _deviceDrafts[device.id] = draft,
             onReviewConfirmed: () {
               if (_current(api, generation)) {
-                setState(() => _needsReview.remove(device.id));
+                _changeState(() => _needsReview.remove(device.id));
               }
             },
             onReview: () => _operate(device.id, api, generation, () async {
@@ -744,7 +784,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                     throw const HomeTunnelApiException(
                         '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
                   }
-                  setState(() => _applyCatalog(latest));
+                  _changeState(() => _applyCatalog(latest));
                   final matches =
                       latest.devices.where((item) => item.id == device.id);
                   if (matches.isEmpty) {
@@ -783,7 +823,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   Future<void> _open(Uri uri) async {
     if (!_ensureAllowed()) return;
     if (homeTunnelWebUrl(uri.toString()) == null) {
-      setState(() => _message = '这个服务没有可打开的网页地址。');
+      _changeState(() => _message = '这个服务没有可打开的网页地址。');
       return;
     }
     final generation = _generation;
@@ -792,10 +832,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       final opened = await (widget.onOpenUrl?.call(uri) ??
           launchUrl(uri, mode: LaunchMode.externalApplication));
       if (!mounted || !_ensureAllowed() || generation != _generation) return;
-      if (!opened) setState(() => _message = '浏览器未能打开地址，请稍后重试。');
+      if (!opened) _changeState(() => _message = '浏览器未能打开地址，请稍后重试。');
     } catch (_) {
       if (mounted && _ensureAllowed() && generation == _generation) {
-        setState(() => _message = '浏览器未能打开地址，请稍后重试。');
+        _changeState(() => _message = '浏览器未能打开地址，请稍后重试。');
       }
     }
   }
@@ -810,7 +850,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       await _open(base);
     } catch (_) {
       if (mounted) {
-        setState(() => _message = '请先填写有效的 HTTPS 服务端地址。');
+        _changeState(() => _message = '请先填写有效的 HTTPS 服务端地址。');
       }
     }
   }
@@ -822,17 +862,18 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       await (widget.onCopy?.call(endpoint) ??
           Clipboard.setData(ClipboardData(text: endpoint)));
       if (mounted && _ensureAllowed() && generation == _generation) {
-        setState(() => _message = '访问地址已复制。');
+        _changeState(() => _message = '访问地址已复制。');
       }
     } catch (_) {
       if (mounted && _ensureAllowed() && generation == _generation) {
-        setState(() => _message = '无法写入剪贴板，可以手动选择并复制访问地址。');
+        _changeState(() => _message = '无法写入剪贴板，可以手动选择并复制访问地址。');
       }
     }
   }
 
   @override
   void dispose() {
+    widget.account?.clear(_publishedApi);
     _generation++;
     _timer?.cancel();
     _api?.close();
@@ -871,13 +912,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                           children: [
                             const Icon(Icons.home_work_outlined, size: 38),
                             const SizedBox(height: 14),
-                            const Text('连接你的家庭服务',
+                            const Text('登录你的家庭账号',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     fontSize: 20, fontWeight: FontWeight.w700)),
                             const SizedBox(height: 10),
-                            const Text(
-                                '使用 home-tunnel 账号查看设备上的服务。服务连接由各设备上的客户端提供。'),
+                            const Text('登录后，本机会加入家庭设备，并显示同账号的电脑和服务。'),
                             const SizedBox(height: 20),
                             if (!_allowed) ...[
                               const Text('当前为纯内网模式或网络配置尚未确认，请先在网络设置中启用自建公网。'),
@@ -947,7 +987,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                 onChanged: !_busy &&
                                         _allowed &&
                                         _credentialStore.supported
-                                    ? (value) => setState(
+                                    ? (value) => _changeState(
                                         () => _rememberLogin = value ?? false)
                                     : null),
                             if (_message.isNotEmpty) _messageBox(),
@@ -972,7 +1012,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final groups = <String, _ServiceGroup>{
       for (final device in catalog.devices)
         device.id:
-            _ServiceGroup(device.id, device.name, device.online, device: device)
+            _ServiceGroup(device.id, homeDeskDeviceLabel(device.name), device.online, device: device)
     };
     for (final service in catalog.services) {
       (groups[service.deviceId] ??=
@@ -1241,7 +1281,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
             ? '服务隧道待连接'
             : agent.isAttaching
                 ? '正在接入本机…'
-                : '本机接入已启动';
+                : '本机已登记';
     return Container(
         margin: const EdgeInsets.only(top: 16),
         decoration: BoxDecoration(
@@ -1253,6 +1293,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
             borderRadius: BorderRadius.circular(12)),
         child: ExpansionTile(
             key: const ValueKey('tunnel-connection-notice'),
+            expandedAlignment: Alignment.centerLeft,
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
             shape: const Border(),
             collapsedShape: const Border(),
             leading: Icon(
@@ -1287,10 +1329,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                               onPressed: _busy
                                   ? null
                                   : () async {
-                                      setState(() => _busy = true);
+                                      _changeState(() => _busy = true);
                                       await _attachLocal(_api!, _generation);
                                       if (mounted) {
-                                        setState(() => _busy = false);
+                                        _changeState(() => _busy = false);
                                       }
                                     },
                               child: const Text('重试本机接入')),
@@ -1380,12 +1422,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                         child: Text(
                                             device.name.isEmpty
                                                 ? '未命名设备'
-                                                : device.name,
+                                                : homeDeskDeviceLabel(device.name),
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis)),
                                 ],
-                                onChanged: (value) =>
-                                    setState(() => _deviceId = value ?? ''))),
+                                onChanged: (value) => _changeState(
+                                    () => _deviceId = value ?? ''))),
                       ],
                       if (_message.isNotEmpty) ...[
                         const SizedBox(height: 14),

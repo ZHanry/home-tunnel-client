@@ -346,8 +346,9 @@ class _ConnectionPageState extends State<ConnectionPage>
       width: 320 + 20 * 2,
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 22),
       decoration: BoxDecoration(
-          borderRadius: const BorderRadius.all(Radius.circular(13)),
-          border: Border.all(color: Theme.of(context).colorScheme.background)),
+          color: Theme.of(context).colorScheme.surface, // HOMEDESK: 最近连接与主页共用卡片样式。
+          borderRadius: const BorderRadius.all(Radius.circular(18)),
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant)),
       child: Ink(
         child: Column(
           children: [

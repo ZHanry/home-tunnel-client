@@ -125,9 +125,9 @@ class HomeDeskLocalAgent {
       if (agentState == 'Degraded' || agentState == 'Error') {
         return '本机已登记，隧道连接尚未就绪。请核对 FRPS 端口和服务器状态。';
       }
-      return '本机已接入账号，Agent 正在运行。服务需由你明确创建后才发布。';
+      return '这台电脑已加入设备列表，可在下方添加和管理服务。';
     }
     if (phase == 'error') return const HomeDeskAgentException('RUNTIME_FAILED').message;
-    return '本机 Agent 已停止。';
+    return '本机服务连接已停止。';
   }
 }

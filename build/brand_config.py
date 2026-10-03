@@ -25,6 +25,7 @@ class BrandConfig:
     executable_name: str
     package_name: str
     source: Path
+    config_namespace: str = ""
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,11 @@ def _strip_comment(line: str) -> str:
 
 
 def _validate(config: BrandConfig) -> BrandConfig:
+    namespace = config.config_namespace or config.app_name
+    if not namespace or len(namespace) > 64 or namespace != namespace.strip() or any(
+        ord(c) < 32 or c in '<>:"/\\|?*' for c in namespace
+    ):
+        raise ValueError("brand.config_namespace 必须是合法的独立配置目录名")
     if not config.app_name or len(config.app_name) > 64:
         raise ValueError("brand.app_name 必须为 1 到 64 个字符")
     if any(ord(char) < 32 for char in config.app_name):
@@ -146,6 +152,8 @@ def _load_brand_from_values(values: dict[str, object], source: Path) -> BrandCon
             executable_name=_required_string(values, "brand", "executable_name", source),
             package_name=_required_string(values, "brand", "package_name", source),
             source=source,
+            config_namespace=_required_string(values, "brand", "config_namespace", source)
+                if "config_namespace" in values else "",
         )
     )
 
@@ -296,7 +304,7 @@ def write_c_header(config: BrandConfig, output: Path) -> None:
         f'#define HOMEDESK_APP_NAME_WIDE L"{app_name}"\n'
         f'#define HOMEDESK_EXECUTABLE_NAME "{executable_name}"\n'
         f'#define HOMEDESK_ORIGINAL_FILENAME "{executable_name}.exe"\n'
-        f'#define HOMEDESK_FILE_DESCRIPTION "{app_name} Remote Desktop"\n'
+        f'#define HOMEDESK_FILE_DESCRIPTION "{app_name}"\n'
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(content, encoding="utf-8", newline="\n")

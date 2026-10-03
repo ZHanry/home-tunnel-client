@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'homedesk_tunnel_api.dart';
+import 'homedesk_device_label.dart';
 
 class HomeDeskServiceDraft {
   final String? serviceId;
@@ -87,6 +88,7 @@ class HomeDeskServiceEditor extends StatefulWidget {
 
 class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
   final _form = GlobalKey<FormState>();
+  final _scroll = ScrollController();
   late final TextEditingController _name;
   late final TextEditingController _host;
   late final TextEditingController _port;
@@ -251,228 +253,345 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
 
   @override
   void dispose() {
+    _scroll.dispose();
     for (final controller in [_name, _host, _port, _subdomain]) {
       controller.dispose();
     }
     super.dispose();
   }
 
+  InputDecoration _decoration(String label, {String? hint, String? helper}) =>
+      InputDecoration(
+          labelText: label,
+          hintText: hint,
+          helperText: helper,
+          helperMaxLines: 2,
+          errorMaxLines: 3,
+          isDense: true,
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          border: const OutlineInputBorder());
+
+  Widget _pair(Widget first, Widget second,
+          {int firstFlex = 1, int secondFlex = 1}) =>
+      LayoutBuilder(builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 480 &&
+            MediaQuery.textScalerOf(context).scale(14) <= 20;
+        if (!wide) {
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [first, const SizedBox(height: 16), second]);
+        }
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(flex: firstFlex, child: first),
+          const SizedBox(width: 16),
+          Expanded(flex: secondFlex, child: second),
+        ]);
+      });
+
   @override
   Widget build(BuildContext context) {
     final isNew = widget.initial.serviceId == null;
+    final colors = Theme.of(context).colorScheme;
     final types = <String>{...widget.supportedTypes, _proxyType};
     final saveAllowed =
         !_busy && (!_needsReview || (_reviewLoaded && _reviewed && _exists));
+    final name = TextFormField(
+        key: const ValueKey('service-name'),
+        controller: _name,
+        enabled: !_busy,
+        validator: _nameError,
+        textInputAction: TextInputAction.next,
+        decoration: _decoration('服务名称', hint: '例如家庭相册'));
+    final type = DropdownButtonFormField<String>(
+        key: const ValueKey('service-type'),
+        value: _proxyType,
+        isExpanded: true,
+        decoration: _decoration('连接类型'),
+        items: [
+          for (final type in types)
+            DropdownMenuItem(
+                value: type,
+                child: Text(
+                    type == 'http' ? '网页服务（HTTP / HTTPS）' : type.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis))
+        ],
+        onChanged: _busy || !isNew
+            ? null
+            : (value) => _change(() {
+                  _proxyType = value ?? _proxyType;
+                  if (_proxyType != 'tcp') _applicationProtocol = null;
+                }));
+    final host = TextFormField(
+        key: const ValueKey('service-local-host'),
+        controller: _host,
+        enabled: !_busy,
+        autocorrect: false,
+        validator: _hostError,
+        textInputAction: TextInputAction.next,
+        decoration: _decoration('本地主机 / IP', hint: '127.0.0.1'));
+    final port = TextFormField(
+        key: const ValueKey('service-local-port'),
+        controller: _port,
+        enabled: !_busy,
+        keyboardType: TextInputType.number,
+        textInputAction: TextInputAction.next,
+        validator: _portError,
+        decoration: _decoration('本地端口'));
     return PopScope(
         canPop: !_busy,
-        child: AlertDialog(
-            title: Text(isNew ? '添加家庭服务' : '编辑家庭服务'),
-            content: SizedBox(
-                width: 480,
-                child: SingleChildScrollView(
-                    child: Form(
-                        key: _form,
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (isNew)
-                                DropdownButtonFormField<String>(
-                                    key: const ValueKey('service-device'),
-                                    value: _deviceId,
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                        labelText: '提供服务的设备'),
-                                    items: [
-                                      for (final device in widget.devices)
-                                        DropdownMenuItem(
-                                            value: device.id,
-                                            child: Text(device.name,
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis))
-                                    ],
-                                    onChanged: _busy
+        child: Dialog(
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+            clipBehavior: Clip.antiAlias,
+            child: SizedBox(
+                width: 680,
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+                          child: Text(isNew ? '添加家庭服务' : '编辑家庭服务',
+                              style: const TextStyle(
+                                  fontSize: 20, fontWeight: FontWeight.w600))),
+                      Flexible(
+                          child: Scrollbar(
+                              controller: _scroll,
+                              thumbVisibility: true,
+                              child: SingleChildScrollView(
+                                  key: const ValueKey('service-form-scroll'),
+                                  controller: _scroll,
+                                  padding:
+                                      const EdgeInsets.fromLTRB(24, 8, 24, 8),
+                                  child: Form(
+                                      key: _form,
+                                      child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (isNew) ...[
+                                              DropdownButtonFormField<String>(
+                                                  key: const ValueKey(
+                                                      'service-device'),
+                                                  value: _deviceId,
+                                                  isExpanded: true,
+                                                  decoration:
+                                                      _decoration('提供服务的设备'),
+                                                  items: [
+                                                    for (final device
+                                                        in widget.devices)
+                                                      DropdownMenuItem(
+                                                          value: device.id,
+                                                          child: Text(
+                                                              homeDeskDeviceLabel(device.name),
+                                                              maxLines: 1,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .ellipsis))
+                                                  ],
+                                                  onChanged: _busy
+                                                      ? null
+                                                      : (value) => _change(() =>
+                                                          _deviceId = value ??
+                                                              _deviceId)),
+                                              const SizedBox(height: 16),
+                                            ],
+                                            _pair(name, type),
+                                            if (!isNew)
+                                              Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          top: 8),
+                                                  child: Text(
+                                                      '连接类型不能修改，需要换类型时请新建服务。',
+                                                      style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: colors
+                                                              .onSurfaceVariant))),
+                                            const SizedBox(height: 16),
+                                            _pair(host, port, firstFlex: 3),
+                                            Padding(
+                                                padding: const EdgeInsets.only(
+                                                    top: 8, bottom: 16),
+                                                child: Text(
+                                                    '填写上方设备能访问的地址，例如本机 127.0.0.1 或 NAS 的内网 IP。',
+                                                    style: TextStyle(
+                                                        fontSize: 12,
+                                                        color: colors
+                                                            .onSurfaceVariant))),
+                                            if (_proxyType == 'http')
+                                              _pair(
+                                                  DropdownButtonFormField<
+                                                          String>(
+                                                      key: const ValueKey(
+                                                          'service-local-scheme'),
+                                                      value: _scheme,
+                                                      isExpanded: true,
+                                                      decoration: _decoration(
+                                                          '设备上的服务协议'),
+                                                      items: const [
+                                                        DropdownMenuItem(
+                                                            value: 'http',
+                                                            child:
+                                                                Text('HTTP')),
+                                                        DropdownMenuItem(
+                                                            value: 'https',
+                                                            child:
+                                                                Text('HTTPS')),
+                                                      ],
+                                                      onChanged: _busy
+                                                          ? null
+                                                          : (value) => _change(
+                                                              () => _scheme =
+                                                                  value ??
+                                                                      _scheme)),
+                                                  TextFormField(
+                                                      key: const ValueKey(
+                                                          'service-subdomain'),
+                                                      controller: _subdomain,
+                                                      enabled: !_busy,
+                                                      autocorrect: false,
+                                                      validator:
+                                                          _subdomainError,
+                                                      decoration: _decoration(
+                                                          '公网访问名称',
+                                                          hint: '例如 album',
+                                                          helper:
+                                                              '保存前会检查名称是否可用。')),
+                                                  secondFlex: 2)
+                                            else ...[
+                                              if (_proxyType == 'tcp') ...[
+                                                DropdownButtonFormField<String>(
+                                                    key: const ValueKey(
+                                                        'service-application'),
+                                                    value:
+                                                        _applicationProtocol ??
+                                                            '',
+                                                    isExpanded: true,
+                                                    decoration:
+                                                        _decoration('应用类型'),
+                                                    items: const [
+                                                      DropdownMenuItem(
+                                                          value: '',
+                                                          child: Text('未指定')),
+                                                      DropdownMenuItem(
+                                                          value: 'ssh',
+                                                          child: Text('SSH')),
+                                                      DropdownMenuItem(
+                                                          value: 'rdp',
+                                                          child: Text('RDP')),
+                                                      DropdownMenuItem(
+                                                          value: 'rtsp',
+                                                          child: Text('RTSP')),
+                                                    ],
+                                                    onChanged: _busy
+                                                        ? null
+                                                        : (value) => _change(() =>
+                                                            _applicationProtocol =
+                                                                value == ''
+                                                                    ? null
+                                                                    : value)),
+                                                const SizedBox(height: 12),
+                                              ],
+                                              Text(
+                                                  widget.remoteEndpoint == null
+                                                      ? '公网端口由服务端自动分配，创建后会显示访问地址。'
+                                                      : '公网访问地址：${widget.remoteEndpoint}。公网端口不能在这里修改。',
+                                                  style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: colors
+                                                          .onSurfaceVariant)),
+                                            ],
+                                            CheckboxListTile(
+                                                key: const ValueKey(
+                                                    'service-enabled'),
+                                                contentPadding: EdgeInsets.zero,
+                                                controlAffinity:
+                                                    ListTileControlAffinity
+                                                        .leading,
+                                                dense: true,
+                                                title: const Text('启用服务'),
+                                                value: _enabled,
+                                                onChanged: _busy
+                                                    ? null
+                                                    : (value) => _change(() =>
+                                                        _enabled =
+                                                            value ?? false)),
+                                            if (_message.isNotEmpty)
+                                              Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          top: 12),
+                                                  child: Text(_message,
+                                                      style: TextStyle(
+                                                          color:
+                                                              colors.error))),
+                                            if (_needsReview) ...[
+                                              const SizedBox(height: 12),
+                                              OutlinedButton.icon(
+                                                  key: const ValueKey(
+                                                      'service-review'),
+                                                  onPressed:
+                                                      _busy ? null : _review,
+                                                  icon: const Icon(
+                                                      Icons.refresh_rounded),
+                                                  label: const Text('刷新核对')),
+                                              if (_serverSummary
+                                                  .isNotEmpty) ...[
+                                                const SizedBox(height: 12),
+                                                const Text('服务器当前设置：'),
+                                                SelectableText(_serverSummary),
+                                              ],
+                                              if (_reviewLoaded && _exists)
+                                                CheckboxListTile(
+                                                    key: const ValueKey(
+                                                        'service-reviewed'),
+                                                    contentPadding:
+                                                        EdgeInsets.zero,
+                                                    title: const Text(
+                                                        '已核对，允许保存当前草稿'),
+                                                    value: _reviewed,
+                                                    onChanged: _busy
+                                                        ? null
+                                                        : (value) {
+                                                            setState(() =>
+                                                                _reviewed =
+                                                                    value ??
+                                                                        false);
+                                                            _draftChanged();
+                                                            if (_reviewed) {
+                                                              widget
+                                                                  .onReviewConfirmed
+                                                                  ?.call();
+                                                            }
+                                                          }),
+                                            ],
+                                          ]))))),
+                      if (_busy) const LinearProgressIndicator(),
+                      Divider(height: 1, color: colors.outlineVariant),
+                      Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 14),
+                          child: OverflowBar(
+                              alignment: MainAxisAlignment.end,
+                              spacing: 8,
+                              overflowSpacing: 8,
+                              children: [
+                                TextButton(
+                                    onPressed: _busy
                                         ? null
-                                        : (value) => _change(() =>
-                                            _deviceId = value ?? _deviceId)),
-                              const SizedBox(height: 12),
-                              TextFormField(
-                                  key: const ValueKey('service-name'),
-                                  controller: _name,
-                                  enabled: !_busy,
-                                  validator: _nameError,
-                                  decoration:
-                                      const InputDecoration(labelText: '服务名称')),
-                              const SizedBox(height: 12),
-                              DropdownButtonFormField<String>(
-                                  key: const ValueKey('service-type'),
-                                  value: _proxyType,
-                                  isExpanded: true,
-                                  decoration:
-                                      const InputDecoration(labelText: '连接类型'),
-                                  items: [
-                                    for (final type in types)
-                                      DropdownMenuItem(
-                                          value: type,
-                                          child: Text(type == 'http'
-                                              ? '网页服务（HTTP / HTTPS）'
-                                              : type.toUpperCase()))
-                                  ],
-                                  onChanged: _busy || !isNew
-                                      ? null
-                                      : (value) => _change(() {
-                                            _proxyType = value ?? _proxyType;
-                                            if (_proxyType != 'tcp') {
-                                              _applicationProtocol = null;
-                                            }
-                                          })),
-                              if (!isNew)
-                                const Padding(
-                                    padding: EdgeInsets.only(top: 6),
-                                    child: Text('连接类型不能修改，需要换类型时请新建服务。',
-                                        style: TextStyle(fontSize: 12))),
-                              if (_proxyType == 'http') ...[
-                                const SizedBox(height: 12),
-                                DropdownButtonFormField<String>(
-                                    key: const ValueKey('service-local-scheme'),
-                                    value: _scheme,
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                        labelText: '设备上的服务协议'),
-                                    items: const [
-                                      DropdownMenuItem(
-                                          value: 'http', child: Text('HTTP')),
-                                      DropdownMenuItem(
-                                          value: 'https', child: Text('HTTPS')),
-                                    ],
-                                    onChanged: _busy
-                                        ? null
-                                        : (value) => _change(
-                                            () => _scheme = value ?? _scheme)),
-                              ],
-                              const SizedBox(height: 12),
-                              TextFormField(
-                                  key: const ValueKey('service-local-host'),
-                                  controller: _host,
-                                  enabled: !_busy,
-                                  autocorrect: false,
-                                  validator: _hostError,
-                                  decoration: const InputDecoration(
-                                      labelText: '设备可访问的本地主机',
-                                      helperText:
-                                          '例如 127.0.0.1 或家庭 NAS 的内网 IP。')),
-                              const SizedBox(height: 12),
-                              TextFormField(
-                                  key: const ValueKey('service-local-port'),
-                                  controller: _port,
-                                  enabled: !_busy,
-                                  keyboardType: TextInputType.number,
-                                  validator: _portError,
-                                  decoration: const InputDecoration(
-                                      labelText: '本地服务端口')),
-                              if (_proxyType == 'http') ...[
-                                const SizedBox(height: 12),
-                                TextFormField(
-                                    key: const ValueKey('service-subdomain'),
-                                    controller: _subdomain,
-                                    enabled: !_busy,
-                                    autocorrect: false,
-                                    validator: _subdomainError,
-                                    decoration: const InputDecoration(
-                                        labelText: '公网访问名称',
-                                        helperText: '保存前会检查名称是否可用。')),
-                              ] else ...[
-                                const SizedBox(height: 12),
-                                Text(widget.remoteEndpoint == null
-                                    ? '公网端口由服务端自动分配，创建后会显示访问地址。'
-                                    : '公网访问地址：${widget.remoteEndpoint}。公网端口不能在这里修改。'),
-                              ],
-                              if (_proxyType == 'tcp') ...[
-                                const SizedBox(height: 12),
-                                DropdownButtonFormField<String>(
-                                    key: const ValueKey('service-application'),
-                                    value: _applicationProtocol ?? '',
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                        labelText: '应用类型'),
-                                    items: const [
-                                      DropdownMenuItem(
-                                          value: '', child: Text('未指定')),
-                                      DropdownMenuItem(
-                                          value: 'ssh', child: Text('SSH')),
-                                      DropdownMenuItem(
-                                          value: 'rdp', child: Text('RDP')),
-                                      DropdownMenuItem(
-                                          value: 'rtsp', child: Text('RTSP')),
-                                    ],
-                                    onChanged: _busy
-                                        ? null
-                                        : (value) => _change(() =>
-                                            _applicationProtocol =
-                                                value == '' ? null : value)),
-                              ],
-                              CheckboxListTile(
-                                  key: const ValueKey('service-enabled'),
-                                  contentPadding: EdgeInsets.zero,
-                                  title: const Text('启用服务'),
-                                  value: _enabled,
-                                  onChanged: _busy
-                                      ? null
-                                      : (value) => _change(
-                                          () => _enabled = value ?? false)),
-                              if (_message.isNotEmpty)
-                                Padding(
-                                    padding: const EdgeInsets.only(top: 12),
-                                    child: Text(_message,
-                                        style: TextStyle(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .error))),
-                              if (_needsReview) ...[
-                                const SizedBox(height: 12),
-                                OutlinedButton.icon(
-                                    key: const ValueKey('service-review'),
-                                    onPressed: _busy ? null : _review,
-                                    icon: const Icon(Icons.refresh_rounded),
-                                    label: const Text('刷新核对')),
-                                if (_serverSummary.isNotEmpty) ...[
-                                  const SizedBox(height: 12),
-                                  const Text('服务器当前设置：'),
-                                  SelectableText(_serverSummary),
-                                ],
-                                if (_reviewLoaded && _exists)
-                                  CheckboxListTile(
-                                      key: const ValueKey('service-reviewed'),
-                                      contentPadding: EdgeInsets.zero,
-                                      title: const Text('已核对，允许保存当前草稿'),
-                                      value: _reviewed,
-                                      onChanged: _busy
-                                          ? null
-                                          : (value) {
-                                              setState(() =>
-                                                  _reviewed = value ?? false);
-                                              _draftChanged();
-                                              if (_reviewed) {
-                                                widget.onReviewConfirmed
-                                                    ?.call();
-                                              }
-                                            }),
-                              ],
-                              if (_busy)
-                                const Padding(
-                                    padding: EdgeInsets.only(top: 12),
-                                    child: LinearProgressIndicator()),
-                            ])))),
-            actions: [
-              TextButton(
-                  onPressed: _busy ? null : () => Navigator.pop(context, false),
-                  child: const Text('取消')),
-              FilledButton(
-                  key: const ValueKey('service-save'),
-                  onPressed: saveAllowed ? _save : null,
-                  child: Text(_busy ? '正在保存…' : '保存')),
-            ]));
+                                        : () => Navigator.pop(context, false),
+                                    child: const Text('取消')),
+                                FilledButton(
+                                    key: const ValueKey('service-save'),
+                                    onPressed: saveAllowed ? _save : null,
+                                    child: Text(_busy ? '正在保存…' : '保存')),
+                              ])),
+                    ]))));
   }
 }
 
@@ -619,7 +738,7 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(widget.deviceName,
+                            Text(homeDeskDeviceLabel(widget.deviceName),
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w600)),
                             const SizedBox(height: 8),

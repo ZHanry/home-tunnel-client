@@ -5,6 +5,8 @@
 app_name = "HomeDesk"
 executable_name = "homedesk"
 package_name = "homedesk"
+# 旧版升级可显式指定原配置命名空间，以保留设备身份和登录；新安装无需填写。
+# config_namespace = "REPLACE_WITH_PREVIOUS_NAMESPACE"
 
 [server]
 host = "REPLACE_WITH_SERVER_IP"

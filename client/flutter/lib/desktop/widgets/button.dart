@@ -38,6 +38,8 @@ class _ButtonState extends State<Button> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme; // HOMEDESK: 统一按钮配色
+
     return Obx(() => InkWell(
           onTapDown: (_) => pressed.value = true,
           onTapUp: (_) => pressed.value = false,
@@ -53,20 +55,20 @@ class _ButtonState extends State<Button> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: pressed.value
-                      ? MyTheme.accent
+                      ? colors.primary
                       : (widget.isOutline
                           ? Colors.transparent
-                          : MyTheme.button),
+                          : colors.primary),
                   border: Border.all(
                     color: pressed.value
-                        ? MyTheme.accent
+                        ? colors.primary
                         : hover.value
-                            ? MyTheme.hoverBorder
+                            ? colors.primary
                             : (widget.isOutline
-                                ? widget.borderColor ?? MyTheme.border
-                                : MyTheme.button),
+                                ? widget.borderColor ?? colors.outlineVariant
+                                : colors.primary),
                   ),
-                  borderRadius: BorderRadius.circular(widget.radius ?? 5),
+                  borderRadius: BorderRadius.circular(widget.radius ?? 11),
                 ),
                 child: Text(
                   translate(
@@ -77,7 +79,7 @@ class _ButtonState extends State<Button> {
                       color: widget.isOutline
                           ? widget.textColor ??
                               Theme.of(context).textTheme.titleLarge?.color
-                          : Colors.white),
+                          : colors.onPrimary),
                 ).marginSymmetric(horizontal: 12),
               )),
         ));
@@ -120,6 +122,8 @@ class _FixedWidthButtonState extends State<FixedWidthButton> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme; // HOMEDESK: 统一按钮配色
+
     return Obx(() => InkWell(
           onTapDown: (_) => pressed.value = true,
           onTapUp: (_) => pressed.value = false,
@@ -132,18 +136,18 @@ class _FixedWidthButtonState extends State<FixedWidthButton> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: pressed.value
-                  ? MyTheme.accent
-                  : (widget.isOutline ? Colors.transparent : MyTheme.button),
+                  ? colors.primary
+                  : (widget.isOutline ? Colors.transparent : colors.primary),
               border: Border.all(
                 color: pressed.value
-                    ? MyTheme.accent
+                    ? colors.primary
                     : hover.value
-                        ? MyTheme.hoverBorder
+                        ? colors.primary
                         : (widget.isOutline
-                            ? widget.borderColor ?? MyTheme.border
-                            : MyTheme.button),
+                            ? widget.borderColor ?? colors.outlineVariant
+                            : colors.primary),
               ),
-              borderRadius: BorderRadius.circular(widget.radius ?? 5),
+              borderRadius: BorderRadius.circular(widget.radius ?? 11),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -160,7 +164,7 @@ class _FixedWidthButtonState extends State<FixedWidthButton> {
                         color: widget.isOutline
                             ? widget.textColor ??
                                 Theme.of(context).textTheme.titleLarge?.color
-                            : Colors.white),
+                            : colors.onPrimary),
                   ).marginSymmetric(horizontal: 12),
                 ),
               ],

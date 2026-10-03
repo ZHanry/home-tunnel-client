@@ -336,13 +336,15 @@ Widget portalHost(
                 Platform.environment.containsKey('HOMEDESK_SERVICES_PREVIEW')
                     ? 'HomeDeskPreview'
                     : null),
+        builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!),
         home: Scaffold(
-            body: MediaQuery(
-                data: MediaQueryData(textScaler: TextScaler.linear(scale)),
-                child: RepaintBoundary(
-                    key: paint,
-                    child: Padding(
-                        padding: const EdgeInsets.all(16), child: page)))));
+            body: RepaintBoundary(
+                key: paint,
+                child:
+                    Padding(padding: const EdgeInsets.all(16), child: page))));
 
 Future<void> enterCredentials(WidgetTester tester) async {
   await tester.enterText(find.byKey(const ValueKey('tunnel-origin')),
@@ -1080,6 +1082,92 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('普通窗口服务弹窗全部字段可见，校验后保存按钮仍可见', (tester) async {
+    tester.view.physicalSize = const Size(780, 560);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = PortalFixtureApi();
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await enterCredentials(tester);
+    await tester.tap(find.byKey(const ValueKey('tunnel-add-service')));
+    await tester.pumpAndSettle();
+    final viewport =
+        tester.getRect(find.byKey(const ValueKey('service-form-scroll')));
+    for (final key in [
+      'service-device',
+      'service-name',
+      'service-type',
+      'service-local-host',
+      'service-local-port',
+      'service-local-scheme',
+      'service-subdomain',
+      'service-enabled'
+    ]) {
+      final field = tester.getRect(find.byKey(ValueKey(key)));
+      expect(field.top, greaterThanOrEqualTo(viewport.top));
+      expect(field.bottom, lessThanOrEqualTo(viewport.bottom));
+    }
+    final scroll = tester.widget<SingleChildScrollView>(
+        find.byKey(const ValueKey('service-form-scroll')));
+    expect(scroll.controller!.position.maxScrollExtent, lessThanOrEqualTo(0.5));
+    final save = find.byKey(const ValueKey('service-save'));
+    expect(save.hitTestable(), findsOneWidget);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(api.creates, 0);
+    expect(find.text('请输入服务名称。'), findsOneWidget);
+    expect(save.hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('服务弹窗收窄并放大字体后保留草稿，底部按钮固定可操作', (tester) async {
+    tester.view.physicalSize = const Size(780, 560);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = PortalFixtureApi();
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await enterCredentials(tester);
+    await tester.tap(find.byKey(const ValueKey('tunnel-add-service')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('service-name')), '窗口草稿');
+    await tester.enterText(
+        find.byKey(const ValueKey('service-subdomain')), 'draft');
+    await tester.enterText(
+        find.byKey(const ValueKey('service-local-port')), '8080');
+    tester.view.physicalSize = const Size(360, 560);
+    await tester.pumpWidget(portalHost(page: fixturePage(api), scale: 2));
+    await tester.pumpAndSettle();
+    for (final key in [
+      'service-name',
+      'service-subdomain',
+      'service-local-port'
+    ]) {
+      expect(
+          tester
+              .widget<TextFormField>(find.byKey(ValueKey(key)))
+              .controller!
+              .text,
+          key == 'service-name'
+              ? '窗口草稿'
+              : key == 'service-subdomain'
+                  ? 'draft'
+                  : '8080');
+    }
+    final editorContext = tester.element(find.byType(HomeDeskServiceEditor));
+    expect(MediaQuery.textScalerOf(editorContext).scale(14), 28);
+    final save = find.byKey(const ValueKey('service-save'));
+    expect(save.hitTestable(), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('service-subdomain')));
+    await tester.pumpAndSettle();
+    expect(save.hitTestable(), findsOneWidget);
+    expect(api.creates, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('完整服务和设备编辑器在窄窗口双倍字体下可滚动且不溢出', (tester) async {
     tester.view.physicalSize = const Size(360, 640);
     tester.view.devicePixelRatio = 1;
@@ -1134,25 +1222,24 @@ void main() {
           theme: ThemeData(
               brightness: dark ? Brightness.dark : Brightness.light,
               fontFamily: 'HomeDeskPreview'),
+          builder: (context, child) =>
+              RepaintBoundary(key: paint, child: child!),
           home: Scaffold(
-              body: RepaintBoundary(
-                  key: paint,
-                  child: HomeDeskDashboard(
-                    brandName: 'HomeDesk',
-                    devicesBuilder: (_) => const Center(child: Text('家庭设备')),
-                    recentBuilder: (_) => const Center(child: Text('最近连接')),
-                    servicesBuilder: (_) => HomeDeskServices(
-                        credentialStoreFactory: () => FixtureCredentialStore(),
-                        saveOrigin: (_) async {},
-                        readOption: portalOption,
-                        apiBuilder: (origin,
-                                {required isAllowed, credentialStorage}) =>
-                            api),
-                    localBuilder: (_) => const SizedBox(),
-                    statusBuilder: (_) => const SizedBox(),
-                    onSettings: () {},
-                    onConnect: (_) {},
-                  ))),
+              body: HomeDeskDashboard(
+            brandName: 'HomeDesk',
+            devicesBuilder: (_) => const Center(child: Text('家庭设备')),
+            recentBuilder: (_) => const Center(child: Text('最近连接')),
+            servicesBuilder: (_) => HomeDeskServices(
+                credentialStoreFactory: () => FixtureCredentialStore(),
+                saveOrigin: (_) async {},
+                readOption: portalOption,
+                apiBuilder: (origin, {required isAllowed, credentialStorage}) =>
+                    api),
+            localBuilder: (_) => const SizedBox(),
+            statusBuilder: (_) => const SizedBox(),
+            onSettings: () {},
+            onConnect: (_) {},
+          )),
         ));
         await tester.tap(find.byTooltip('家庭服务'));
         await tester.pumpAndSettle();
@@ -1184,6 +1271,17 @@ void main() {
           final output =
               Directory(Platform.environment['HOMEDESK_SERVICES_PREVIEW']!);
           File('${output.path}/services-${dark ? 'dark' : 'light'}-empty.png')
+              .writeAsBytesSync(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+        await tester.tap(find.byKey(const ValueKey('tunnel-add-service')));
+        await tester.pumpAndSettle();
+        await tester.runAsync(() async {
+          final image = await boundary.toImage(pixelRatio: 1);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final output =
+              Directory(Platform.environment['HOMEDESK_SERVICES_PREVIEW']!);
+          File('${output.path}/service-editor-${dark ? 'dark' : 'light'}.png')
               .writeAsBytesSync(bytes!.buffer.asUint8List());
           image.dispose();
         });

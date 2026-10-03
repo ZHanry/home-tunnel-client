@@ -9,6 +9,9 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/homedesk_devices.dart'; // HOMEDESK: 独立家庭设备墙。
 import 'package:flutter_hbb/homedesk_dashboard.dart'; // HOMEDESK: 家庭设备中心主布局。
 import 'package:flutter_hbb/homedesk_services.dart'; // HOMEDESK: 家庭服务统一入口。
+import 'package:flutter_hbb/homedesk_local_info.dart'; // HOMEDESK: 本机信息使用独立弹窗布局。
+import 'package:flutter_hbb/homedesk_account.dart'; // HOMEDESK: 账号会话在两个页面间共享。
+import 'package:flutter_hbb/homedesk_family_devices.dart'; // HOMEDESK: 同账号设备关联远控 ID。
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -58,6 +61,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   final RxBool _block = false.obs;
 
   final GlobalKey _childKey = GlobalKey();
+  final _account = HomeDeskAccount(); // HOMEDESK: 当前窗口只拥有一个账号会话。
   final _dashboardKey = GlobalKey<HomeDeskDashboardState>(); // HOMEDESK: 统一手动连接入口。
 
   @override
@@ -68,10 +72,15 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return _buildBlock(child: isIncomingOnly ? buildLeftPane(context) : HomeDeskDashboard(
       key: _dashboardKey,
       brandName: appName,
-      devicesBuilder: (_) => HomeDeskDevices(onManualConnect: () => _dashboardKey.currentState?.showManualConnection()),
+      devicesBuilder: (_) => HomeDeskFamilyDevices(account: _account,
+        onLogin: () => _dashboardKey.currentState?.showAccount(),
+        onConnect: (id) => connect(context, id),
+        readOption: (key) => bind.mainGetLocalOption(key: key), // HOMEDESK: 只读取公开状态和配置指纹。
+        lanBuilder: (_) => HomeDeskDevices(onManualConnect: () => _dashboardKey.currentState?.showManualConnection())), // HOMEDESK: 公网账号设备自动显示，内网目录保留受控入口。
       recentBuilder: (_) => const ConnectionPage(),
-      servicesBuilder: (_) => HomeDeskServices(onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network)), // HOMEDESK: 服务页使用独立账号和联网许可。
-      localBuilder: (_) => buildLeftPane(context),
+      servicesBuilder: (_) => HomeDeskServices(account: _account, onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network)), // HOMEDESK: 登录状态共享，许可仍固定到当前配置。
+      initializeAccount: true, // HOMEDESK: 只恢复已批准地址下明确保存的登录。
+      localBuilder: (dialogContext) => buildHomeDeskLocalInfo(dialogContext), // HOMEDESK: 不复用固定 200 像素侧栏。
       statusBuilder: (_) => const OnlineStatusWidget(),
       onSettings: () => DesktopTabPage.onAddSetting(),
       onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network),
@@ -82,6 +91,43 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Widget _buildBlock({required Widget child}) {
     return buildRemoteBlock(
         block: _block, mask: true, use: canBeBlocked, child: child);
+  }
+
+  // HOMEDESK: 仅接线既有凭据模型、认证设置和安装动作，展示由独立组件负责。
+  Widget buildHomeDeskLocalInfo(BuildContext dialogContext) {
+    return ChangeNotifierProvider.value(
+      value: gFFI.serverModel,
+      child: Consumer<ServerModel>(builder: (_, model, child) {
+        final incoming = !bind.isOutgoingOnly();
+        final showPassword = model.approveMode != 'click' && model.verificationMethod != kUsePermanentPassword;
+        final portable = isWindows && !bind.mainIsInstalled() && !bind.isDisableInstallation() &&
+            bind.mainGetBuildinOption(key: kOptionHideHelpCards) != 'Y';
+        return HomeDeskLocalInfo(
+          id: model.serverId, password: model.serverPasswd,
+          incomingEnabled: incoming, showTemporaryPassword: showPassword,
+          passwordHint: model.approveMode == 'click' ? '连接时由本机确认' : '使用固定密码',
+          onCopyId: () {
+            Clipboard.setData(ClipboardData(text: model.serverId.text));
+            showToast(translate('Copied'));
+          },
+          onRefreshPassword: () => bind.mainUpdateTemporaryPassword(),
+          onPasswordSettings: bind.isDisableSettings() ? null : () {
+            Navigator.pop(dialogContext);
+            DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.safety);
+          },
+          onInstall: !portable ? null : () async {
+            Navigator.pop(dialogContext);
+            await rustDeskWinManager.closeAllSubWindows();
+            bind.mainGotoInstall();
+          },
+          warning: incoming ? buildPresetPasswordWarning() : null,
+          additionalHelp: !portable || systemError.isNotEmpty ?
+              Obx(() => buildHelpCards(stateGlobal.updateUrl.value)) : null,
+          pluginEntry: buildPluginEntry(),
+          status: const OnlineStatusWidget(),
+        );
+      }),
+    );
   }
 
   Widget buildLeftPane(BuildContext context) {
@@ -872,6 +918,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   @override
   void dispose() {
+    _account.dispose(); // HOMEDESK: 关闭窗口清理账号目录轮询。
     _uniLinksSubscription?.cancel();
     Get.delete<RxBool>(tag: 'stop-service');
     _updateTimer?.cancel();

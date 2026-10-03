@@ -91,6 +91,22 @@ class HomeTunnelDevice {
       this.metadataVersion = 1});
 }
 
+class HomeDeskRemoteBinding {
+  final String deviceId;
+  final String remoteId;
+  final String server;
+  final String keySHA256;
+  final String platform;
+  final bool online;
+  const HomeDeskRemoteBinding(
+      {required this.deviceId,
+      required this.remoteId,
+      required this.server,
+      required this.keySHA256,
+      required this.platform,
+      required this.online});
+}
+
 class HomeTunnelService {
   final String id;
   final String deviceId;
@@ -997,18 +1013,57 @@ class HomeTunnelApi {
         devices: devices, services: services, capabilities: capabilities);
   }
 
+  Future<List<HomeDeskRemoteBinding>> remoteBindings() async {
+    _ensureAllowed();
+    final generation = _generation;
+    final value = _success(await _authenticated('GET', '/homedesk/devices',
+        generation: generation));
+    final items = value['items'];
+    if (items is! List || items.length > 5000) {
+      throw const HomeTunnelApiException('家庭设备目录响应无效。', 'RESPONSE_INVALID');
+    }
+    final seen = <String>{};
+    final bindings = <HomeDeskRemoteBinding>[];
+    for (final raw in items) {
+      final item = _object(raw);
+      final id = _id(item['device_id']);
+      final remote = _text(item['remote_id'], maxLength: 64);
+      final key = _text(item['key_sha256'], maxLength: 64);
+      final server = _endpoint(item['server']);
+      if (!seen.add(id) ||
+          !RegExp(r'^[a-zA-Z0-9_-]{1,64}$').hasMatch(remote) ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(key) ||
+          server == null) {
+        throw const HomeTunnelApiException('家庭设备远控信息无效。', 'RESPONSE_INVALID');
+      }
+      bindings.add(HomeDeskRemoteBinding(
+          deviceId: id,
+          remoteId: remote,
+          server: server.toLowerCase(),
+          keySHA256: key,
+          platform: _text(item['platform'], maxLength: 32),
+          online: _boolean(item['online'])));
+    }
+    _checkGeneration(generation);
+    return List.unmodifiable(bindings);
+  }
+
   // HOMEDESK: 本机接入只创建短期一次性代码，不绑定管理会话或创建服务。
   Future<String> createEnrollmentCode(String name) async {
-    if (name.trim().isEmpty || name.length > 120 ||
+    if (name.trim().isEmpty ||
+        name.length > 120 ||
         RegExp(r'[\x00-\x1f\x7f]').hasMatch(name)) throw _invalidInput();
     return _mutate('local-device-enrollment', (generation) async {
       final reply = await _authenticated('POST', '/client/enrollment-codes',
           generation: generation, body: {'name': name.trim()}, mutation: true);
       final result = _success(reply);
       final code = result['code'];
-      if (code is! String || code.length < 16 || code.length > 256 ||
+      if (code is! String ||
+          code.length < 16 ||
+          code.length > 256 ||
           RegExp(r'[\s\x00-\x1f\x7f]').hasMatch(code)) {
-        throw const HomeTunnelApiException('接入码响应无效，请刷新核对后再接入。', 'MUTATION_RESULT_UNKNOWN');
+        throw const HomeTunnelApiException(
+            '接入码响应无效，请刷新核对后再接入。', 'MUTATION_RESULT_UNKNOWN');
       }
       _expiry(result['expires_at']);
       return code;

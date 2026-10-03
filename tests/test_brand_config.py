@@ -14,6 +14,18 @@ from homedesk_package import stage_linux_package, validate_deb_arch  # noqa: E40
 
 
 class BrandConfigTests(unittest.TestCase):
+    def test_renamed_brand_preserves_explicit_legacy_namespace(self) -> None:
+        config = load_config(REPO_ROOT / "tests/fixtures/config.acceptance.toml")
+        self.assertEqual("HomeDesk", config.brand.app_name)
+        self.assertEqual("HomeDeskAcceptance", config.brand.config_namespace)
+        self.assertEqual("homedesk", config.brand.executable_name)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "config.toml"
+            source.write_text(self._valid_build_config().replace(
+                'app_name = "HomeDesk"', 'app_name = "HomeDesk"\nconfig_namespace = "../old"'), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_config(source)
+
     @staticmethod
     def _valid_build_config() -> str:
         return """[brand]

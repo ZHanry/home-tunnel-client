@@ -141,7 +141,7 @@ pub fn normalize_private_whitelist(value: &str) -> Option<String> {
     valid.then(|| items.join(","))
 }
 
-fn is_rfc1918(ip: Ipv4Addr) -> bool {
+pub(crate) fn is_rfc1918(ip: Ipv4Addr) -> bool { // HOMEDESK: 供被动会话路径展示复用。
     let [a, b, _, _] = ip.octets();
     a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168)
 }

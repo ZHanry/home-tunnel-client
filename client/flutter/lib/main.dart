@@ -24,6 +24,7 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'common.dart';
+import 'homedesk_theme.dart'; // HOMEDESK: 所有桌面窗口与弹窗共用主页主题。
 import 'consts.dart';
 import 'mobile/pages/home_page.dart';
 import 'mobile/pages/server_page.dart';
@@ -366,8 +367,8 @@ void _runApp(
       navigatorKey: globalKey,
       debugShowCheckedModeBanner: false,
       title: title,
-      theme: MyTheme.lightTheme,
-      darkTheme: MyTheme.darkTheme,
+      theme: isDesktop ? homeDeskTheme(MyTheme.lightTheme) : MyTheme.lightTheme, // HOMEDESK: 桌面统一主题。
+      darkTheme: isDesktop ? homeDeskTheme(MyTheme.darkTheme) : MyTheme.darkTheme,
       themeMode: themeMode,
       home: home,
       localizationsDelegates: const [
@@ -503,8 +504,8 @@ class _AppState extends State<App> with WidgetsBindingObserver {
           title: isWeb
               ? '${bind.mainGetAppNameSync()} Web Client V2 (Preview)'
               : bind.mainGetAppNameSync(),
-          theme: MyTheme.lightTheme,
-          darkTheme: MyTheme.darkTheme,
+          theme: isDesktop ? homeDeskTheme(MyTheme.lightTheme) : MyTheme.lightTheme, // HOMEDESK: 主窗口统一主题。
+          darkTheme: isDesktop ? homeDeskTheme(MyTheme.darkTheme) : MyTheme.darkTheme,
           themeMode: MyTheme.currentThemeMode(),
           home: isDesktop
               ? const DesktopTabPage()

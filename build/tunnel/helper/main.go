@@ -81,6 +81,7 @@ type guardedTransport struct {
     origin *url.URL
     transport *http.Transport
     enrollmentPosted atomic.Bool
+    directory *directoryPublisher
 }
 
 func validateProfile(profile model.Profile, origin *url.URL) error {
@@ -104,6 +105,10 @@ func (guard *guardedTransport) RoundTrip(request *http.Request) (*http.Response,
         guard.enrollmentPosted.Store(true)
     }
     response, err := guard.transport.RoundTrip(request)
+    if err == nil && response.StatusCode >= 200 && response.StatusCode < 300 &&
+        (request.URL.Path == "/api/v1/client/sync" || request.URL.Path == "/api/v1/client/heartbeat") {
+        guard.directory.publish(request.Header.Get("Authorization"))
+    }
     if err != nil || response.StatusCode != http.StatusOK || request.URL.Path != "/api/v1/public/config" {
         return response, err
     }
@@ -137,6 +142,9 @@ func execute() int {
     origin := flags.String("origin", "", "")
     name := flags.String("name", app.DefaultDeviceName(), "")
     parent := flags.String("parent", "", "")
+    remoteID := flags.String("remote-id", "", "")
+    remoteServer := flags.String("remote-server", "", "")
+    remoteKey := flags.String("remote-key-sha256", "", "")
     if flags.Parse(os.Args[2:]) != nil || flags.NArg() != 0 { return 2 }
     parentID, err := strconv.ParseUint(*parent, 10, 32)
     if err != nil || checkParent(uint32(parentID)) != nil { return 2 }
@@ -206,6 +214,7 @@ func execute() int {
     }
     executable, err := os.Executable()
     if err != nil { return 1 }
+    guard.directory = newDirectoryPublisher(root, transport, state.DeviceID, *remoteID, *remoteServer, *remoteKey)
     emit("running", "", state.DeviceID, "Starting")
     // 进程及其 FRP 子进程由父进程 Job Object 管理；标准日志不带出服务端原始错误。
     log.SetOutput(io.Discard)

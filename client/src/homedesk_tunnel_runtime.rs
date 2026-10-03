@@ -141,6 +141,17 @@ pub fn status() -> String {
     serde_json::to_string(&view).unwrap_or_else(|_| "{}".into())
 }
 
+// HOMEDESK: 页面仅比较已确认的远控配置指纹，不接收或保存服务器公钥。
+pub fn network_identity() -> String {
+    use sha2::{Digest, Sha256};
+    let profile = crate::homedesk_config::active_profile();
+    if profile.server.is_empty() || profile.key.is_empty() { return "{}".into(); }
+    let mut server = profile.server.trim().to_ascii_lowercase();
+    if !server.contains(':') { server.push_str(":21116"); }
+    serde_json::json!({"server": server,
+        "key_sha256": format!("{:x}", Sha256::digest(profile.key.trim().as_bytes()))}).to_string()
+}
+
 #[cfg(windows)]
 mod platform {
     use super::*;
@@ -212,6 +223,13 @@ mod platform {
         command.args([request.action.as_str(), "--state"]).arg(&state_path)
             .args(["--origin", request.origin.as_str(), "--parent", &std::process::id().to_string(), "--name", request.name.as_str()])
             .creation_flags(0x08000000).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).env_clear();
+        // HOMEDESK: 目录地址来自本机已确认配置，远控 ID 来自现有后台；不接受界面自报身份。
+        if request.action == "run" {
+            let profile = crate::homedesk_config::active_profile();
+            let key_hash = format!("{:x}", Sha256::digest(profile.key.trim().as_bytes()));
+            command.args(["--remote-id", crate::ipc::get_id().trim(),
+                "--remote-server", profile.server.as_str(), "--remote-key-sha256", key_hash.as_str()]);
+        }
         for key in ["SystemRoot", "WINDIR", "TEMP", "TMP", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "USERNAME", "USERDOMAIN"] {
             if let Some(value) = std::env::var_os(key) { command.env(key, value); }
         }

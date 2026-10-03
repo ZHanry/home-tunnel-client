@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "win32_window.h"
+#include "homedesk_window_tray.h"  // HOMEDESK: 主窗口托盘生命周期与窗口一致。
 
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
@@ -23,6 +24,7 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  HomeDeskWindowTray homedesk_tray_;  // HOMEDESK: 只有主窗口显式启用。
   // The project to run.
   flutter::DartProject project_;
 

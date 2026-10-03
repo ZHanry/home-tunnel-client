@@ -224,6 +224,20 @@ pub fn is_option_fixed(key: &str) -> bool {
 
 #[inline]
 pub fn get_local_option(key: String) -> String {
+    if key == "homedesk-credential-support" {
+        // HOMEDESK: Windows 升级沿用配置 namespace 对应的用户目录，不复制登录密文。
+        #[cfg(target_os = "windows")]
+        return if env!("HOMEDESK_CONFIG_NAMESPACE") != env!("HOMEDESK_APP_NAME") {
+            config::Config::path("").parent().and_then(|p| p.parent())
+                .map(|p| p.join("Purslane Tech Pte. Ltd.").join(env!("HOMEDESK_CONFIG_NAMESPACE"))
+                    .to_string_lossy().into_owned()).unwrap_or_default()
+        } else { String::new() }; // HOMEDESK: 兼容旧 Windows 资源元数据派生的 path_provider 目录。
+        #[cfg(not(target_os = "windows"))]
+        return String::new();
+    }
+    if key == "homedesk-remote-profile" {
+        return crate::homedesk_tunnel_runtime::network_identity(); // HOMEDESK: 本机远控配置的公开指纹。
+    }
     if key == "homedesk-tunnel-agent-state" {
         return crate::homedesk_tunnel_runtime::status(); // HOMEDESK: 仅返回公开进程状态。
     }

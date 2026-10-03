@@ -47,7 +47,17 @@ bool FlutterWindow::OnCreate() {
     &flutter::StandardMethodCodec::GetInstance());
 
   channel.SetMethodCallHandler(
-    [](const flutter::MethodCall<>& call, std::unique_ptr<flutter::MethodResult<>> result) {
+    [this](const flutter::MethodCall<>& call, std::unique_ptr<flutter::MethodResult<>> result) { // HOMEDESK: 托盘归当前窗口所有。
+      if (call.method_name() == "homedeskEnableTray") { // HOMEDESK: 主窗口显式启用。
+        homedesk_tray_.Enable(GetHandle());
+        result->Success(flutter::EncodableValue(true));
+        return;
+      }
+      if (call.method_name() == "homedeskMinimizeToTray") { // HOMEDESK: 图标创建失败时不隐藏。
+        homedesk_tray_.Enable(GetHandle());
+        result->Success(flutter::EncodableValue(homedesk_tray_.Minimize()));
+        return;
+      }
       if (call.method_name() == "bumpMouse") {
         auto arguments = call.arguments();
 
@@ -96,6 +106,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  homedesk_tray_.Remove(); // HOMEDESK: 退出后移除本窗口图标。
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -107,6 +118,7 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (homedesk_tray_.Handle(message, wparam, lparam)) return 0; // HOMEDESK: 处理主窗口托盘恢复。
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

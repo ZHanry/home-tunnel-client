@@ -484,14 +484,30 @@ Future<void> main() async {
     await api.login(username: 'demo', password: 'fixture-password');
     const code = 'fixture-single-use-enrollment-code';
     h.overrides['/api/v1/client/enrollment-codes'] = (request, body) async {
-      expect(request.method == 'POST' && body.length == 1 && body['name'] == '本机', '只提交接入码名称');
-      await jsonResponse(request, {'id':uuid(17),'name':'本机','code':code,
-        'expires_at':DateTime.now().toUtc().add(const Duration(minutes:10)).toIso8601String()}, status:201);
+      expect(
+          request.method == 'POST' && body.length == 1 && body['name'] == '本机',
+          '只提交接入码名称');
+      await jsonResponse(
+          request,
+          {
+            'id': uuid(17),
+            'name': '本机',
+            'code': code,
+            'expires_at': DateTime.now()
+                .toUtc()
+                .add(const Duration(minutes: 10))
+                .toIso8601String()
+          },
+          status: 201);
     };
     expect(await api.createEnrollmentCode('本机') == code, '返回一次性代码');
     expect(api.userId == uuid(99999), '绑定所属账号 UUID');
-    expect(!h.seen.any((r) => r['path']=='/api/v1/devices/register' ||
-      (r['path']=='/api/v1/client/connections' && r['method']=='POST')), '管理会话不变成设备会话，也不发布默认服务');
+    expect(
+        !h.seen.any((r) =>
+            r['path'] == '/api/v1/devices/register' ||
+            (r['path'] == '/api/v1/client/connections' &&
+                r['method'] == 'POST')),
+        '管理会话不变成设备会话，也不发布默认服务');
   });
 
   await test('MFA 仅由用户手动提交，不自动重试', (h) async {
@@ -1245,6 +1261,38 @@ Future<void> main() async {
     expect(
         writes == 3 && !h.seen.any((r) => r['path'] == '/api/v1/auth/refresh'),
         '409/403只提示刷新或权限，不自动重试写操作');
+  });
+
+  await test('家庭远控目录使用当前账号认证，拒绝地址伪装与重复设备', (h) async {
+    final api = h.api();
+    await api.login(username: 'demo', password: 'fixture-password');
+    var mode = 0;
+    h.overrides['/api/v1/homedesk/devices'] = (request, body) async {
+      expect(request.headers.value('authorization') == 'Bearer $oldAccess',
+          '目录必须使用当前账号身份');
+      final item = {
+        'device_id': uuid(1),
+        'remote_id': mode == 1 ? '127.0.0.1:3389' : '123456789',
+        'server': 'relay.example.invalid:21116',
+        'key_sha256': 'a' * 64,
+        'platform': 'windows',
+        'online': true
+      };
+      await jsonResponse(request, {
+        'items': mode == 2 ? [item, item] : [item],
+        'version': 1
+      });
+    };
+    final result = await api.remoteBindings();
+    expect(
+        result.single.deviceId == uuid(1) &&
+            result.single.remoteId == '123456789',
+        'UUID必须关联独立远控ID');
+    for (mode = 1; mode < 3; mode++) {
+      await rejects(() async {
+        await api.remoteBindings();
+      }, 'RESPONSE_INVALID');
+    }
   });
 
   print('全部通过：$passed 组 HomeTunnel 行为检查。');

@@ -4,6 +4,7 @@ use std::{collections::HashMap, env, fs, net::Ipv4Addr, path::PathBuf};
 #[derive(Debug, PartialEq)]
 struct BrandConfig {
     app_name: String,
+    config_namespace: String,
     executable_name: String,
     package_name: String,
 }
@@ -51,6 +52,7 @@ fn configure_inner() -> Result<(), String> {
         "cargo:rustc-env=HOMEDESK_APP_NAME={}",
         config.brand.app_name
     );
+    println!("cargo:rustc-env=HOMEDESK_CONFIG_NAMESPACE={}", config.brand.config_namespace);
     println!(
         "cargo:rustc-env=HOMEDESK_EXECUTABLE_NAME={}",
         config.brand.executable_name
@@ -134,6 +136,7 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
         if !matches!(
             full_key.as_str(),
             "brand.app_name"
+                | "brand.config_namespace"
                 | "brand.executable_name"
                 | "brand.package_name"
                 | "server.host"
@@ -176,6 +179,8 @@ fn parse_config(content: &str) -> Result<BuildConfig, String> {
     let config = BuildConfig {
         brand: BrandConfig {
             app_name: required(&values, "brand.app_name")?,
+            config_namespace: values.get("brand.config_namespace").cloned()
+                .unwrap_or(required(&values, "brand.app_name")?),
             executable_name: required(&values, "brand.executable_name")?,
             package_name: required(&values, "brand.package_name")?,
         },
@@ -259,6 +264,11 @@ fn required(values: &HashMap<String, String>, key: &str) -> Result<String, Strin
 }
 
 fn validate_brand(config: &BrandConfig) -> Result<(), String> {
+    let namespace = &config.config_namespace;
+    if namespace.is_empty() || namespace.chars().count() > 64 || namespace.trim() != namespace
+        || namespace.chars().any(|c| c.is_control() || r#"<>:"/\|?*"#.contains(c)) {
+        return Err("brand.config_namespace 必须是合法的独立配置目录名".to_owned());
+    }
     if config.app_name.is_empty() || config.app_name.chars().count() > 64 {
         return Err("brand.app_name 必须为 1 到 64 个字符".to_owned());
     }
@@ -416,6 +426,17 @@ fn valid_endpoint(value: &str, allow_domain_or_public: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renamed_brand_preserves_only_valid_explicit_namespace() {
+        let content = VALID_CONFIG.replace("app_name = \"HomeDesk\"",
+            "app_name = \"HomeDesk\"\nconfig_namespace = \"HomeDeskAcceptance\"");
+        let config = parse_config(&content).unwrap();
+        assert_eq!(config.brand.app_name, "HomeDesk");
+        assert_eq!(config.brand.config_namespace, "HomeDeskAcceptance");
+        assert!(parse_config(&content.replace("HomeDeskAcceptance", "../old")).is_err());
+        assert_eq!(parse_config(VALID_CONFIG).unwrap().brand.config_namespace, "HomeDesk");
+    }
 
     const VALID_CONFIG: &str = r#"
         [brand]

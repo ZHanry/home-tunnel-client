@@ -1031,7 +1031,7 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
 
 #[inline]
 pub fn get_app_name() -> String {
-    hbb_common::config::APP_NAME.read().unwrap().clone()
+    env!("HOMEDESK_APP_NAME").to_owned() // HOMEDESK: 安装、托盘与 UI 使用配置中的显示品牌。
 }
 
 #[inline]

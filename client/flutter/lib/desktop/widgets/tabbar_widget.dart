@@ -6,6 +6,8 @@ import 'package:bot_toast/bot_toast.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' hide TabBarTheme;
+import 'package:flutter_hbb/homedesk_title_bar.dart'; // HOMEDESK: 主窗口使用独立简洁标题栏。
+import 'package:flutter_hbb/homedesk_window.dart'; // HOMEDESK: 最小化到现有窗口所属托盘。
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/remote_page.dart';
@@ -338,6 +340,7 @@ class _DesktopTabState extends State<DesktopTab>
     super.initState();
     DesktopMultiWindow.addListener(this);
     windowManager.addListener(this);
+    if (tabType == DesktopTabType.main && isWindows) homeDeskEnableTray(); // HOMEDESK: 只接管主窗口最小化。
 
     Future.delayed(Duration(milliseconds: 500), () {
       if (isMainWindow) {
@@ -512,6 +515,24 @@ class _DesktopTabState extends State<DesktopTab>
   Widget build(BuildContext context) {
     return Column(children: [
       Obx(() {
+        // HOMEDESK: 主窗口不再显示重复的主页/设置页签；远控多会话标签保留。
+        if (tabType == DesktopTabType.main && isWindows && !kUseCompatibleUiMode) {
+          final selected = state.value.selected;
+          final settings = selected >= 0 && selected < state.value.tabs.length &&
+              state.value.tabs[selected].key == kTabLabelSettingPage;
+          return HomeDeskTitleBar(brand: appName, inSettings: settings,
+            maximized: stateGlobal.isMaximized.value,
+            canMaximize: !bind.isIncomingOnly() || !isInHomePage(),
+            onHome: () {
+              final index = state.value.tabs.indexWhere((tab) => tab.key == kTabLabelHomePage);
+              if (index >= 0) controller.jumpTo(index);
+            },
+            onDrag: () => startDragging(true),
+            onMaximize: () => toggleMaximize(true).then((v) => stateGlobal.setMaximized(v)),
+            onMinimize: () => homeDeskMinimizeToTray(),
+            onClose: () => windowManager.close(),
+          );
+        }
         if (stateGlobal.showTabBar.isTrue &&
             !(kUseCompatibleUiMode && isHideSingleItem())) {
           final showBottomDivider = _showTabBarBottomDivider(tabType);

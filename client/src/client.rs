@@ -208,6 +208,7 @@ impl Client {
     )> {
         debug_assert!(peer == interface.get_id());
         interface.update_direct(None);
+        interface.homedesk_connection_path("unknown"); // HOMEDESK: 新连接清除上一轮展示状态。
         interface.update_received(false);
         match Self::_start(peer, key, token, conn_type, interface.clone()).await {
             Err(err) => {
@@ -219,6 +220,12 @@ impl Client {
                 }
             }
             Ok(x) => {
+                if !x.0 .1 { interface.homedesk_connection_path("relay"); } // HOMEDESK: 使用实际中继结果。
+                // HOMEDESK: 已成功的显式地址入口按实际地址分类，不额外拨号或解析。
+                if x.0 .1 && (hbb_common::is_ip_str(peer) || hbb_common::is_domain_port_str(peer)) {
+                    interface.homedesk_connection_path(crate::homedesk_connection_path::classify_manual(
+                        peer, &crate::homedesk_config::active_profile().family_cidr, x.0 .4));
+                }
                 // Set x.2 to true only in the connect() function to indicate that direct_failures needs to be updated; everywhere else it should be set to false.
                 if x.2 {
                     let direct_failures = interface.get_lch().read().unwrap().direct_failures;
@@ -828,6 +835,9 @@ impl Client {
             bail!("自建公网模式拒绝未完成身份验证的加密会话");
         }
         log::debug!("{} punch secure_connection ok", punch_type);
+        // HOMEDESK: 只观测成功候选，网络模式不作为连接路径证据。
+        interface.homedesk_connection_path(crate::homedesk_connection_path::classify(
+            direct, Some(peer), is_local, &crate::homedesk_config::active_profile().family_cidr, typ));
         Ok((conn, direct, pk, kcp, typ))
     }
 
@@ -3797,6 +3807,7 @@ async fn send_switch_login_request(
 /// Interface for client to send data and commands.
 #[async_trait]
 pub trait Interface: Send + Clone + 'static + Sized {
+    fn homedesk_connection_path(&self, _path: &str) {} // HOMEDESK: 默认仅供 UI 元数据使用。
     /// Send message data to remote peer.
     fn send(&self, data: Data);
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str);

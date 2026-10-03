@@ -1,5 +1,6 @@
 // HOMEDESK: 家庭设备中心布局独立于远控协议和上游页面逻辑。
 import 'package:flutter/material.dart';
+import 'homedesk_theme.dart';
 
 enum _DashboardPage { devices, recent, services }
 
@@ -13,6 +14,7 @@ class HomeDeskDashboard extends StatefulWidget {
   final VoidCallback onSettings;
   final VoidCallback? onNetworkSettings;
   final ValueChanged<String> onConnect;
+  final bool initializeAccount;
   const HomeDeskDashboard(
       {super.key,
       required this.brandName,
@@ -23,7 +25,8 @@ class HomeDeskDashboard extends StatefulWidget {
       required this.onSettings,
       required this.onConnect,
       this.onNetworkSettings,
-      this.servicesBuilder});
+      this.servicesBuilder,
+      this.initializeAccount = false});
 
   @override
   State<HomeDeskDashboard> createState() => HomeDeskDashboardState();
@@ -33,6 +36,16 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
   _DashboardPage _page = _DashboardPage.devices;
   final Set<_DashboardPage> _initializedPages = {_DashboardPage.devices};
   ThemeData? _dialogTheme;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initializeAccount && widget.servicesBuilder != null) {
+      _initializedPages.add(_DashboardPage.services);
+    }
+  }
+
+  void showAccount() => _selectPage(_DashboardPage.services);
 
   void _selectPage(_DashboardPage page) {
     setState(() {
@@ -52,7 +65,7 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
 
   Widget _buildPage(
       BuildContext context, _DashboardPage page, WidgetBuilder? builder) {
-    // 服务页首次点击才初始化；切换导航保留会话和设备筛选，不重复创建轮询。
+    // 未记住登录时不请求账号 API；生产首页可恢复此前明确保存的会话。
     if (!_initializedPages.contains(page) || builder == null) {
       return const SizedBox.shrink();
     }
@@ -73,29 +86,39 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
   void _showLocal() {
     showDialog<void>(
         context: context,
-        builder: (context) => Dialog(
+        builder: (context) => Theme(
+            data: _dialogTheme ?? Theme.of(context),
+            child: Dialog(
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+              clipBehavior: Clip.antiAlias,
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                    maxWidth: 360,
-                    maxHeight: MediaQuery.sizeOf(context).height * .85),
-                child: Column(children: [
-                  Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
-                      child: Row(children: [
-                        const Expanded(
-                            child: Text('本机信息',
-                                style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w700))),
-                        IconButton(
-                            tooltip: '关闭本机信息',
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.close)),
-                      ])),
-                  Expanded(child: Center(child: widget.localBuilder(context))),
-                ]),
+                    maxWidth: 560,
+                    maxHeight: MediaQuery.sizeOf(context).height - 36),
+                child: SizedBox(
+                    width: 560,
+                    child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 12, 8, 8),
+                              child: Row(children: [
+                                const Expanded(
+                                    child: Text('本机信息',
+                                        style: TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.w700))),
+                                IconButton(
+                                    tooltip: '关闭本机信息',
+                                    onPressed: () => Navigator.pop(context),
+                                    icon: const Icon(Icons.close)),
+                              ])),
+                          Flexible(child: widget.localBuilder(context)),
+                        ])),
               ),
-            ));
+            )));
   }
 
   Widget _nav(BuildContext context, IconData icon, String label,
@@ -142,36 +165,8 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final colors = ColorScheme.fromSeed(
-            seedColor: const Color(0xFF4C6FFF),
-            brightness: dark ? Brightness.dark : Brightness.light)
-        .copyWith(
-      surface: dark ? const Color(0xFF1B2230) : Colors.white,
-      onSurface: dark ? const Color(0xFFE8EEF8) : const Color(0xFF202C40),
-      onSurfaceVariant:
-          dark ? const Color(0xFFA8B5CB) : const Color(0xFF65748C),
-      outlineVariant: dark ? const Color(0xFF303B50) : const Color(0xFFE0E6F0),
-    );
-    final theme = Theme.of(context).copyWith(
-      colorScheme: colors,
-      cardTheme: CardTheme(
-          color: colors.surface,
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
-              side: BorderSide(color: colors.outlineVariant))),
-      filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 44),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11)))),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 44),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(11)))),
-    );
+    final theme = homeDeskTheme(Theme.of(context));
+    final colors = theme.colorScheme;
     _dialogTheme = theme;
     return Theme(
         data: theme,

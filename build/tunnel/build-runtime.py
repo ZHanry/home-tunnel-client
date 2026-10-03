@@ -34,8 +34,8 @@ if hashlib.sha256((target / 'home-tunnel-agent.exe').read_bytes()).hexdigest() !
     raise SystemExit('Agent 摘要不匹配')
 helper_source = source / 'cmd/homedesk-tunnel-helper'
 helper_source.mkdir(exist_ok=True)
-shutil.copy2(root / 'build/tunnel/helper/main.go', helper_source / 'main.go')
-shutil.copy2(root / 'build/tunnel/helper/main_test.go', helper_source / 'main_test.go')
+for helper_file in (root / 'build/tunnel/helper').glob('*.go'):
+    shutil.copy2(helper_file, helper_source / helper_file.name)
 environment = os.environ.copy()
 environment.update({'GOTOOLCHAIN':'local', 'CGO_ENABLED':'0', 'GOOS':'windows', 'GOARCH':'amd64'})
 version = subprocess.check_output([str(go), 'version'], text=True, env=environment)

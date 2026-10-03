@@ -31,9 +31,16 @@ class DesktopTabPage extends StatefulWidget {
             key: const ValueKey(kTabLabelSettingPage),
             initialTabkey: initialPage,
           )));
+      DesktopSettingPage.selectSection(initialPage); // HOMEDESK: 已打开设置时也切换到请求的分类。
     } catch (e) {
       debugPrintStack(label: '$e');
     }
+  }
+
+  static void onHome() { // HOMEDESK: 设置页与简化标题栏共用返回入口。
+    final controller = Get.find<DesktopTabController>();
+    final index = controller.state.value.tabs.indexWhere((tab) => tab.key == kTabLabelHomePage);
+    if (index >= 0) controller.jumpTo(index);
   }
 }
 

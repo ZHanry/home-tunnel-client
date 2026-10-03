@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 
 import 'models/platform_model.dart';
+import 'common.dart' show appName; // HOMEDESK: 设置标题使用构建品牌。
 
 const _advancedModeKey = 'homedesk-advanced-mode';
 final RxBool homedeskAdvancedMode = false.obs;
@@ -198,7 +199,7 @@ Future<void> showHomeDeskNetworkSettings(BuildContext context,
             ),
           );
       return AlertDialog(
-        title: const Text('HomeDesk 网络模式'),
+        title: Text('$appName 网络模式'), // HOMEDESK: 不保留旧显示品牌。
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
