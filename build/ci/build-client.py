@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""在对应平台原生构建 HomeDesk，先验证配置及工具链，再调用已有打包入口。"""
+import argparse
+import json
+import os
+from pathlib import Path
+import platform
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'build'))
+from brand_config import load_config
+
+def build_environment():
+    env=os.environ.copy()
+    if platform.system()!='Windows':return env
+    local=ROOT/'client/target/toolchains'
+    paths=[local/'pwsh',local/'flutter/bin',local/'frb/bin']
+    installer=Path(env.get('ProgramFiles(x86)','C:/Program Files (x86)'))/'Microsoft Visual Studio/Installer/vswhere.exe'
+    if installer.is_file():
+        location=subprocess.check_output([str(installer),'-latest','-products','*','-requires','Microsoft.VisualStudio.Component.VC.Tools.x86.x64','-property','installationPath'],text=True).strip()
+        if location:
+            cmake=Path(location)/'Common7/IDE/CommonExtensions/Microsoft/CMake'
+            paths.extend([cmake/'CMake/bin',cmake/'Ninja'])
+    env['PATH']=os.pathsep.join(str(p) for p in paths if p.is_dir())+os.pathsep+env.get('PATH','')
+    if (local/'vcpkg/vcpkg.exe').is_file():env.setdefault('VCPKG_ROOT',str(local/'vcpkg'))
+    if (local/'python-libs/clang/native/libclang.dll').is_file():env.setdefault('LIBCLANG_PATH',str(local/'python-libs/clang/native'))
+    scratch=ROOT/'client/target/native-tmp'
+    scratch.mkdir(parents=True,exist_ok=True)
+    env['TEMP']=str(scratch);env['TMP']=str(scratch)
+    env['FLUTTER_SUPPRESS_ANALYTICS']='true'
+    return env
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--target',required=True,choices=['win-x64','linux-x64','linux-arm64'])
+    parser.add_argument('--config',type=Path,default=ROOT/'build/config.toml')
+    parser.add_argument('--check',action='store_true',help='仅检查，不构建')
+    args=parser.parse_args()
+    machine=platform.machine().lower()
+    if platform.system() not in ('Windows','Linux') or machine not in ('x86_64','amd64','aarch64','arm64'):
+        raise SystemExit('此入口仅支持 Windows/Linux 的 x64 与 ARM64 构建环境')
+    actual=('win-' if platform.system()=='Windows' else 'linux-')+('arm64' if machine in ('aarch64','arm64') else 'x64')
+    if args.target!=actual: raise SystemExit(f'需要 {args.target} 原生构建机；当前为 {actual}，不会伪装目标架构')
+    config=load_config(args.config.resolve())
+    env=build_environment()
+    sdk='flutter-elinux' if args.target=='linux-arm64' else 'flutter'
+    missing=[tool for tool in ['cargo','rustc','cmake',sdk,'flutter_rust_bridge_codegen','cargo-expand'] if not shutil.which(tool,path=env.get('PATH'))]
+    if platform.system()!='Windows': missing += [tool for tool in ['clang','pkg-config','ninja','dpkg-deb'] if not shutil.which(tool)]
+    vcpkg=Path(env.get('VCPKG_ROOT','__missing__'))
+    if not (vcpkg/'installed').is_dir(): missing.append('VCPKG_ROOT 下的原生库')
+    if missing: raise SystemExit('缺少构建前置项：'+', '.join(missing))
+    print(json.dumps({'target':args.target,'brand':config.brand.app_name,'config_valid':True,'flutter':sdk},ensure_ascii=False))
+    if args.check:return
+    env['HOMEDESK_CONFIG_PATH']=str(args.config.resolve());env['CARGO_INCREMENTAL']='0'
+    if args.target.startswith('linux'):env['DEB_ARCH']='arm64' if args.target.endswith('arm64') else 'amd64'
+    pub=[shutil.which(sdk,path=env.get('PATH')),'pub','get','--enforce-lockfile']
+    result=subprocess.run(pub,cwd=ROOT/'client/flutter',env=env,capture_output=True,text=True,encoding='utf-8',errors='replace')
+    if result.returncode and args.target=='win-x64' and 'requires symlink support' in result.stdout+result.stderr:
+        shell=shutil.which('pwsh',path=env['PATH']) or 'powershell.exe'
+        subprocess.run([shell,'-NoProfile','-File',str(ROOT/'build/ci/prepare-windows-plugins.ps1')],env=env,check=True)
+        result=subprocess.run(pub,cwd=ROOT/'client/flutter',env=env,capture_output=True,text=True,encoding='utf-8',errors='replace')
+    print(result.stdout)
+    if result.returncode:print(result.stderr,file=sys.stderr);raise SystemExit(result.returncode)
+    # 上游不提交生成式桥接文件；每次从当前接口重新生成，避免漏编或使用过期 ABI。
+    generator=shutil.which('flutter_rust_bridge_codegen',path=env.get('PATH'))
+    bridge=[generator,'--rust-input','./src/flutter_ffi.rs','--dart-output','./flutter/lib/generated_bridge.dart','--c-output','./flutter/macos/Runner/bridge_generated.h']
+    if args.target=='win-x64' and env.get('LIBCLANG_PATH'):
+        bridge+=['--llvm-path',str(Path(env['LIBCLANG_PATH'])/'libclang.dll')]
+    bridge_env=env.copy();bridge_env['RUST_LOG']='info'
+    subprocess.run(bridge,cwd=ROOT/'client',env=bridge_env,check=True)
+    if args.target=='win-x64':
+        shell=shutil.which('pwsh',path=env['PATH']) or 'powershell.exe'
+        subprocess.run([shell,'-NoProfile','-File',str(ROOT/'build/ci/prepare-windows-plugins.ps1')],env=env,check=True)
+    command=[sys.executable,'build.py','--flutter']
+    if args.target=='win-x64':command+=['--portable','--skip-portable-pack','--hwcodec']
+    else:command+=['--hwcodec','--unix-file-copy-paste']
+    subprocess.run(command,cwd=ROOT/'client',env=env,check=True)
+
+if __name__=='__main__':main()

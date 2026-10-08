@@ -1,0 +1,118 @@
+name: Legacy 10.x - Android pinned WebRTC engine
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate && format('android-sdk-candidate-{0}', github.ref) || format('android-engine-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' || !inputs.candidate }}
+jobs:
+  policy:
+    name: Android dual-ABI recipe policy
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.candidate }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check immutable arm64 and x86_64 controller policy
+      run: 'python3 scripts/build-remote-android-webrtc.py --abi arm64-v8a
+
+        python3 scripts/build-remote-android-webrtc.py --abi x86_64
+
+        python3 -m unittest discover -s scripts -p test_remote_android_build.py
+
+        python3 -m unittest discover -s scripts -p test_remote_android_sdk.py
+
+        '
+  engine:
+    name: "Linux \u2192 Android ${{ matrix.abi }} controller (not device acceptance)"
+    needs: policy
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.candidate }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        abi:
+        - arm64-v8a
+        - x86_64
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Prepare isolated hosted build machine
+      shell: bash
+      run: 'set -euo pipefail
+
+        # The Android engine uses its DEPS-pinned SDK/NDK. These preinstalled
+
+        # SDKs belong only to the disposable hosted runner, not the project.
+
+        test "${RUNNER_ENVIRONMENT}" = "github-hosted"
+
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+
+        sudo apt-get update -qq
+
+        sudo apt-get install -y --no-install-recommends ca-certificates git ninja-build pkg-config libglib2.0-dev libnss3-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libgbm-dev libdrm-dev
+
+        df -h .
+
+        '
+    - name: Build pinned WebRTC controller for this ABI
+      shell: bash
+      run: 'set -euo pipefail
+
+        abi="${{ matrix.abi }}"
+
+        version=$(python3 -c ''import json; print(json.load(open("compatibility.json"))["version"])'')
+
+        python3 scripts/package-remote-android-sdk.py --describe --abi "$abi" --version "$version" > "$RUNNER_TEMP/android-abi.json"
+
+        engine_dir=$(python3 -c ''import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/android-abi.json"))["engine_dir"])'')
+
+        build_dir=$(python3 -c ''import json,os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/android-abi.json"))["build_dir"])'')
+
+        echo "ANDROID_ENGINE_DIR=$engine_dir" >> "$GITHUB_ENV"
+
+        echo "ANDROID_BUILD_DIR=$build_dir" >> "$GITHUB_ENV"
+
+        python3 scripts/build-remote-android-webrtc.py --build --abi "$abi" --jobs 4
+
+        python3 scripts/build-remote-android-webrtc.py --verify-artifact "outputs/$engine_dir" --abi "$abi"
+
+        python3 scripts/package-remote-android-sdk.py --abi "$abi" --sdk "outputs/$engine_dir" --output outputs/android-sdk-release --version "$version" --revision "$GITHUB_SHA"
+
+        python3 scripts/package-remote-android-sdk.py --verify --abi "$abi" --output outputs/android-sdk-release --version "$version" --revision "$GITHUB_SHA"
+
+        '
+    - name: Archive internal SDK
+      run: tar -C outputs -czf "outputs/${ANDROID_ENGINE_DIR}.tar.gz" "$ANDROID_ENGINE_DIR"
+    - name: Preserve verified build products
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ matrix.abi == 'arm64-v8a' && 'android-webrtc-arm64-engine' || 'android-webrtc-x86_64-engine' }}
+        path: outputs/${{ matrix.abi == 'arm64-v8a' && 'android-webrtc-arm64' || 'android-webrtc-x86_64' }}.tar.gz
+        if-no-files-found: error
+        retention-days: 14
+    - name: Preserve compilation diagnostics
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ matrix.abi == 'arm64-v8a' && 'android-webrtc-arm64-build-log' || 'android-webrtc-x86_64-build-log' }}
+        path: .downloads/remote-webrtc-android/checkout/src/out/${{ matrix.abi == 'arm64-v8a' && 'home_tunnel_android_arm64' || 'home_tunnel_android_x64' }}/android-build.log
+        if-no-files-found: ignore
+        retention-days: 14
+    - name: Preserve distributable SDK validation evidence
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ matrix.abi == 'arm64-v8a' && 'android-controller-sdk-arm64' || 'android-controller-sdk-x86_64' }}
+        path: outputs/android-sdk-release/*
+        if-no-files-found: error
+        retention-days: 14
+  candidate:
+    name: Seal trusted Android SDK candidate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/android-sdk-candidate.yml
+'on':
+  workflow_dispatch: null

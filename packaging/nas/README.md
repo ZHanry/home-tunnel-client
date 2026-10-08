@@ -4,8 +4,8 @@ Use a Linux amd64/arm64 NAS with Docker Compose v2. This builds locally; it does
 not depend on a Home Tunnel client image being published. Keep the NAS firmware
 and container runtime supported by their vendor.
 
-1. Download the matching **7.0.0 Linux** archive and `SHA256SUMS.txt` from the client
-   Release. Verify its hash (and the Sigstore checksum bundle), then extract it.
+1. Download the matching **linux-amd64 / linux-arm64** directory from the CLI/Agent ZIP and `SHA256SUMS.txt` from the client
+   Release. Verify its hash (and the Sigstore checksum bundle), then extract it. The Agent keeps its original 10.1.0 identity.
 2. Copy this directory outside your checkout. Rename the extracted archive's
    top-level directory to `package` beside this Dockerfile. Do not mix Agent/CLI
    binaries from different packages: the CLI checks its Agent's hash.

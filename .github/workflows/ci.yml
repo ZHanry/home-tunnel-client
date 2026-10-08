@@ -6,7 +6,6 @@ name: Client CI
   pull_request:
     branches:
     - main
-  merge_group: null
   workflow_dispatch: null
 permissions:
   contents: read
@@ -14,343 +13,151 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  windows-client:
-    name: Desktop GUI client
-    runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-      with:
-        go-version: 1.26.6
-        cache-dependency-path: go.mod
-    - name: Test shared Go client
-      run: |
-        go test ./...
-    - name: Exercise real WebView2 remote and popup lifecycles
-      env:
-        HOMETUNNEL_WEBVIEW2_INTEGRATION: '1'
-      run: go test ./internal/desktop -run '^TestWindowsWebView2Integration$' -count=1 -timeout=6m -v
-    - name: Build unified desktop GUI
-      run: |
-        .\packaging\windows\test-defender-signatures.ps1
-        python -m unittest discover -s scripts -p "test_signing_config.py"
-        go build ./cmd/home-tunnel-client
-        go build -ldflags "-H windowsgui" ./cmd/home-tunnel-gui
-  windows-agent:
-    name: Windows agent official baseline
-    runs-on: ${{ vars.WINDOWS_NATIVE_RUNNER || 'windows-2022' }}
+  windows:
+    name: Build HomeDesk Windows installer
+    runs-on: windows-2022
     timeout-minutes: 180
+    env:
+      PYTHONUTF8: '1'
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        submodules: recursive
+        fetch-depth: 0
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.26.6
-        cache-dependency-path: go.mod
-    - name: Install pinned windres (mingw binutils)
+        go-version: 1.27.0
+        cache-dependency-path: go.sum
+    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+      with:
+        toolchain: 1.96.0
+        components: rustfmt
+    - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+      with:
+        channel: stable
+        flutter-version: 3.24.5
+        cache: true
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: '3.12'
+    - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      with:
+        vcpkgDirectory: D:/vcpkg
+        vcpkgGitCommitId: 120deac3062162151622ca4860575a33844ba10b
+        vcpkgJsonGlob: client/vcpkg.json
+        doNotCache: false
+    - name: Prepare locked native toolchain
       shell: pwsh
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        $archive = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0.7z'
-        $extract = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0'
-        Invoke-WebRequest -Headers @{
-          Accept = 'application/octet-stream'
-          Authorization = "Bearer $env:GH_TOKEN"
-          'X-GitHub-Api-Version' = '2022-11-28'
-        } -Uri 'https://api.github.com/repos/niXman/mingw-builds-binaries/releases/assets/412720050' -OutFile $archive
-        $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-        $expected = 'ecaceb42639d21c695f875800a29b2dea76bbb05eb2a1cca3049b65499b8d867'
-        if ($actual -ne $expected) { throw "MinGW archive checksum mismatch: $actual" }
-        & 7z x $archive "-o$extract" -y | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'MinGW extraction failed' }
-        $windres = Get-ChildItem -LiteralPath $extract -Recurse -Filter windres.exe -File |
-          Select-Object -First 1 -ExpandProperty FullName
-        if (-not $windres) { throw 'windres.exe not found in the pinned MinGW archive' }
-        "HOME_TUNNEL_WINDRES=$windres" >> $env:GITHUB_ENV
-    - name: Build official agent baseline
-      shell: pwsh
-      run: |
-        $lines = & .\agent\build-agent.ps1 -WindRes $env:HOME_TUNNEL_WINDRES
-        $lines | Write-Output
-        $sha = ($lines | Where-Object { $_ -like 'AGENT_SHA256=*' } | Select-Object -First 1) -replace '^AGENT_SHA256=', ''
-        if ($sha -notmatch '^[0-9a-f]{64}$') { throw 'AGENT_SHA256 line missing from build-agent.ps1 output' }
-        $expectedSha = (Get-Content -Raw -LiteralPath .\agent\expected-sha256.txt).Trim()
-        if ($sha -ne $expectedSha) { throw "Agent baseline hash mismatch: built=$sha expected=$expectedSha" }
-        $lines | Where-Object { $_ -match '^(AGENT_VERSION|FRP_VERSION|FRP_COMMIT|AGENT_SHA256)=' } |
-          Set-Content -LiteralPath agent-baseline.txt
-        '## Home Tunnel Agent official baseline' >> $env:GITHUB_STEP_SUMMARY
-        '' >> $env:GITHUB_STEP_SUMMARY
-        "``AGENT_SHA256=$sha``" >> $env:GITHUB_STEP_SUMMARY
-        '' >> $env:GITHUB_STEP_SUMMARY
-        '该哈希已与 agent/expected-sha256.txt 核验一致。' >> $env:GITHUB_STEP_SUMMARY
-    - name: Run Agent Go and vulnerability checks inside the pinned FRP tree
+      run: .\build\ci\setup-windows.ps1
+    - name: Build native P2P client
+      run: python build/ci/build-client.py --target win-x64 --config build/config.toml.example
+    - name: Analyze and test the current Flutter product
       shell: pwsh
       run: |
-        $env:GOFLAGS = '-buildvcs=false'
-        $moduleLock = Join-Path $env:GITHUB_WORKSPACE 'agent/frp-go.mod'
-        $goBin = Join-Path (Get-Location) '.downloads\go-toolchain\go\bin'
-        $env:PATH = $goBin + [IO.Path]::PathSeparator + $env:PATH
-        $frpRoot = Get-ChildItem (Join-Path '.downloads' 'frp-api-*') -Directory |
-          ForEach-Object { Get-ChildItem $_.FullName -Directory } |
-          Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'go.mod') } |
-          Select-Object -First 1
-        if (-not $frpRoot) { throw 'pinned FRP source tree not found under .downloads' }
-        $agentCmd = Join-Path $frpRoot.FullName 'cmd\home-tunnel-agent'
-        New-Item -ItemType Directory -Force $agentCmd | Out-Null
-        Copy-Item agent\main.go, agent\main_test.go $agentCmd
-        try {
-          $unformatted = & (Join-Path $goBin 'gofmt.exe') -l (Join-Path $agentCmd 'main.go') (Join-Path $agentCmd 'main_test.go')
-          if ($unformatted) { throw "gofmt found unformatted agent files: $unformatted" }
-          Push-Location $frpRoot.FullName
-          try {
-            & (Join-Path $goBin 'go.exe') vet -modfile $moduleLock -mod=readonly ./cmd/home-tunnel-agent/
-            if ($LASTEXITCODE -ne 0) { throw 'agent go vet failed' }
-            & (Join-Path $goBin 'go.exe') test -modfile $moduleLock -mod=readonly -count=1 ./cmd/home-tunnel-agent/
-            if ($LASTEXITCODE -ne 0) { throw 'agent go test failed' }
-            & (Join-Path $goBin 'go.exe') install golang.org/x/vuln/cmd/govulncheck@v1.6.0
-            if ($LASTEXITCODE -ne 0) { throw 'govulncheck installation failed' }
-            $goPath = & (Join-Path $goBin 'go.exe') env GOPATH
-            $env:GOFLAGS = '-buildvcs=false -mod=readonly "-modfile=' + $moduleLock.Replace('\','/') + '"'
-            & (Join-Path $goPath 'bin/govulncheck.exe') ./cmd/home-tunnel-agent/
-            $env:GOFLAGS = '-buildvcs=false'
-            if ($LASTEXITCODE -ne 0) { throw 'agent govulncheck failed' }
-          }
-          finally {
-            Pop-Location
-          }
+        cd client/flutter
+        flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
+        if ($LASTEXITCODE -ne 0) { throw 'Dart errors' }
+        flutter test --no-pub test/homedesk_devices_test.dart test/homedesk_dashboard_test.dart test/homedesk_advanced_test.dart test/homedesk_services_test.dart test/homedesk_mobile_test.dart
+        if ($LASTEXITCODE -ne 0) { throw 'Widget tests failed' }
+        cd ../..
+        $env:HOMEDESK_TEST_OPENSSL = "C:/Program Files/Git/usr/bin/openssl.exe"
+        foreach ($fixture in Get-ChildItem tests/dart/*.dart) {
+          dart --packages=client/flutter/.dart_tool/package_config.json $fixture.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Portal/credential integration failed" }
         }
-        finally {
-          Remove-Item -LiteralPath $agentCmd -Recurse -Force
-        }
-    - name: Install the pinned Inno Setup compiler
+    - name: Build the current managed helper and installer
       shell: pwsh
       run: |
-        $lines = & .\packaging\windows\install-inno-setup.ps1
-        $compiler = ($lines | Where-Object { $_ -like 'ISCC=*' } | Select-Object -First 1) -replace '^ISCC=', ''
-        if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler is missing' }
-        "HOME_TUNNEL_ISCC=$compiler" >> $env:GITHUB_ENV
-    - name: Build and scan the Windows installer before tagging
-      shell: pwsh
-      run: |
-        $version = (Select-String -Path internal/model/model.go -Pattern '^const Version = "([^"]+)"$').Matches.Groups[1].Value
-        .\scripts\build-native-windows.ps1
-        .\packaging\windows\build-release.ps1 -Version $version -WindRes $env:HOME_TUNNEL_WINDRES -RemoteHostBuild "$PWD/outputs/native-windows-build/remote-host-build.json"
-        .\packaging\windows\scan-release.ps1 -Directory outputs/windows -Version $version -ReportPath windows-defender-scan.json -UpdateSignatures
-        .\packaging\windows\test-installer.ps1 -Installer "$PWD/outputs/windows/HomeTunnel-Setup-$version-x64.exe" -PayloadDirectory "$PWD/outputs/windows" -Version $version -ReportPath windows-installer-smoke.json
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-      with:
-        node-version: 24.19.0
-    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
-      with:
-        version: 11.16.0
-    - name: Test the actual CI-packaged native Windows UI
-      shell: pwsh
-      run: |
-        pnpm install --frozen-lockfile
-        if ($LASTEXITCODE -ne 0) { throw 'Packaged UI test dependency installation failed' }
-        $version = (Select-String -Path internal/model/model.go -Pattern '^const Version = "([^"]+)"$').Matches.Groups[1].Value
-        $archive = Join-Path $PWD "outputs/windows/HomeTunnel-Windows-$version-x64.zip"
-        $sha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-        .\scripts\capture-windows-ui.ps1 -ArchivePath $archive -ExpectedSHA256 $sha -ExpectedVersion $version -Regression
-    - name: Retain CI package bytes and native UI evidence (not an accepted candidate)
-      if: ${{ always() }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-      with:
-        name: windows-ci-package-and-ui
-        path: |
-          outputs/windows/HomeTunnel-Setup-*-x64.exe
-          outputs/windows/HomeTunnel-Setup-*-x64.exe.sha256
-          outputs/windows/HomeTunnel-Windows-*-x64.zip
-          outputs/windows/HomeTunnel-Windows-*-x64.zip.sha256
-          outputs/windows/windows-platform-signing.json
-          outputs/windows-ui/*
-          windows-defender-scan.json
-          windows-installer-smoke.json
-        if-no-files-found: warn
-        retention-days: 30
-    - name: Retain lightweight native UI evidence separately
-      if: ${{ always() }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-      with:
-        name: windows-ci-ui
-        path: outputs/windows-ui/*
-        if-no-files-found: warn
-        retention-days: 30
-    - name: Preserve Windows verification reports
-      if: ${{ always() }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-      with:
-        name: windows-installation-and-antivirus
-        path: |
-          windows-defender-scan.json
-          windows-installer-smoke.json
-        if-no-files-found: warn
-    - name: Upload agent baseline artifact
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-      with:
-        name: home-tunnel-agent-baseline
-        path: |
-          agent/assets/HomeTunnel.Agent.exe
-          agent-baseline.txt
-        if-no-files-found: error
-  macos-gui:
-    name: macOS graphical client
-    runs-on: macos-latest
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-      with:
-        go-version: 1.26.6
-        cache-dependency-path: go.mod
-    - name: Test shared Go client
-      run: |
-        go test ./...
-    - name: Build native macOS GUI
-      run: |
-        python3 -m unittest discover -s scripts -p "test_signing_config.py"
-        CGO_ENABLED=1 go build ./cmd/home-tunnel-gui ./cmd/home-tunnel-client
-  dependency-review:
-    name: Dependency Review
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-    - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
-      with:
-        fail-on-severity: moderate
-  linux:
-    name: Linux GUI and CLI
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-      with:
-        go-version: 1.26.6
-        cache-dependency-path: go.mod
-    - name: Install pinned Go analysis tools
-      run: |
-        go install honnef.co/go/tools/cmd/staticcheck@2026.1
-        go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
-    - name: Install desktop GUI libraries
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config gcc
-    - name: Test Linux client
-      run: |
-        go test -race ./...
-    - name: Vet Linux client
-      run: |
-        go vet ./...
-    - name: Staticcheck Linux client
-      run: |
-        staticcheck ./...
-    - name: Audit Linux client vulnerabilities
-      run: |
-        govulncheck ./...
-    - name: Build Linux client controller
-      run: |
-        CGO_ENABLED=0 go build ./cmd/home-tunnel-client
-    - name: Build Linux graphical client
-      run: |
-        CGO_ENABLED=1 go build ./cmd/home-tunnel-gui
-    - name: Check release packaging scripts
-      run: |
-        bash -n \
-          packaging/build-release.sh \
-          packaging/install.sh \
-          packaging/home-tunnel-enroll \
-          packaging/macos/build-release.sh \
-          packaging/macos/install.sh \
-          packaging/macos/home-tunnel-enroll
-        python3 scripts/test_installer_upgrade.py
-  browser:
-    name: Desktop browser tests
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-      with:
-        node-version: 24.19.0
-    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
-      with:
-        version: 11.16.0
-    - run: |
-        pnpm install --frozen-lockfile
-        pnpm run lint
-        pnpm exec playwright install --with-deps chromium
-        pnpm run test:browser
-  repository:
-    name: Repository boundaries
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - run: |
-        python3 scripts/check-repository.py
-    - name: Check release policy
-      run: |
-        python3 -m unittest discover -s scripts -p "test_release_policy.py"
-        python3 -m unittest discover -s scripts -p "test_client_candidate.py"
-        python3 -m unittest discover -s scripts -p "test_remote_contract_import.py"
-        python3 -m unittest discover -s scripts -p "test_remote_android_build.py"
-        python3 -m unittest discover -s scripts -p "test_remote_android_sdk.py"
-        python3 -m unittest discover -s scripts -p "test_remote_fetch.py"
-    - name: Verify the patched FRP build dependency locks
-      run: |
-        python3 scripts/verify-frp-security.py
-  remote-native:
-    name: Remote native core (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-      with:
-        go-version: 1.26.6
-    - name: Verify shared protocol and immutable upstream lock
-      run: |
-        python scripts/sync-remote-contracts.py --check
-        python scripts/build-remote-webrtc.py
-    - name: Configure native safety tests
-      run: cmake -S native/remote -B outputs/remote-core -DCMAKE_BUILD_TYPE=Release -DHT_RD_SANITIZERS=${{ matrix.os == 'ubuntu-latest' && 'ON' || 'OFF' }}
-    - name: Build shared ABI and inherited-pipe worker
-      run: cmake --build outputs/remote-core --config Release
-    - name: Verify native framing, leases, UDP path and input watchdog
-      run: ctest --test-dir outputs/remote-core -C Release --output-on-failure
-    - name: Verify Go session and transfer boundaries
-      run: go test ./internal/remote
-    - name: Export source provenance without claiming media availability
-      run: python scripts/package-remote-core.py
+        New-Item -ItemType Directory -Force .downloads | Out-Null
+        Invoke-WebRequest -Uri https://github.com/ZHanry/home-tunnel-client/releases/download/v10.1.0/HomeTunnel-Windows-10.1.0-x64.zip -OutFile .downloads/agent.zip
+        python build/tunnel/build-runtime.py --package .downloads/agent.zip
+        if ($LASTEXITCODE -ne 0) { throw 'Managed helper failed' }
+        $compilerLines = .\packaging\windows\install-inno-setup.ps1
+        $compiler = ($compilerLines | Where-Object { $_ -like 'ISCC=*' }) -replace '^ISCC=', ''
+        python scripts/package-homedesk-windows.py --iscc $compiler
+        if ($LASTEXITCODE -ne 0) { throw 'Installer failed' }
+        $version = (Get-Content -Raw compatibility.json | ConvertFrom-Json).version
+        ./packaging/windows/test-homedesk-installer.ps1 -Installer "products/HomeDesk-Setup-$version-x64.exe"
+    - name: Preserve corresponding source and native notices
+      run: python scripts/collect-native-materials.py
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: remote-core-source-${{ matrix.os }}
-        path: outputs/remote-artifacts
+        name: homedesk-windows
+        path: |-
+          products/*
+          material-input/**
         if-no-files-found: error
+        retention-days: 30
+  cli:
+    name: Independent CLI and tunnel regression
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: '0'
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        submodules: recursive
+        fetch-depth: 0
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.0
+        cache-dependency-path: go.sum
+    - name: Test preserved tunneling and helper boundaries
+      run: |-
+        go test ./...
+        python3 scripts/verify-frp-security.py
+    - name: Package the five-platform CLI and original Agents
+      run: python3 scripts/package-cli-bundle.py
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: homedesk-cli
+        path: |-
+          products/*
+          material-input/**
+        if-no-files-found: error
+  policy:
+    name: P2P source and contract checks
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        submodules: recursive
+        fetch-depth: 0
+    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+      with:
+        toolchain: 1.96.0
+        components: rustfmt
+    - name: Validate strict P2P and retained packaging
+      run: |-
+        python3 scripts/check-repository.py
+        python3 -m unittest discover -s tests -p 'test_*.py'
+        rustc --test client/homedesk_build.rs -o /tmp/homedesk-brand
+        /tmp/homedesk-brand
+        rustc --test client/src/homedesk_net.rs -o /tmp/homedesk-network
+        /tmp/homedesk-network
+        rustc --edition=2021 --test client/src/homedesk_process.rs -o /tmp/homedesk-process
+        /tmp/homedesk-process
+        rustc --edition=2021 --test client/libs/portable/src/homedesk_cache.rs -o /tmp/homedesk-cache
+        /tmp/homedesk-cache
+        rustc --test client/src/homedesk_async.rs -o /tmp/homedesk-async
+        /tmp/homedesk-async
+        git diff --check
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
     if: ${{ always() }}
     needs:
-    - windows-client
-    - windows-agent
-    - macos-gui
-    - dependency-review
-    - linux
-    - browser
-    - repository
-    - remote-native
+    - windows
+    - cli
+    - policy
     steps:
-    - name: Require all component checks
+    - name: Require every current-product check
       env:
         RESULTS: ${{ toJSON(needs) }}
-      run: |
+      run: |-
         python3 - <<'PY'
         import json, os
-        results = json.loads(os.environ['RESULTS'])
-        failed = {k:v['result'] for k,v in results.items() if v['result'] != 'success' and not (k == 'dependency-review' and v['result'] == 'skipped')}
+        failed = {k:v['result'] for k,v in json.loads(os.environ['RESULTS']).items() if v['result'] != 'success'}
         if failed: raise SystemExit(str(failed))
-        print('All component checks passed')
         PY

@@ -1,0 +1,493 @@
+name: Legacy 10.x - Build client candidate
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+jobs:
+  metadata:
+    name: Validate pinned untagged candidate source
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+    - id: version
+      env:
+        CANDIDATE_REVISION: ${{ inputs.revision }}
+      run: 'python3 scripts/release.py candidate-metadata
+
+        python3 -m unittest discover -s scripts -p ''test_*.py''
+
+        '
+  agent-evidence:
+    name: Windows x64 GUI package and Agent evidence
+    needs: metadata
+    runs-on: ${{ vars.WINDOWS_NATIVE_RUNNER || 'windows-2022' }}
+    timeout-minutes: 180
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+    - name: Install pinned windres (mingw binutils)
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: "$archive = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0.7z'\n$extract = Join-Path $env:RUNNER_TEMP 'mingw-16.1.0'\nInvoke-WebRequest -Headers @{\n  Accept = 'application/octet-stream'\n  Authorization = \"Bearer $env:GH_TOKEN\"\n  'X-GitHub-Api-Version' = '2022-11-28'\n} -Uri 'https://api.github.com/repos/niXman/mingw-builds-binaries/releases/assets/412720050' -OutFile $archive\n$actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()\n$expected = 'ecaceb42639d21c695f875800a29b2dea76bbb05eb2a1cca3049b65499b8d867'\nif ($actual -ne $expected) { throw \"MinGW archive checksum mismatch: $actual\" }\n& 7z x $archive \"-o$extract\" -y | Out-Null\nif ($LASTEXITCODE -ne 0) { throw 'MinGW extraction failed' }\n$windres = Get-ChildItem -LiteralPath $extract -Recurse -Filter windres.exe -File |\n  Select-Object -First 1 -ExpandProperty FullName\nif (-not $windres) { throw 'windres.exe not found in the pinned MinGW archive' }\n\"HOME_TUNNEL_WINDRES=$windres\"\
+        \ >> $env:GITHUB_ENV\n"
+    - name: Build native desktop worker from the pinned candidate source
+      shell: pwsh
+      run: .\scripts\build-native-windows.ps1
+    - id: agent
+      name: Reproduce the reviewed Agent baseline
+      shell: pwsh
+      run: '$lines = & .\agent\build-agent.ps1 -WindRes $env:HOME_TUNNEL_WINDRES
+
+        $lines | Write-Output
+
+        $agentVersion = ($lines | Where-Object { $_ -like ''AGENT_VERSION=*'' } | Select-Object -First 1) -replace ''^AGENT_VERSION='', ''''
+
+        $frpVersion = ($lines | Where-Object { $_ -like ''FRP_VERSION=*'' } | Select-Object -First 1) -replace ''^FRP_VERSION='', ''''
+
+        $frpCommit = ($lines | Where-Object { $_ -like ''FRP_COMMIT=*'' } | Select-Object -First 1) -replace ''^FRP_COMMIT='', ''''
+
+        $sha = ($lines | Where-Object { $_ -like ''AGENT_SHA256=*'' } | Select-Object -First 1) -replace ''^AGENT_SHA256='', ''''
+
+        if ($sha -notmatch ''^[0-9a-f]{64}$'') { throw ''Agent SHA-256 is missing'' }
+
+        $expectedSha = (Get-Content -Raw -LiteralPath .\agent\expected-sha256.txt).Trim()
+
+        if ($sha -ne $expectedSha) { throw "Agent baseline hash mismatch: built=$sha expected=$expectedSha" }
+
+        "agent_version=$agentVersion" >> $env:GITHUB_OUTPUT
+
+        "frp_version=$frpVersion" >> $env:GITHUB_OUTPUT
+
+        "frp_commit=$frpCommit" >> $env:GITHUB_OUTPUT
+
+        "sha256=$sha" >> $env:GITHUB_OUTPUT
+
+        '
+    - name: Write protected build evidence
+      shell: pwsh
+      env:
+        AGENT_VERSION: ${{ steps.agent.outputs.agent_version }}
+        FRP_VERSION: ${{ steps.agent.outputs.frp_version }}
+        FRP_COMMIT: ${{ steps.agent.outputs.frp_commit }}
+        AGENT_SHA256: ${{ steps.agent.outputs.sha256 }}
+      run: "$evidence = [ordered]@{\n  schema_version = 1\n  agent_version = $env:AGENT_VERSION\n  frp_version = $env:FRP_VERSION\n  frp_commit = $env:FRP_COMMIT\n  sha256 = $env:AGENT_SHA256\n  repository_revision = $env:GITHUB_SHA\n  security_dependencies = Get-Content -Raw agent/security-pins.json | ConvertFrom-Json\n  build_identity = \"https://github.com/$env:GITHUB_REPOSITORY/.github/workflows/client-candidate.yml@$env:GITHUB_REF\"\n  distribution = \"bundled in HomeTunnel-Windows-<version>-x64.zip with home-tunnel-gui\"\n  authenticode = \"reproducible baseline is unsigned; see platform-signing.json inside the distributed package\"\n}\n[IO.File]::WriteAllText(\n  (Join-Path (Get-Location) 'agent-provenance.json'),\n  ($evidence | ConvertTo-Json -Depth 6) + \"`n\",\n  [Text.UTF8Encoding]::new($false)\n)\n"
+    - name: Install the pinned Inno Setup compiler
+      shell: pwsh
+      run: '$lines = & .\packaging\windows\install-inno-setup.ps1
+
+        $compiler = ($lines | Where-Object { $_ -like ''ISCC=*'' } | Select-Object -First 1) -replace ''^ISCC='', ''''
+
+        if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw ''Inno Setup compiler is missing'' }
+
+        "HOME_TUNNEL_ISCC=$compiler" >> $env:GITHUB_ENV
+
+        '
+    - id: windows
+      name: Build the native Windows installer and portable archive
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+        AGENT_VERSION: ${{ steps.agent.outputs.agent_version }}
+        WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+        WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+        REQUIRE_PLATFORM_SIGNING: ${{ vars.REQUIRE_PLATFORM_SIGNING }}
+      run: "$lines = & .\\packaging\\windows\\build-release.ps1 -Version $env:VERSION -WindRes $env:HOME_TUNNEL_WINDRES -RemoteHostBuild \"$PWD/outputs/native-windows-build/remote-host-build.json\"\n$lines | Write-Output\n$zip = ($lines | Where-Object { $_ -like 'ZIP=*' } |\n  Select-Object -First 1) -replace '^ZIP=', ''\n$sha = ($lines | Where-Object { $_ -like 'ZIP_SHA256=*' } |\n  Select-Object -First 1) -replace '^ZIP_SHA256=', ''\nif (-not (Test-Path -LiteralPath $zip -PathType Leaf) -or\n    $sha -notmatch '^[0-9a-f]{64}$') {\n  throw 'Windows GUI zip or SHA-256 is missing'\n}\n$inspect = Join-Path $env:RUNNER_TEMP 'home-tunnel-package-smoke'\nExpand-Archive -LiteralPath $zip -DestinationPath $inspect -Force\nforeach ($name in @('home-tunnel-gui.exe','home-tunnel-agent.exe','home_tunnel_remote_host.exe','remote-host-provenance.json','remote-host-build.json','remote-source-manifest.json','WEBRTC-THIRD-PARTY-NOTICES.md','HomeTunnel.ico')) {\n  if (-not (Test-Path -LiteralPath (Join-Path\
+        \ $inspect $name))) { throw \"Missing packaged file: $name\" }\n}\n$agentVersionText = (& (Join-Path $inspect 'home-tunnel-agent.exe') version | Out-String).Trim()\nif ($LASTEXITCODE -ne 0 -or $agentVersionText -notlike \"Home Tunnel Agent $env:AGENT_VERSION*\") { throw 'Packaged Agent version mismatch' }\n$smoke = [ordered]@{\n  schema_version = 1\n  status = 'passed'\n  version = $env:VERSION\n  platform = 'windows'\n  architecture = 'x64'\n  package_sha256 = $sha\n  archive_layout = 'passed'\n  agent_version_checked = $true\n  client = 'home-tunnel-gui'\n  repository_revision = $env:GITHUB_SHA\n}\n[IO.File]::WriteAllText(\n  (Join-Path (Get-Location) 'windows-exe-smoke.json'),\n  ($smoke | ConvertTo-Json -Depth 3) + [Environment]::NewLine,\n  [Text.UTF8Encoding]::new($false)\n)\n$setup = Join-Path (Split-Path -Parent $zip) \"HomeTunnel-Setup-$env:VERSION-x64.exe\"\nif (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'EXE installer is missing' }\n\"installer=$setup\"\
+        \ >> $env:GITHUB_OUTPUT\n\"archive=$zip\" >> $env:GITHUB_OUTPUT\n\"checksum=$zip.sha256\" >> $env:GITHUB_OUTPUT\n\"sbom=$zip.spdx.json\" >> $env:GITHUB_OUTPUT\n"
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.19.0
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      with:
+        version: 11.16.0
+    - name: Test the final packaged native Windows UI
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+        ARCHIVE: ${{ steps.windows.outputs.archive }}
+      run: 'pnpm install --frozen-lockfile
+
+        if ($LASTEXITCODE -ne 0) { throw ''Packaged UI test dependency installation failed'' }
+
+        $sha = (Get-FileHash -LiteralPath $env:ARCHIVE -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        .\scripts\capture-windows-ui.ps1 -ArchivePath $env:ARCHIVE -ExpectedSHA256 $sha -ExpectedVersion $env:VERSION -Regression
+
+        '
+    - name: Retain actual packaged Windows UI screenshots and scoped results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-candidate-ui
+        path: outputs/windows-ui/*
+        if-no-files-found: warn
+        retention-days: 30
+    - name: Scan the actual Windows release files with Microsoft Defender
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+      run: '.\packaging\windows\scan-release.ps1 -Directory outputs/windows -Version $env:VERSION -ReportPath windows-defender-scan.json -UpdateSignatures
+
+        '
+    - name: Verify native installation and uninstallation
+      shell: pwsh
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+      run: '.\packaging\windows\test-installer.ps1 -Installer "$PWD/outputs/windows/HomeTunnel-Setup-$env:VERSION-x64.exe" -PayloadDirectory "$PWD/outputs/windows" -Version $env:VERSION -ReportPath windows-installer-smoke.json
+
+        '
+    - name: Generate Windows SPDX SBOM
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+      with:
+        path: outputs/windows
+        format: spdx-json
+        output-file: ${{ steps.windows.outputs.sbom }}
+        upload-artifact: false
+        upload-release-assets: false
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - name: Keyless-sign Windows package evidence
+      shell: pwsh
+      env:
+        INSTALLER: ${{ steps.windows.outputs.installer }}
+        ARCHIVE: ${{ steps.windows.outputs.archive }}
+        CHECKSUM: ${{ steps.windows.outputs.checksum }}
+        SBOM: ${{ steps.windows.outputs.sbom }}
+      run: "cosign sign-blob --yes --bundle agent-provenance.json.sigstore.json agent-provenance.json\nforeach ($subject in @($env:INSTALLER, $env:ARCHIVE, $env:CHECKSUM, $env:SBOM)) {\n  cosign sign-blob --yes --bundle \"$subject.sigstore.json\" \"$subject\"\n  if ($LASTEXITCODE -ne 0) { throw \"Sigstore signing failed for $subject\" }\n}\n"
+    - name: Attest the reproduced Agent executable
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: agent/assets/HomeTunnel.Agent.exe
+    - name: Attest the public Agent evidence
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: agent-provenance.json
+    - name: Publish GitHub Windows EXE provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.windows.outputs.installer }}
+    - name: Publish GitHub Windows EXE SBOM attestation
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.windows.outputs.installer }}
+        sbom-path: ${{ steps.windows.outputs.sbom }}
+    - name: Publish GitHub Windows portable archive provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.windows.outputs.archive }}
+    - name: Attest Windows antivirus scan results
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: windows-defender-scan.json
+    - name: Attest the reusable Windows native dependency and its source identity
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: 'outputs/native-windows-build/HomeTunnel-Remote-SDK-*-windows-x64.zip
+
+          outputs/native-windows-build/remote-sdk-provenance.json
+
+          '
+    - name: Stage the public Windows asset set
+      shell: pwsh
+      run: "New-Item -ItemType Directory -Force release-windows | Out-Null\nGet-ChildItem -LiteralPath outputs\\windows -File |\n  Where-Object { $_.Name -like '*.zip*' -or $_.Name -like 'HomeTunnel-Setup-*' } |\n  Copy-Item -Destination release-windows\nCopy-Item windows-exe-smoke.json, windows-defender-scan.json, windows-installer-smoke.json, agent-provenance.json, agent-provenance.json.sigstore.json release-windows\nCopy-Item outputs/windows/windows-platform-signing.json release-windows\nCopy-Item outputs/windows/remote-host-provenance.json, outputs/windows/remote-host-build.json, outputs/windows/remote-source-manifest.json, outputs/windows/WEBRTC-THIRD-PARTY-NOTICES.md release-windows\nCopy-Item outputs/native-windows-build/HomeTunnel-Remote-SDK-*-windows-x64.zip, outputs/native-windows-build/remote-sdk-provenance.json release-windows\n"
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-release
+        path: release-windows/*
+        if-no-files-found: error
+  client-packages:
+    name: Client package (${{ matrix.platform }}-${{ matrix.arch }})
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - platform: linux
+          arch: amd64
+          runner: ubuntu-24.04
+          script: bash packaging/build-linux-remote-candidate.sh
+        - platform: linux
+          arch: arm64
+          runner: ubuntu-24.04-arm
+          script: ./packaging/build-release.sh
+        - platform: macos
+          arch: amd64
+          runner: macos-15-intel
+          script: ./packaging/macos/build-release.sh
+        - platform: macos
+          arch: arm64
+          runner: macos-15
+          script: ./packaging/macos/build-release.sh
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+        cache-dependency-path: go.mod
+    - name: Install Linux graphical client libraries
+      if: matrix.platform == 'linux'
+      run: 'sudo apt-get update
+
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config gcc
+
+        '
+    - name: Build the pinned Linux x64 production worker and isolated evidence
+      if: matrix.platform == 'linux' && matrix.arch == 'amd64'
+      shell: bash
+      run: 'set -euo pipefail
+
+        sudo apt-get install -y --no-install-recommends ca-certificates git ninja-build pkg-config libglib2.0-dev libnss3-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libxdamage-dev libxfixes-dev libxcomposite-dev libxrender-dev libxtst-dev libsystemd-dev libgbm-dev libdrm-dev xvfb xauth
+
+        python3 scripts/build-native-linux.py --build --jobs 4
+
+        '
+    - name: Build package once from the pinned commit
+      shell: bash
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+        ARCH: ${{ matrix.arch }}
+        PLATFORM: ${{ matrix.platform }}
+        MACOS_DEVELOPER_ID_P12_BASE64: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
+        MACOS_DEVELOPER_ID_PASSWORD: ${{ matrix.platform == 'macos' && secrets.MACOS_DEVELOPER_ID_PASSWORD || '' }}
+        MACOS_SIGNING_IDENTITY: ${{ matrix.platform == 'macos' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+        APPLE_NOTARY_KEY_P8_BASE64: ${{ matrix.platform == 'macos' && secrets.APPLE_NOTARY_KEY_P8_BASE64 || '' }}
+        APPLE_NOTARY_KEY_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_NOTARY_KEY_ID || '' }}
+        APPLE_NOTARY_ISSUER_ID: ${{ matrix.platform == 'macos' && secrets.APPLE_NOTARY_ISSUER_ID || '' }}
+        REQUIRE_PLATFORM_SIGNING: ${{ vars.REQUIRE_PLATFORM_SIGNING }}
+      run: "test \"$(go env GOARCH)\" = \"$ARCH\"\nif [ \"$PLATFORM\" = linux ] && [ \"$ARCH\" = amd64 ]; then\n  export REMOTE_HOST_BUILD=\"$PWD/outputs/native-linux-build/remote-host-build.json\"\nfi\n${{ matrix.script }}\n"
+    - id: artifact
+      name: Verify package layout and select outputs
+      shell: bash
+      env:
+        PLATFORM: ${{ matrix.platform }}
+        VERSION: ${{ needs.metadata.outputs.version }}
+        ARCH: ${{ matrix.arch }}
+      run: "set -euo pipefail\narchive=\"outputs/$PLATFORM/home-tunnel-$PLATFORM-$VERSION-$ARCH.tar.gz\"\nchecksum=\"outputs/$PLATFORM/home-tunnel-$PLATFORM-$VERSION-$ARCH.sha256\"\ntest -s \"$archive\" && test -s \"$checksum\"\n(cd \"$(dirname \"$archive\")\" && shasum -a 256 -c \"$(basename \"$checksum\")\")\nlisting=$(tar -tzf \"$archive\")\ngrep -q '/bin/home-tunnel-client$' <<< \"$listing\"\ngrep -q '/bin/home-tunnel-gui$' <<< \"$listing\"\ngrep -q '/lib/home-tunnel-agent$' <<< \"$listing\"\ngrep -q '/LICENSE$' <<< \"$listing\"\ngrep -q '/FRP-LICENSE.txt$' <<< \"$listing\"\ngrep -q '/docs/PLATFORM_SECURITY.md$' <<< \"$listing\"\nif [ \"$PLATFORM\" = linux ]; then\n  grep -q '/lib/systemd/system/home-tunnel-client.service$' <<< \"$listing\"\n  if [ \"$ARCH\" = amd64 ]; then\n    python3 scripts/package-native-linux.py --verify-archive \"$archive\" --version \"$VERSION\" --revision \"$GITHUB_SHA\"\n  fi\nelse\n  grep -q '/Library/LaunchDaemons/com.hometunnel.client.plist$' <<< \"$listing\"\
+        \nfi\nmkdir -p package-scan\ntar -xzf \"$archive\" -C package-scan\n{\n  echo \"archive=$archive\"\n  echo \"checksum=$checksum\"\n  echo \"sbom=$archive.spdx.json\"\n} >> \"$GITHUB_OUTPUT\"\n"
+    - name: Generate SPDX SBOM
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+      with:
+        path: package-scan
+        format: spdx-json
+        output-file: ${{ steps.artifact.outputs.sbom }}
+        upload-artifact: false
+        upload-release-assets: false
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - name: Keyless-sign package, checksum, and SBOM
+      shell: bash
+      env:
+        ARCHIVE: ${{ steps.artifact.outputs.archive }}
+        CHECKSUM: ${{ steps.artifact.outputs.checksum }}
+        SBOM: ${{ steps.artifact.outputs.sbom }}
+      run: "set -euo pipefail\nfor subject in \"$ARCHIVE\" \"$CHECKSUM\" \"$SBOM\"; do\n  cosign sign-blob --yes --bundle \"$subject.sigstore.json\" \"$subject\"\ndone\n"
+    - name: Publish GitHub package provenance
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.artifact.outputs.archive }}
+    - name: Publish GitHub package SBOM attestation
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: ${{ steps.artifact.outputs.archive }}
+        sbom-path: ${{ steps.artifact.outputs.sbom }}
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: client-${{ matrix.platform }}-${{ matrix.arch }}
+        path: '${{ steps.artifact.outputs.archive }}
+
+          ${{ steps.artifact.outputs.checksum }}
+
+          ${{ steps.artifact.outputs.sbom }}
+
+          ${{ steps.artifact.outputs.archive }}.sigstore.json
+
+          ${{ steps.artifact.outputs.checksum }}.sigstore.json
+
+          ${{ steps.artifact.outputs.sbom }}.sigstore.json
+
+          '
+        if-no-files-found: error
+    - name: Retain Linux native diagnostics
+      if: ${{ always() && matrix.platform == 'linux' && matrix.arch == 'amd64' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: linux-native-candidate-build-evidence
+        path: '.downloads/remote-webrtc-linux/checkout/src/out/home_tunnel/remote-build.log
+
+          outputs/native-linux-build/linux-xvfb-evidence.json
+
+          '
+        if-no-files-found: ignore
+        retention-days: 14
+  android-controller-build:
+    name: Android ${{ matrix.abi }} controller SDK
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        abi:
+        - arm64-v8a
+        - x86_64
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Prepare isolated hosted Android build machine
+      shell: bash
+      run: 'set -euo pipefail
+
+        test "${RUNNER_ENVIRONMENT}" = "github-hosted"
+
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+
+        sudo apt-get update -qq
+
+        sudo apt-get install -y --no-install-recommends ca-certificates git ninja-build pkg-config libglib2.0-dev libnss3-dev libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev libgbm-dev libdrm-dev
+
+        '
+    - name: Build and package this ABI from the exact commit
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+      shell: bash
+      run: "set -euo pipefail\nabi=\"${{ matrix.abi }}\"\npython3 scripts/build-remote-android-webrtc.py --abi \"$abi\"\npython3 scripts/package-remote-android-sdk.py --describe --abi \"$abi\" --version \"$VERSION\" > \"$RUNNER_TEMP/android-abi.json\"\nengine_dir=$(python3 -c 'import json,os; print(json.load(open(os.environ[\"RUNNER_TEMP\"] + \"/android-abi.json\"))[\"engine_dir\"])')\narchive=$(python3 -c 'import json,os; print(json.load(open(os.environ[\"RUNNER_TEMP\"] + \"/android-abi.json\"))[\"archive\"])')\nsbom=$(python3 -c 'import json,os; print(json.load(open(os.environ[\"RUNNER_TEMP\"] + \"/android-abi.json\"))[\"sbom\"])')\nprovenance=$(python3 -c 'import json,os; print(json.load(open(os.environ[\"RUNNER_TEMP\"] + \"/android-abi.json\"))[\"provenance\"])')\n{\n  echo \"ANDROID_ENGINE_DIR=$engine_dir\"\n  echo \"ANDROID_ARCHIVE=$archive\"\n  echo \"ANDROID_SBOM=$sbom\"\n  echo \"ANDROID_PROVENANCE=$provenance\"\n} >> \"$GITHUB_ENV\"\npython3 scripts/build-remote-android-webrtc.py\
+        \ --build --abi \"$abi\" --jobs 4\npython3 scripts/package-remote-android-sdk.py --abi \"$abi\" --sdk \"outputs/$engine_dir\" --output outputs/android-sdk-release --version \"$VERSION\" --revision \"$GITHUB_SHA\"\n"
+    - id: syft
+      uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610
+      with:
+        syft-version: v1.42.3
+    - name: Scan the actual Android SDK inventory
+      env:
+        SYFT: ${{ steps.syft.outputs.cmd }}
+      run: '"$SYFT" scan "file:outputs/android-sdk-release/$ANDROID_ARCHIVE" -o spdx-json > "outputs/android-sdk-release/$ANDROID_SBOM"
+
+        test -s "outputs/android-sdk-release/$ANDROID_SBOM"
+
+        '
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - name: Sign the original Android SDK and provenance
+      run: "for subject in outputs/android-sdk-release/*; do\n  cosign sign-blob --yes --bundle \"$subject.sigstore.json\" \"$subject\"\ndone\n"
+    - name: Attest the candidate Android SDK and its source identity
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: 'outputs/android-sdk-release/${{ env.ANDROID_ARCHIVE }}
+
+          outputs/android-sdk-release/${{ env.ANDROID_PROVENANCE }}
+
+          '
+    - name: Attest the Android SDK SBOM
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: outputs/android-sdk-release/${{ env.ANDROID_ARCHIVE }}
+        sbom-path: outputs/android-sdk-release/${{ env.ANDROID_SBOM }}
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: android-controller-build-${{ matrix.abi }}
+        path: outputs/android-sdk-release/*
+        if-no-files-found: error
+    - name: Preserve Android compilation diagnostics
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: android-webrtc-log-${{ matrix.abi }}
+        path: .downloads/remote-webrtc-android/checkout/src/out/${{ matrix.abi == 'arm64-v8a' && 'home_tunnel_android_arm64' || 'home_tunnel_android_x64' }}/android-build.log
+        if-no-files-found: ignore
+  android-controller-sdk:
+    name: Combine sealed Android controller SDK ABIs
+    needs:
+    - metadata
+    - android-controller-build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: android-controller-build-*
+        path: outputs/android-sdk-release
+        merge-multiple: true
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: android-controller-sdk
+        path: outputs/android-sdk-release/*
+        if-no-files-found: error
+  collect:
+    name: Prepare immutable packages for real native acceptance
+    runs-on: ubuntu-latest
+    needs:
+    - metadata
+    - agent-evidence
+    - client-packages
+    - android-controller-sdk
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: windows-release
+        path: release
+        merge-multiple: true
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: android-controller-sdk
+        path: release
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: client-*
+        path: release
+        merge-multiple: true
+    - env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: 'python3 scripts/release.py candidate-seal
+
+        '
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+    - name: Sign the immutable candidate inventory
+      run: cosign sign-blob --yes --bundle release/client-candidate.json.sigstore.json release/client-candidate.json
+    - name: Attest all candidate files through the immutable inventory
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+      with:
+        subject-path: release/client-candidate.json
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: candidate-assets
+        path: release/*
+        retention-days: 90
+        if-no-files-found: error
+    - name: Stage byte-identical candidate transport copies
+      env:
+        VERSION: ${{ needs.metadata.outputs.version }}
+      run: 'python3 scripts/stage-candidate-transport.py --source release --output candidate-transport --revision "$GITHUB_SHA" --version "$VERSION"
+
+        '
+    - name: Retain small sealed candidate metadata and Windows evidence
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: candidate-metadata
+        path: candidate-transport/metadata/*
+        compression-level: 0
+        retention-days: 90
+        if-no-files-found: error
+    - name: Retain the original Windows installer separately
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-candidate-installer
+        path: candidate-transport/windows-installer/*
+        compression-level: 0
+        retention-days: 90
+        if-no-files-found: error
+    - name: Retain the original Windows portable package separately
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-candidate-portable
+        path: candidate-transport/windows-portable/*
+        compression-level: 0
+        retention-days: 90
+        if-no-files-found: error

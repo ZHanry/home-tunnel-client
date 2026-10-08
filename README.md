@@ -1,61 +1,39 @@
-<img src="docs/assets/HomeTunnel.svg" alt="" width="64" height="64">
+# HomeDesk / Home Tunnel Client
 
-# Home Tunnel Client
+当前主线为 **11.0.0-rc.1 候选版**。暖居 Flutter 界面与 RustDesk 原生核心提供远控；必须认证加密并通过 P2P 直连，禁止中继和供应商服务器回退。直连失败会明确停止。
 
-当前版本为 **10.1.0**。远控载荷走端到端 DTLS 加密的 UDP，优先 P2P 直连；浏览器控制端可通过服务器可选的 UDP TURN 中继连接，服务器无法读取载荷，没有 TCP 回退。Windows 提供键鼠/中文输入、显式文件授权和授权系统音频。固定密码可免审批访问已登录桌面，不支持锁屏、登录前或 UAC 安全桌面控制。Linux amd64 提供受权限限制的 Xorg 被控端；macOS/Wayland 被控和桌面原生观看尚未提供。实际支持、已验证范围和未验证项目见 [发行说明](docs/RELEASE_NOTES.md)。
+[English](README.en.md) · [候选发行](https://github.com/ZHanry/home-tunnel-client/releases/tag/v11.0.0-rc.1) · [最后稳定版 10.1.0](https://github.com/ZHanry/home-tunnel-client/releases/tag/v10.1.0)
 
-10.1.0 原始 Windows worker 在同机 Chromium 与生产源码 QA host 中完成 30 次连接、约 2 小时持续活动及显式重启恢复；最终文件 Defender 复扫与安装/卸载、安装文件哈希检查通过。独立设备、完整安装后 GUI/服务和跨网络等范围仍未验证，详见 [发行说明](docs/RELEASE_10_1_STABLE.md)。
+## 下载与接入
 
-**连接 Windows、macOS、Linux 与 NAS**
+候选 Release 只有四个附件：Windows x64 HomeDesk 安装器、五平台 CLI/Agent 合集、源码与构建材料包、SHA256SUMS。macOS/Linux 当前候选下载提供独立 CLI/Agent；原生桌面 GUI 暂只发布 Windows。Android 从 [Android 仓](https://github.com/ZHanry/home-tunnel-android/releases) 下载同源通用 APK。
 
-[![Stable release](https://img.shields.io/github/v/release/ZHanry/home-tunnel-client?label=stable)](https://github.com/ZHanry/home-tunnel-client/releases/latest) [![License Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+安装前核验 SHA-256。Windows 安装器未做 Authenticode 签名。通用包不含服务器地址、公钥或账户凭据；先配置你自己的 hbbs 地址、公钥和允许的来源，再登录 HTTPS 管理台。远控目标需明确开启共享并授权；接入账号不等于自动授权远控。
 
-[English](README.en.md) · [项目网站](https://zhanry.github.io/home-tunnel/) · [下载](https://github.com/ZHanry/home-tunnel/blob/main/docs/DOWNLOADS.md) · [快速开始](https://github.com/ZHanry/home-tunnel/blob/main/docs/GETTING_STARTED.md)
-
-
-在家中电脑或 NAS 上运行受管隧道，访问自己的 Home Tunnel 服务器。GUI 与 CLI
-共享 Go 核心，后台 Agent 执行转发；窗口关闭后仍可保持连接。
-
-| 平台 | 当前正式版下载 |
-| --- | --- |
-| Windows x64 | [安装器 / 便携 ZIP](https://github.com/ZHanry/home-tunnel-client/releases/latest) |
-| macOS Intel / Apple Silicon | [选择 amd64 / arm64 包](https://github.com/ZHanry/home-tunnel-client/releases/latest) |
-| Linux amd64 / arm64 · NAS | [选择平台包](https://github.com/ZHanry/home-tunnel-client/releases/latest) · [NAS Compose 模板](packaging/nas/README.md) |
-
-核验 Release 的 `SHA256SUMS.txt` 和证明文件后安装。Windows/macOS 当前没有平台
-发行证书，包内如实标明未签名；不要把哈希或病毒扫描当成平台签名。
-[签名流程与凭据保护](docs/PLATFORM_SECURITY.md)。
-
-## 接入自己的服务器
-
-1. 服务端使用 **10.1.0**（远控需要服务端公布相应能力）。桌面输入 HTTPS 地址，使用账号 + MFA 或一次性接入码；原有隧道保留对 7.0 服务端的兼容。
-2. 选择本机可访问的服务，创建 HTTP/HTTPS 或被授权的 TCP/UDP 连接。
-3. 等待在线并验证公网访问。SSH/RDP/RTSP 有预设，原始传输由应用负责认证和加密。
-
-桌面会话只管理本机。10.1.0 把本机改名放在“我的设备”，设置页合并更新与服务器地址；
-不再显示设备标记或外观选项。选中最多 50 条本机连接可批量暂停/恢复，逐项显示结果。
-跨设备/服务器管理使用 Web 或 Android。原生远控免重复登录及改名需要配套 Server 10.1.0。
-本版直接晋升经过校验的原始候选文件；验证范围见 [10.1.0 发行说明](docs/RELEASE_10_1_STABLE.md)。
+HTTP/HTTPS、受控 TCP/UDP、端口池、权限、ACL、流量治理、诊断和 NAS 使用原 Go/FRP 协议。自有 Agent 保持 10.1.0 已校验原始字节，CLI 与 HomeDesk 为 11.0.0-rc.1；内置 FRP 0.70.1。不混用平台 Agent。
 
 ```sh
-home-tunnel-client enroll --server https://console.your-domain.net \
-  --device-name home-nas --enrollment-code-file /secure/enrollment-code
-home-tunnel-client doctor
-home-tunnel-client run
+home-tunnel-client enroll --state /secure/home-tunnel/state.json \
+  --server https://console.your-domain.net --device-name home-nas \
+  --enrollment-code-file /secure/enrollment-code
+home-tunnel-client run --state /secure/home-tunnel/state.json --agent /opt/home-tunnel/home-tunnel-agent
 ```
 
-CLI 服务安装和状态路径请按 [运维指南](docs/OPERATIONS.md)；勿直接复制示例私密路径。
-Windows 使用 DPAPI，macOS 使用 Keychain，Linux headless 明确使用 0600 文件权限。
-自有 Agent 与客户端均为 10.1.0，内置 FRP 为 0.70.1，必须使用同包 Agent。
+关闭 GUI 后继续穿透，按 [独立 CLI/Agent](docs/INDEPENDENT_TUNNEL.md) 安装登录任务、systemd 或 NAS 服务。GUI 内受管 Agent 跟随窗口；同一状态不能同时启动两个 Agent。远控配置、直连失败不撤销独立穿透进程。
 
-## 开发与验证
+## 验证和源码
+
+本次候选尚未完成跨网 NAT、长期媒体及 Android 真机验收，不能视为稳定版。限制与已验证范围见 [候选说明](docs/HOMEDESK_RELEASE.md)。旧 10.x worker/DTLS/TURN 文档与代码仅保留历史，不作为新包的远控引擎。
+
+`client/` 保留 RustDesk 上游及暖居来源历史；Android 仓通过固定 gitlink 复用同一 Rust/Flutter 树。核心来源与修改清单见 [来源记录](docs/homedesk/PROVENANCE.md)。原 Go 代码仍为 Apache-2.0；整合的 Rust/Flutter HomeDesk 按 [AGPL-3.0](LICENSE-RUSTDESK) 分发，对应源码、依赖源和构建说明在材料包中提供。
 
 ```sh
+git submodule update --init --recursive
 go test ./...
 python3 scripts/check-repository.py
+python3 build/ci/build-client.py --target win-x64 --config build/config.toml.example
 ```
 
-Go 1.26.6；原生 GUI 构建依赖见各平台打包脚本。CI 检查 Windows 安装/卸载、
-Defender 扫描、Agent 可复现哈希、macOS/Linux 构建和浏览器交互。
+固定 Rust 1.96.0、Flutter 3.24.5、FRB 1.80.1、Go 1.27.0。构建入口和 Windows 原生依赖见 `build/ci`；API 使用 `api-v1.6.0`，HomeDesk 目录要求 Server 11.x。
 
-[功能说明](docs/PLATFORM_FEATURES.md) · [诊断/签名](docs/PLATFORM_SECURITY.md) · [API](contracts/README.md) · [项目入口](https://github.com/ZHanry/home-tunnel)
+[项目入口](https://github.com/ZHanry/home-tunnel) · [NAS](packaging/nas/README.md) · [API](contracts/README.md) · [安全](SECURITY.md)

@@ -1,0 +1,296 @@
+{
+  "client/src/lang/en.rs": {
+    "sha256": "a57abdcab9116f819f6938c0b0ddf0b54e9bb5b088c27ff66bcf8e49f1cd178e",
+    "lines": [
+      204,
+      237
+    ]
+  },
+  "client/src/lang/ge.rs": {
+    "sha256": "5ac21269a7aa89c51b4700aff2c70959d2c2acc7e493130385c7a06fa7577a4e",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/bg.rs": {
+    "sha256": "119d4f5c299ff5fe1481ed0ac3d0fa35ed1f129049c166dc0c4608a38a3f1425",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/be.rs": {
+    "sha256": "c978d18309a412b0337430e9b67326d59e4ecb02191deda1556334964435498a",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/fa.rs": {
+    "sha256": "a67b51b6793354db9adfbcc434bfbb2f1fb8982fd551b8beea182e4dd199ad9e",
+    "lines": [
+      563
+    ]
+  },
+  "client/src/lang/ja.rs": {
+    "sha256": "3db5099732e0b50ce7805e91bf495739cc454430aaaf4e807a982586d274ee91",
+    "lines": [
+      647
+    ]
+  },
+  "client/src/lang/el.rs": {
+    "sha256": "a459146013fc4814a608d668e6649bb724f99bf7583808bc7fbe502b6ba03bfc",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/ko.rs": {
+    "sha256": "f14538a06ba5c4fd3c64addb8d02382716ca4a45cf61e089d1925524d6c3b6fe",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/kz.rs": {
+    "sha256": "feaf7f56f5eaa91db92a6102f316a55e6373539196ade171506795714bc47a1c",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/custom_server.rs": {
+    "sha256": "a5b28d5b79512a3524b38fa34276bd1cb9349f0194518b86e7cbb4bb800d0b7d",
+    "lines": [
+      139,
+      144,
+      156,
+      168,
+      180,
+      187
+    ]
+  },
+  "client/src/lang/cs.rs": {
+    "sha256": "3ad014ffe2e2fbcf180d6cd2bd5dd85765780b0e5248df02e552e4be609fab1d",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/he.rs": {
+    "sha256": "4ca5cb06efe27999f63b07325dbb48553ec81bceefce2e72fd2da6fbb4ea937a",
+    "lines": [
+      563
+    ]
+  },
+  "client/src/lang/da.rs": {
+    "sha256": "9a61b3d211fdb1d1b741340458c7252ba56a6468727a13a680b7fefe0dab5d60",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/lv.rs": {
+    "sha256": "26e8c5f782aed4cece0955160aad9d169793e885354d556fe7914dda913b0455",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/tw.rs": {
+    "sha256": "4bfb83105daa57929e4469014d98a49387b48d6c829dd0cfff8c34f05e3b4ffc",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/ru.rs": {
+    "sha256": "5f7d38e3930a2c4eb838a3a3b4e378d344558f032e8f0a10ba456d13b70d9fb2",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/ca.rs": {
+    "sha256": "5ec061a6efbb0ca599c2c16fdda2ca6299983dc1b2053f46d8f7a06710d198f5",
+    "lines": [
+      647
+    ]
+  },
+  "client/src/lang/pl.rs": {
+    "sha256": "64d46694ceab2b7422e98b5e92304620578d50a65b35436fbc41ffdbdd907ab8",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/nb.rs": {
+    "sha256": "ea26d815554d685459f79359a8d8c067fd4eaba55d09a4fca4db3661b9ab198f",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/es.rs": {
+    "sha256": "c71e3e355bfb248241339914185c8da766e8e758ab24c5b8affa2c0fce815a92",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/sl.rs": {
+    "sha256": "52020613855575a8a7edc1b67307594e7df85a37128c842127bc82029bd38abb",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/it.rs": {
+    "sha256": "bf4043b07460a595d63c789c5089f16b07b9c5830b39da79b13deb848207a3b1",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/uk.rs": {
+    "sha256": "7f7a2caef157201f728703125d7406c585d69ee19ca1675f34be7c20d150343e",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/th.rs": {
+    "sha256": "5467cdf784d319472e7ac3620dd66a6b95bc74cddbdce281b1aa8d676655f176",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/sv.rs": {
+    "sha256": "8e9ed30f3d7fc322fd0bcbb8e2f43a02b4a2c312f83fc087db69a5f1c843eb56",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/sk.rs": {
+    "sha256": "f8a3f5ed0635685d3c2726509224a3fed70a6f410827d13dbf2d13041b419510",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/pt_PT.rs": {
+    "sha256": "438396f6765a8165dfa8369d8f008db79c8a2ed342f160165491a0389ee4f181",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/sr.rs": {
+    "sha256": "3f554f30c37241f6351ff8b1549f65a66424a130bc6e624f451e8f6c5b66465a",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/de.rs": {
+    "sha256": "de6fc4fd8963543989b117edefaeb00c0a5b6482b4fea3e770668b05d2a5cab0",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/hr.rs": {
+    "sha256": "10cdaaa3b09f9e66192f9a386a16bc08604e431c2ab23432f8db55fd8500a2c0",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/lt.rs": {
+    "sha256": "552439cb34f0f64b144b314931e090c933fffd65d715a5fa00681f1a23b5ae2d",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/hu.rs": {
+    "sha256": "c89847c7fc688d5a01a138f2bb23a0a08a4fcee5228cf316f3ee75d48992ed65",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/id.rs": {
+    "sha256": "48cec9c35f4f32f6d665bc51f9130a9d7f74cf3a2fab566cec5626ae31461174",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/ptbr.rs": {
+    "sha256": "a720a6bbc5acc73efcec6f963cd2d44c5ad3bf74b4231fe138486133ad062bc0",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/et.rs": {
+    "sha256": "690c29f61b2251a7a924458e8788696d70b92d4eb916a08095f610b7e2090d4a",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/sq.rs": {
+    "sha256": "8a011a1d2669f8c1e9dbeb9702b461f1a62cc5514a853ca1d82609031b7b1a33",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/fr.rs": {
+    "sha256": "add5f0cf703f74b09ebb245152808d42cc0a190e62c5859a527e8e6bc04c6cdf",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/eo.rs": {
+    "sha256": "3130b5c9fc61e645bd32915ae9f524904b0b7fd1a3ecfe5c3e2af53c987b03de",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/eu.rs": {
+    "sha256": "64812ec394b3e84398329ca1de9577276e6f2c8dc9404719013ea16403502003",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/nl.rs": {
+    "sha256": "dbc5b2f4c422345acb9138eaf0562826209ec42f00562d690cddfba8a569e6cd",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/sc.rs": {
+    "sha256": "3d3505ca0f711fb73657c67baf52b9c4733a58cf57affb808db79e775c0fbd8a",
+    "lines": [
+      563,
+      647
+    ]
+  },
+  "client/src/lang/tr.rs": {
+    "sha256": "eee61cae4fbda511e41554c86ad33866f071ddc8f4e0ee4e97c125f277288814",
+    "lines": [
+      563,
+      647
+    ]
+  }
+}

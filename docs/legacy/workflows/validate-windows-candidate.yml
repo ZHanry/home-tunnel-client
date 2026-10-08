@@ -1,0 +1,207 @@
+name: Legacy 10.x - Validate sealed Windows candidate
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native:
+    name: Final Defender rescan and bounded native checks
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-2022
+    env:
+      CANDIDATE_IDENTITY: ${{ github.event_name == 'pull_request' && 'repaired-10.1' || inputs.candidate_identity }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stability' && 300 || 90 }}
+    steps:
+    - name: Check out validation helper separately
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        path: qa
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: 3.13.12
+    - name: Resolve reviewed immutable candidate identity without fallback
+      id: candidate
+      shell: pwsh
+      run: 'python -m unittest discover -s qa/scripts -p test_windows_candidate_pin.py
+
+        if ($LASTEXITCODE -ne 0) { throw ''Candidate identity safety checks failed'' }
+
+        python qa/scripts/windows_candidate_pin.py --identity $env:CANDIDATE_IDENTITY --github-output --output selected-candidate-pin.json
+
+        if ($LASTEXITCODE -ne 0) { throw ''Selected immutable candidate is absent or invalid; no historical fallback is allowed'' }
+
+        '
+    - name: Check out immutable client source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: ZHanry/home-tunnel-client
+        ref: ${{ steps.candidate.outputs.revision }}
+        path: sources/client
+        persist-credentials: false
+    - name: Check out locked server source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: ZHanry/home-tunnel-server
+        ref: ${{ steps.candidate.outputs.server_revision }}
+        path: sources/server
+        persist-credentials: false
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      with:
+        cosign-release: v3.0.6
+    - name: Check the wrapper under the pinned Windows Python
+      shell: pwsh
+      run: 'python -m unittest discover -s qa/scripts -p test_windows_candidate_validation.py
+
+        if ($LASTEXITCODE -ne 0) { throw ''Validation wrapper unit tests failed'' }
+
+        python -m py_compile qa/scripts/validate-windows-candidate.py
+
+        if ($LASTEXITCODE -ne 0) { throw ''Validation wrapper compilation failed'' }
+
+        '
+    - name: Verify selected immutable candidate before executing its bytes
+      shell: pwsh
+      timeout-minutes: 20
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.run_id }}
+        CANDIDATE_ARTIFACT_ID: ${{ steps.candidate.outputs.artifact_id }}
+        CANDIDATE_ARTIFACT_SHA256: ${{ steps.candidate.outputs.artifact_sha256 }}
+        CANDIDATE_REVISION: ${{ steps.candidate.outputs.revision }}
+        CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+      run: 'python sources/client/scripts/fetch-client-candidate.py --run-id $env:CANDIDATE_RUN_ID --artifact-id $env:CANDIDATE_ARTIFACT_ID --artifact-sha256 $env:CANDIDATE_ARTIFACT_SHA256 --revision $env:CANDIDATE_REVISION --version $env:CANDIDATE_VERSION --output verified-candidate
+
+        if ($LASTEXITCODE -ne 0) { throw ''Selected candidate provenance verification failed'' }
+
+        python qa/scripts/windows_candidate_pin.py --identity $env:CANDIDATE_IDENTITY --receipt verified-candidate/client-candidate-download.json
+
+        if ($LASTEXITCODE -ne 0) { throw ''Downloaded candidate differs from its reviewed identity or run attempt'' }
+
+        '
+    - name: Rescan the exact post-seal Windows bytes with Defender
+      shell: pwsh
+      timeout-minutes: 18
+      run: 'python qa/scripts/validate-windows-candidate.py --phase rescan --client sources/client --server sources/server --verified verified-candidate --output defender-evidence --revision ${{ steps.candidate.outputs.revision }} --server-revision ${{ steps.candidate.outputs.server_revision }} --version ${{ steps.candidate.outputs.version }}
+
+        if ($LASTEXITCODE -ne 0) { throw ''Post-seal Defender rescan did not pass; inspect the separate scan evidence'' }
+
+        '
+    - name: Retain the new Defender receipt before optional native cases
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-final-defender-${{ github.run_id }}-${{ github.run_attempt }}
+        path: 'selected-candidate-pin.json
+
+          defender-evidence/
+
+          verified-candidate/client-candidate-download.json
+
+          verified-candidate/verification/
+
+          '
+        if-no-files-found: error
+        retention-days: 30
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.6
+        cache-dependency-path: sources/client/go.sum
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: 24.19.0
+    - name: Check strict website evidence predicates
+      shell: pwsh
+      run: 'node --test qa/tests/remote-native/restart-probe.test.mjs
+
+        if ($LASTEXITCODE -ne 0) { throw ''Restart probe safety tests failed'' }
+
+        node --test qa/tests/remote-native/stability.test.mjs
+
+        if ($LASTEXITCODE -ne 0) { throw ''Stability evidence predicate tests failed'' }
+
+        node --test qa/tests/remote-native/website-evidence.test.mjs
+
+        if ($LASTEXITCODE -ne 0) { throw ''Website evidence predicate tests failed'' }
+
+        node --test qa/tests/remote-native/policy.test.mjs
+
+        if ($LASTEXITCODE -ne 0) { throw ''Native harness safety preflight tests failed'' }
+
+        '
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+      with:
+        version: 11.19.0
+    - name: Install locked test dependencies and Chromium
+      id: native_dependencies
+      shell: pwsh
+      run: 'pnpm --dir sources/client install --frozen-lockfile --ignore-scripts
+
+        if ($LASTEXITCODE -ne 0) { throw ''Client dependency installation failed'' }
+
+        pnpm --dir sources/server/control-center install --frozen-lockfile --ignore-scripts
+
+        if ($LASTEXITCODE -ne 0) { throw ''Server dependency installation failed'' }
+
+        pnpm --dir sources/client exec playwright install chromium
+
+        if ($LASTEXITCODE -ne 0) { throw ''Pinned Playwright Chromium installation failed'' }
+
+        '
+    - name: Probe owned-host restart on the selected sealed worker
+      id: restart_probe
+      if: github.event_name == 'pull_request' || inputs.validation_scope == 'restart-probe'
+      shell: pwsh
+      timeout-minutes: 13
+      run: 'python qa/scripts/validate-windows-candidate.py --phase restart-probe --client sources/client --server sources/server --verified verified-candidate --output restart-probe-evidence --revision ${{ steps.candidate.outputs.revision }} --server-revision ${{ steps.candidate.outputs.server_revision }} --version ${{ steps.candidate.outputs.version }}
+
+        if ($LASTEXITCODE -ne 0) { throw ''Bounded sealed-worker restart probe failed; inspect its separate sanitized failure substage'' }
+
+        '
+    - name: Retain bounded restart probe evidence separately
+      if: always() && steps.restart_probe.outcome != 'skipped'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-restart-probe-${{ github.run_id }}-${{ github.run_attempt }}
+        path: 'restart-probe-evidence/
+
+          selected-candidate-pin.json
+
+          '
+        if-no-files-found: error
+        retention-days: 30
+    - name: Run two bounded real native cases against the unchanged worker
+      if: ${{ !cancelled() && steps.native_dependencies.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.validation_scope == 'short') }}
+      shell: pwsh
+      timeout-minutes: 25
+      run: 'python qa/scripts/validate-windows-candidate.py --client sources/client --server sources/server --verified verified-candidate --output native-evidence --revision ${{ steps.candidate.outputs.revision }} --server-revision ${{ steps.candidate.outputs.server_revision }} --version ${{ steps.candidate.outputs.version }}
+
+        if ($LASTEXITCODE -ne 0) { throw ''Native candidate validation did not pass; inspect the retained original reports'' }
+
+        '
+    - name: Run actual 30 native connections and 7200-second active stability
+      if: github.event_name == 'workflow_dispatch' && inputs.validation_scope == 'stability'
+      shell: pwsh
+      timeout-minutes: 185
+      run: 'python qa/scripts/validate-windows-candidate.py --phase stability --client sources/client --server sources/server --verified verified-candidate --output native-evidence --revision ${{ steps.candidate.outputs.revision }} --server-revision ${{ steps.candidate.outputs.server_revision }} --version ${{ steps.candidate.outputs.version }}
+
+        if ($LASTEXITCODE -ne 0) { throw ''Actual native stability did not pass; inspect partial raw samples and reports'' }
+
+        '
+    - name: Retain package-bound raw reports without private fixture state
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: windows-final-native-${{ github.run_id }}-${{ github.run_attempt }}
+        path: 'selected-candidate-pin.json
+
+          native-evidence/
+
+          verified-candidate/client-candidate-download.json
+
+          verified-candidate/verification/
+
+          '
+        if-no-files-found: error
+        retention-days: 30
+'on':
+  workflow_dispatch: null

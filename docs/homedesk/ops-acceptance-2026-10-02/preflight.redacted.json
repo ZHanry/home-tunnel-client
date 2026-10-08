@@ -1,0 +1,119 @@
+{
+    "captured_at":  "2026-10-02T00:32:53.269868+00:00",
+    "target":  "TENCENT_TARGET",
+    "collection":  "read_only",
+    "docker_query_ok":  true,
+    "containers":  [
+                       {
+                           "name":  "tihu",
+                           "image":  "python:3.14-alpine",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "game1",
+                           "image":  "python:3.14-alpine",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "gpt2api-mysql",
+                           "image":  "mysql:8.0",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "gpt2api-server",
+                           "image":  "gpt2api/server:latest",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "gpt2api-redis",
+                           "image":  "redis:7-alpine",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "sub2api",
+                            "image":  "sub2api-kiro:REDACTED_VERSION",
+                           "state":  "exited"
+                       },
+                       {
+                           "name":  "sub2api-postgres",
+                           "image":  "postgres:18-alpine",
+                           "state":  "exited"
+                       },
+                       {
+                           "name":  "sub2api-redis",
+                           "image":  "redis:8-alpine",
+                           "state":  "exited"
+                       },
+                       {
+                           "name":  "cpamp-cpa-manager-plus-1",
+                           "image":  "seakee/cpa-manager-plus:latest",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "hysteria2",
+                           "image":  "tobyxdd/hysteria:latest",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "caddy",
+                           "image":  "caddy:2",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "new-api",
+                           "image":  "calciumion/new-api:latest",
+                           "state":  "running"
+                       },
+                       {
+                           "name":  "cli-proxy-api",
+                           "image":  "eceasy/cli-proxy-api:v7.3.11",
+                           "state":  "running"
+                       }
+                   ],
+    "tunnel_container_candidates":  [
+
+                                    ],
+    "unit_query_ok":  true,
+    "tunnel_unit_candidates":  [
+
+                               ],
+    "process_query_ok":  true,
+    "tunnel_process_candidates":  [
+
+                                  ],
+    "caddy_source_query_ok":  true,
+    "portal_keyword_present":  false,
+    "boundaries":  [
+                       "No credentials read",
+                       "No app launched",
+                       "No production writes",
+                       "No firewall changes"
+                   ],
+    "windows":  {
+                    "elevated":  false,
+                    "dedicated_test_identity_confirmed":  false,
+                    "hyperv_inventory":  "permission_denied",
+                    "current_client_profile_present":  true,
+                    "current_profile_file_count":  16,
+                    "test_exe_launched":  false,
+                    "native_ui_runtime":  "initialized",
+                    "native_homedesk_windows_found":  0
+                },
+    "artifact":  {
+                     "filename":  "HomeDesk-1.4.9-portal-complete-win-x64.exe",
+                     "size":  23732736,
+                     "sha256":  "fb88799a4c1497d6ea7cc06cd1075aa5cb16d02c8ab1f54e796609cdfd3c844f",
+                     "pe_machine":  "0x8664",
+                     "architecture":  "x64",
+                     "authenticode":  "NotSigned"
+                 },
+    "requested_server_contract":  {
+                                      "server":  "10.1.0",
+                                      "api":  "api-v1.5.0",
+                                      "actual_server_version":  null,
+                                      "actual_api_version":  null,
+                                      "compatibility":  "not_verified",
+                                      "test_https_origin_confirmed":  false,
+                                      "dedicated_portal_test_account_confirmed":  false
+                                  }
+}

@@ -1,0 +1,21 @@
+# Official generic builds contain no server, key or embedded credentials.
+# Configure your own hbbs address/key and family CIDR in the app after installation.
+[brand]
+app_name = "HomeDesk"
+executable_name = "homedesk"
+package_name = "homedesk"
+config_namespace = "HomeDesk"
+
+[server]
+host = ""
+relay_host = ""
+key = ""
+
+[net]
+mode = "self_hosted"
+whitelist_cidr = ""
+source_cidr = ""
+
+[console]
+enabled = false
+trusted_path = false

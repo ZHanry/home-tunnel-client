@@ -101,3 +101,26 @@ release-notes.md
 /agent-provenance.json.sigstore.json
 /windows-exe-smoke.json
 /cmd/home-tunnel-gui/*.syso
+
+# Imported HomeDesk sources and local build state
+!/build/
+!/build/**
+/build/config.toml
+/build/runtime/
+/build/staging/
+/build/assets/generated/
+/client/target/
+/client/flutter/.dart_tool/
+/client/flutter/build/
+/client/flutter/.flutter-plugins*
+/client/flutter/macos/Flutter/ephemeral/
+/client/flutter/windows/flutter/ephemeral/
+/client/flutter/linux/flutter/ephemeral/
+
+/products/
+/material-input/
+/imported/
+/outputs/
+/.downloads/
+__pycache__/
+*.pyc
