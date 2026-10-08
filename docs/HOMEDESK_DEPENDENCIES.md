@@ -8,6 +8,7 @@ candidate updates compatible dependency versions before building release bytes:
 | rustls | 0.23.45 | Current compatible TLS maintenance fixes |
 | rustls-webpki | 0.103.15 | Malformed CRL panic and earlier certificate-validation fixes |
 | openssl / openssl-sys | 0.10.81 / 0.9.117 | Reported bounds, callback and certificate parsing defects |
+| openssl-src | 300.6.1+3.6.3 | Vendored OpenSSL 3.6.3 maintenance release |
 | quinn-proto | 0.11.19 | Transport-parameter panic and unbounded stream reassembly |
 | bytes | 1.12.1 | Reported buffer defects |
 | crossbeam-channel | 0.5.17 | Concurrent channel memory-safety correction |

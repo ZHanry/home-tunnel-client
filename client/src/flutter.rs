@@ -2330,7 +2330,9 @@ pub(super) mod async_tasks {
     };
 
     // HOMEDESK: 网络配置保存复用既有 Flutter 异步线程，避免 UI 阻塞或创建嵌套 runtime。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     type NetworkValues = (String, String, String, String, String, String);
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     struct SaveNetworkRequest {
         values: NetworkValues,
         deadline: Instant,
@@ -2341,6 +2343,7 @@ pub(super) mod async_tasks {
     enum FlutterAsyncTask {
         QueryOnlines(Vec<String>),
         // HOMEDESK: 请求携带截止时间和放弃标记，过期排队任务绝不迟到落盘。
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         SaveNetworkProfile(SaveNetworkRequest),
     }
     type TxFlutterAsyncTask = SyncSender<FlutterAsyncTask>;
@@ -2370,6 +2373,7 @@ pub(super) mod async_tasks {
                     crate::client::peer_online::query_online_states(ids, handle_query_onlines).await
                 }
                 // HOMEDESK: 执行前再次检查截止时间；IPC 发出后的未知结果通过只读同步收敛。
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 Ok(FlutterAsyncTask::SaveNetworkProfile(request)) => {
                     if !crate::homedesk_async::save_request_may_execute(
                         request.abandoned.load(Ordering::SeqCst),
@@ -2419,6 +2423,7 @@ pub(super) mod async_tasks {
     }
 
     // HOMEDESK: FRB 普通返回值在 Dart 侧是 Future；这里只等待既有异步线程回执，不运行 Tokio。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn save_network_profile(values: NetworkValues) -> Result<(String, HashMap<String, String>), String> {
         let (response, receiver) = sync_channel(1);
         let Some(tx) = TX_FLUTTER_ASYNC_TASK.lock().unwrap().as_ref().cloned() else {
@@ -2452,6 +2457,7 @@ pub(super) mod async_tasks {
     }
 
     // HOMEDESK: ACK未知时只读同步后台有效组；同步失败则让UI进程连接策略进入拒绝态。
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     async fn resync_network_profile_after_unknown(reason: String) -> Result<(String, HashMap<String, String>), String> {
         match crate::ipc::get_options_confirmed_async().await {
             Ok(options) => {
