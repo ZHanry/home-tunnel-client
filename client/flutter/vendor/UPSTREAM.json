@@ -6,7 +6,8 @@
     "android_namespace": "com.pinciat.external_path",
     "changes": [
       "declare original namespace for AGP 8",
-      "remove deprecated manifest package attributes"
+      "remove deprecated manifest package attributes",
+      "align Kotlin with existing Java 8 bytecode target"
     ],
     "origin": "https://pub.dev/packages/external_path"
   },
@@ -28,7 +29,8 @@
     "android_namespace": "net.touchcapture.qr.flutterqr",
     "changes": [
       "declare original namespace for AGP 8",
-      "remove deprecated manifest package attributes"
+      "remove deprecated manifest package attributes",
+      "align Kotlin with existing Java 8 bytecode target"
     ],
     "origin": "https://pub.dev/packages/qr_code_scanner"
   },

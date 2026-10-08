@@ -1,5 +1,11 @@
 include: package:lints/recommended.yaml
 
+analyzer:
+  exclude:
+    # Retain original dependency tests as source; their dev-only packages and
+    # older mock APIs are separate from the application's resolved test suite.
+    - vendor/**/test/**
+
 linter:
   rules:
     non_constant_identifier_names: false

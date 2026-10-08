@@ -12,11 +12,23 @@ destination.mkdir(parents=True, exist_ok=True)
 vendor = destination / 'rust-vendor'
 configuration = subprocess.check_output(['cargo', 'vendor', '--locked', '--versioned-dirs', str(vendor)], cwd=ROOT / 'client', text=True)
 (destination / 'cargo-vendor-config.toml').write_text(configuration.replace(str(vendor), '../dependencies/rust-vendor'), encoding='utf8')
+# Record the actual selected build graph; the all-platform lockfile can also
+# contain Linux-only packages and inherited entries outside the shipped targets.
+target = os.environ.get('TARGET')
+if not target:
+    target = next(line.split(': ', 1)[1] for line in
+                  subprocess.check_output(['rustc', '-vV'], text=True).splitlines()
+                  if line.startswith('host: '))
+features = os.environ.get('FEATURES') or 'flutter,hwcodec'
+tree = subprocess.check_output(['cargo', 'tree', '--locked', '--target', target,
+                                '--features', features, '-e', 'normal,build'],
+                               cwd=ROOT / 'client', text=True)
+(destination / ('cargo-tree-' + target + '.txt')).write_text(tree, encoding='utf8')
 vcpkg = Path(os.environ['VCPKG_ROOT'])
-for port in ('ffmpeg', 'aom', 'libvpx', 'libyuv', 'opus', 'libjpeg-turbo', 'mfx-dispatch', 'amd-amf'):
-    source = vcpkg / 'buildtrees' / port / 'src'
+for port in sorted((vcpkg / 'buildtrees').iterdir()):
+    source = port / 'src'
     if source.is_dir():
-        shutil.copytree(source, destination / 'native' / port, dirs_exist_ok=True,
+        shutil.copytree(source, destination / 'native' / port.name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('.git', '*.obj', '*.o', '*.pdb', 'CMakeFiles'))
 for triplet in (vcpkg / 'installed').iterdir():
     if (triplet / 'share').is_dir():

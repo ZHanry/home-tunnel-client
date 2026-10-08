@@ -46,7 +46,7 @@ jobs:
         vcpkgDirectory: D:/vcpkg
         vcpkgGitCommitId: 120deac3062162151622ca4860575a33844ba10b
         vcpkgJsonGlob: client/vcpkg.json
-        doNotCache: false
+        doNotCache: true
     - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       id: native-deps
       with:
@@ -54,7 +54,7 @@ jobs:
           D:/vcpkg/installed
           D:/vcpkg/buildtrees
           D:/vcpkg/downloads
-        key: homedesk-vcpkg-win2022-static-host-120deac-${{ hashFiles('client/vcpkg.json') }}
+        key: homedesk-vcpkg-win2022-static-host-source-120deac-${{ hashFiles('client/vcpkg.json', 'client/res/vcpkg/**') }}
     - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: |-

@@ -13,6 +13,9 @@ cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --loc
 if ($LASTEXITCODE -ne 0) { throw 'FRB installation failed' }
 Push-Location client
 try {
+    # Cache the installation together with its patched source trees. A binary-
+    # only restore cannot populate the corresponding-source release materials.
+    $env:VCPKG_BINARY_SOURCES = 'clear'
     # FFmpeg is a host dependency in the upstream manifest. Rust links the
     # static triplet, so host and target must use the same installation layout.
     & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static --host-triplet x64-windows-static "--x-install-root=$env:VCPKG_ROOT/installed"
