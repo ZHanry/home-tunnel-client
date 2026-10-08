@@ -1,6 +1,12 @@
 // HOMEDESK: 家庭设备中心布局独立于远控协议和上游页面逻辑。
 import 'package:flutter/material.dart';
 import 'homedesk_theme.dart';
+import 'homedesk_navigation.dart';
+import 'homedesk_family_devices.dart';
+import 'homedesk_services.dart';
+import 'homedesk_recent.dart';
+import 'homedesk_status.dart';
+import 'homedesk_account.dart';
 
 enum _DashboardPage { devices, recent, services }
 
@@ -15,6 +21,10 @@ class HomeDeskDashboard extends StatefulWidget {
   final VoidCallback? onNetworkSettings;
   final ValueChanged<String> onConnect;
   final bool initializeAccount;
+  final HomeDeskStatusData? statusData;
+  final WidgetBuilder? recentSummaryBuilder;
+  static HomeDeskDashboardState? active;
+  static void navigate(String destination) => active?._navigate(destination);
   const HomeDeskDashboard(
       {super.key,
       required this.brandName,
@@ -26,7 +36,9 @@ class HomeDeskDashboard extends StatefulWidget {
       required this.onConnect,
       this.onNetworkSettings,
       this.servicesBuilder,
-      this.initializeAccount = false});
+      this.initializeAccount = false,
+      this.statusData,
+      this.recentSummaryBuilder});
 
   @override
   State<HomeDeskDashboard> createState() => HomeDeskDashboardState();
@@ -36,12 +48,38 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
   _DashboardPage _page = _DashboardPage.devices;
   final Set<_DashboardPage> _initializedPages = {_DashboardPage.devices};
   ThemeData? _dialogTheme;
+  HomeDeskAccount? navigationAccount;
 
   @override
   void initState() {
     super.initState();
+    HomeDeskDashboard.active = this;
     if (widget.initializeAccount && widget.servicesBuilder != null) {
       _initializedPages.add(_DashboardPage.services);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (identical(HomeDeskDashboard.active, this)) {
+      HomeDeskDashboard.active = null;
+    }
+    super.dispose();
+  }
+
+  void _navigate(String destination) {
+    switch (destination) {
+      case 'devices':
+        _selectPage(_DashboardPage.devices);
+      case 'recent':
+        _selectPage(_DashboardPage.recent);
+      case 'services':
+      case 'account':
+        if (widget.servicesBuilder != null) showAccount();
+      case 'local':
+        _showLocal();
+      case 'settings':
+        widget.onSettings();
     }
   }
 
@@ -64,14 +102,16 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
   }
 
   Widget _buildPage(
-      BuildContext context, _DashboardPage page, WidgetBuilder? builder) {
+      BuildContext context, _DashboardPage page, WidgetBuilder? builder,
+      {Widget? built}) {
     // 未记住登录时不请求账号 API；生产首页可恢复此前明确保存的会话。
     if (!_initializedPages.contains(page) || builder == null) {
       return const SizedBox.shrink();
     }
     return TickerMode(
         enabled: _page == page,
-        child: KeyedSubtree(key: ValueKey(page), child: builder(context)));
+        child: KeyedSubtree(
+            key: ValueKey(page), child: built ?? builder(context)));
   }
 
   Future<void> showManualConnection() async {
@@ -108,8 +148,8 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                 const Expanded(
                                     child: Text('本机信息',
                                         style: TextStyle(
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.w700))),
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w600))),
                                 IconButton(
                                     tooltip: '关闭本机信息',
                                     onPressed: () => Navigator.pop(context),
@@ -121,247 +161,139 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
             )));
   }
 
-  Widget _nav(BuildContext context, IconData icon, String label,
-      VoidCallback onPressed, bool compact,
-      {bool selected = false}) {
-    final colors = Theme.of(context).colorScheme;
-    return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Tooltip(
-          message: label,
-          child: TextButton(
-            style: TextButton.styleFrom(
-              foregroundColor: selected
-                  ? colors.onPrimaryContainer
-                  : colors.onSurfaceVariant,
-              backgroundColor:
-                  selected ? colors.primaryContainer : Colors.transparent,
-              minimumSize: const Size(double.infinity, 48),
-              padding: EdgeInsets.symmetric(
-                  horizontal: compact ? 8 : 14, vertical: 12),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: onPressed,
-            child: Row(
-                mainAxisAlignment: compact
-                    ? MainAxisAlignment.center
-                    : MainAxisAlignment.start,
-                children: [
-                  Icon(icon, size: 22),
-                  if (!compact) ...[
-                    const SizedBox(width: 12),
-                    Flexible(
-                        child: Text(label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 14))),
-                  ]
-                ]),
-          ),
-        ));
-  }
-
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
     final theme = homeDeskTheme(Theme.of(context));
-    final colors = theme.colorScheme;
     _dialogTheme = theme;
     return Theme(
         data: theme,
-        child: Builder(
-            builder: (context) => LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 840 ||
-                        MediaQuery.textScalerOf(context).scale(1) > 1.5;
-                    final railWidth = compact ? 72.0 : 188.0;
-                    return ColoredBox(
-                      color: dark
-                          ? const Color(0xFF131923)
-                          : const Color(0xFFF4F6FB),
-                      child: Row(children: [
-                        Container(
-                          width: railWidth,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                              color: colors.surface,
-                              border: Border(
-                                  right: BorderSide(
-                                      color: colors.outlineVariant))),
-                          child: Column(children: [
-                            Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 18),
-                                child: Row(
-                                  mainAxisAlignment: compact
-                                      ? MainAxisAlignment.center
-                                      : MainAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                        width: 38,
-                                        height: 38,
-                                        decoration: BoxDecoration(
-                                            color: colors.primary,
-                                            borderRadius:
-                                                BorderRadius.circular(12)),
-                                        child: Icon(Icons.home_rounded,
-                                            color: colors.onPrimary, size: 24)),
-                                    if (!compact) ...[
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                          child: Text(widget.brandName,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                  fontSize: 18,
-                                                  fontWeight: FontWeight.w700)))
-                                    ],
-                                  ],
-                                )),
-                            const SizedBox(height: 22),
-                            _nav(
-                                context,
-                                Icons.devices_rounded,
-                                '家庭设备',
-                                () => _selectPage(_DashboardPage.devices),
-                                compact,
-                                selected: _page == _DashboardPage.devices),
-                            _nav(
-                                context,
-                                Icons.history_rounded,
-                                '最近连接',
-                                () => _selectPage(_DashboardPage.recent),
-                                compact,
-                                selected: _page == _DashboardPage.recent),
-                            if (widget.servicesBuilder != null)
-                              _nav(
-                                  context,
-                                  Icons.apps_rounded,
-                                  '家庭服务',
-                                  () => _selectPage(_DashboardPage.services),
-                                  compact,
-                                  selected: _page == _DashboardPage.services),
-                            const Spacer(),
-                            _nav(context, Icons.computer_rounded, '本机信息',
-                                _showLocal, compact),
-                            _nav(context, Icons.settings_outlined, '设置',
-                                widget.onSettings, compact),
-                            const SizedBox(height: 10),
-                          ]),
-                        ),
+        child: Builder(builder: (context) {
+          final t = HomeDeskTokens.of(context);
+          final devices = widget.devicesBuilder(context);
+          final services = widget.servicesBuilder?.call(context);
+          final account =
+              devices is HomeDeskFamilyDevices ? devices.account : null;
+          navigationAccount = account;
+          Widget status(bool footer) => HomeDeskStatus(
+              account: account,
+              data: widget.statusData,
+              live: widget.initializeAccount,
+              footer: footer,
+              exceptionOnly: !footer,
+              onNetwork: widget.onNetworkSettings ?? widget.onSettings);
+          return LayoutBuilder(builder: (context, constraints) {
+            final compact = constraints.maxWidth < 960 ||
+                MediaQuery.textScalerOf(context).scale(1) > 1.5;
+            final inset = compact
+                ? HomeDeskTokens.narrowPadding
+                : HomeDeskTokens.pagePadding;
+            final title = switch (_page) {
+              _DashboardPage.devices => '家庭设备',
+              _DashboardPage.recent => '最近连接',
+              _DashboardPage.services => '家庭服务'
+            };
+            final subtitle = switch (_page) {
+              _DashboardPage.devices => '家里的电脑，在这里轻松连接',
+              _DashboardPage.recent => '快速回到上次使用的电脑',
+              _DashboardPage.services => '查看设备上的服务，打开你的访问地址'
+            };
+            return HomeDeskHomeActions(
+                onLocal: _showLocal,
+                onRecent: () => _selectPage(_DashboardPage.recent),
+                recentSummary: widget.recentSummaryBuilder ??
+                    (_) => const HomeDeskRecent(summary: true),
+                status: (_) => status(false),
+                child: ColoredBox(
+                    color: t.background,
+                    child: Column(children: [
+                      Expanded(
+                          child: Row(children: [
+                        HomeDeskNavigation(
+                            brand: widget.brandName,
+                            compact: compact,
+                            selected: _page.name,
+                            onSelected: _navigate,
+                            services: widget.servicesBuilder != null,
+                            account: account),
                         Expanded(
-                            child: Column(children: [
-                          Padding(
-                              padding: EdgeInsets.fromLTRB(
-                                  compact ? 18 : 28, 22, compact ? 18 : 28, 18),
-                              child: LayoutBuilder(builder: (context, header) {
-                                final title = Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                          switch (_page) {
-                                            _DashboardPage.devices => '家庭设备',
-                                            _DashboardPage.recent => '最近连接',
-                                            _DashboardPage.services => '家庭服务',
-                                          },
-                                          style: const TextStyle(
-                                              fontSize: 26,
-                                              fontWeight: FontWeight.w700)),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                          switch (_page) {
-                                            _DashboardPage.devices =>
-                                              '家里的电脑，在这里轻松连接',
-                                            _DashboardPage.recent =>
-                                              '快速回到上次使用的电脑',
-                                            _DashboardPage.services =>
-                                              '查看设备上的服务，打开你的访问地址',
-                                          },
-                                          style: TextStyle(
-                                              fontSize: 13,
-                                              color: colors.onSurfaceVariant)),
-                                    ]);
-                                final action = OutlinedButton.icon(
-                                    onPressed: showManualConnection,
-                                    icon:
-                                        const Icon(Icons.add_rounded, size: 20),
-                                    label: const Text('手动连接'));
-                                if (_page == _DashboardPage.services) {
-                                  return Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: title);
-                                }
-                                if (header.maxWidth < 530 ||
-                                    MediaQuery.textScalerOf(context).scale(1) >
-                                        1.5) {
-                                  return Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        title,
-                                        const SizedBox(height: 14),
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                              if (!(_page == _DashboardPage.services &&
+                                  services is HomeDeskServices))
+                                Padding(
+                                    padding: EdgeInsets.fromLTRB(inset, 24,
+                                        inset, HomeDeskTokens.moduleGap),
+                                    child: LayoutBuilder(builder: (context, c) {
+                                      final heading = Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(title, style: t.titleStyle),
+                                            const SizedBox(height: 4),
+                                            Text(subtitle,
+                                                style: t.auxiliaryStyle)
+                                          ]);
+                                      final action = OutlinedButton.icon(
+                                          onPressed: showManualConnection,
+                                          icon: const Icon(Icons.add_rounded,
+                                              size: 18),
+                                          label: const Text('手动连接'));
+                                      if (_page == _DashboardPage.services) {
+                                        return Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: heading);
+                                      }
+                                      if (c.maxWidth < 400 ||
+                                          MediaQuery.textScalerOf(context)
+                                                  .scale(1) >
+                                              1.5) {
+                                        return Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              heading,
+                                              const SizedBox(height: 12),
+                                              action
+                                            ]);
+                                      }
+                                      return Row(children: [
+                                        Expanded(child: heading),
+                                        const SizedBox(width: 16),
                                         action
                                       ]);
-                                }
-                                return Row(children: [
-                                  Expanded(child: title),
-                                  const SizedBox(width: 16),
-                                  action
-                                ]);
-                              })),
-                          Expanded(
-                              child: Padding(
-                                  padding: EdgeInsets.symmetric(
-                                      horizontal: compact ? 18 : 28),
-                                  child: IndexedStack(
-                                    index: _page.index,
-                                    children: [
-                                      _buildPage(
-                                          context,
-                                          _DashboardPage.devices,
-                                          widget.devicesBuilder),
-                                      _buildPage(context, _DashboardPage.recent,
-                                          widget.recentBuilder),
-                                      _buildPage(
-                                          context,
-                                          _DashboardPage.services,
-                                          widget.servicesBuilder),
-                                    ],
-                                  ))),
-                          if (_page == _DashboardPage.devices)
-                            Container(
-                                margin:
-                                    const EdgeInsets.fromLTRB(18, 12, 18, 12),
-                                decoration: BoxDecoration(
-                                    color: colors.surface,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                        color: colors.outlineVariant)),
-                                child: Row(children: [
-                                  Expanded(
-                                      child: widget.statusBuilder(context)),
-                                  if (!compact)
-                                    TextButton.icon(
-                                        onPressed: widget.onNetworkSettings ??
-                                            widget.onSettings,
-                                        icon: const Icon(Icons.tune_rounded,
-                                            size: 18),
-                                        label: const Text('网络设置'))
-                                  else
-                                    IconButton(
-                                        tooltip: '检查网络设置',
-                                        onPressed: widget.onNetworkSettings ??
-                                            widget.onSettings,
-                                        icon: const Icon(Icons.tune_rounded,
-                                            size: 19)),
-                                ])),
-                        ])),
-                      ]),
-                    );
-                  },
-                )));
+                                    })),
+                              Expanded(
+                                  child: Padding(
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: inset),
+                                      child: IndexedStack(
+                                          index: _page.index,
+                                          children: [
+                                            _buildPage(
+                                                context,
+                                                _DashboardPage.devices,
+                                                widget.devicesBuilder,
+                                                built: devices),
+                                            _buildPage(
+                                                context,
+                                                _DashboardPage.recent,
+                                                widget.recentBuilder),
+                                            _buildPage(
+                                                context,
+                                                _DashboardPage.services,
+                                                widget.servicesBuilder,
+                                                built: services),
+                                          ]))),
+                            ])),
+                      ])),
+                      // 原状态组件继续执行已有状态更新；可见文字使用明确的中文状态栏。
+                      Offstage(
+                          offstage: true, child: widget.statusBuilder(context)),
+                      status(true),
+                    ])));
+          });
+        }));
   }
 }
 
@@ -401,14 +333,13 @@ class _ManualConnectionDialogState extends State<_ManualConnectionDialog> {
                 children: [
                   const Text('在另一台电脑上打开客户端，输入它的设备 ID 或内网 IP。'),
                   const SizedBox(height: 20),
-                  TextField(
-                      controller: _controller,
-                      autofocus: true,
-                      onSubmitted: (_) => _submit(),
-                      decoration: InputDecoration(
-                          labelText: '设备 ID / 内网 IP',
-                          errorText: _error,
-                          border: const OutlineInputBorder())),
+                  HomeDeskFieldLabel('设备 ID / 内网 IP',
+                      child: TextField(
+                          controller: _controller,
+                          autofocus: true,
+                          onSubmitted: (_) => _submit(),
+                          decoration: InputDecoration(
+                              errorText: _error, hintText: '输入设备 ID 或内网 IP'))),
                 ])),
         actions: [
           TextButton(

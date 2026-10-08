@@ -1,5 +1,6 @@
 // HOMEDESK: 家庭设备目录和服务共用批准的 HTTPS 地址；保存地址不发起联网。
 import 'package:flutter/material.dart';
+import 'homedesk_theme.dart';
 import 'homedesk_tunnel_api.dart';
 import 'models/platform_model.dart';
 
@@ -78,28 +79,29 @@ class _HomeDeskServiceAddressState extends State<HomeDeskServiceAddress> {
     final colors = Theme.of(context).colorScheme;
     return Card(
         child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(HomeDeskTokens.cardPadding),
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text('家庭账号与服务',
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                      style: TextStyle(
+                          fontSize: HomeDeskTokens.sectionTitle,
+                          fontWeight: FontWeight.w600)),
                   const SizedBox(height: 10),
                   Text('家庭设备和家庭服务共用此地址。修改地址后需要重新登录；访问服务前请在网络模式中启用自建公网。',
                       style: TextStyle(
                           color: colors.onSurfaceVariant, fontSize: 12)),
                   const SizedBox(height: 16),
-                  TextField(
-                      key: const ValueKey('network-service-address'),
-                      controller: _address,
-                      enabled: !_saving,
-                      autocorrect: false,
-                      keyboardType: TextInputType.url,
-                      decoration: const InputDecoration(
-                          labelText: '家庭服务 HTTPS 地址',
-                          hintText: 'https://console.example.com',
-                          border: OutlineInputBorder())),
+                  HomeDeskFieldLabel('家庭服务 HTTPS 地址',
+                      child: TextField(
+                          key: const ValueKey('network-service-address'),
+                          controller: _address,
+                          enabled: !_saving,
+                          autocorrect: false,
+                          keyboardType: TextInputType.url,
+                          decoration: const InputDecoration(
+                              hintText: 'https://console.example.com',
+                              border: null))),
                   const SizedBox(height: 12),
                   Align(
                       alignment: Alignment.centerRight,

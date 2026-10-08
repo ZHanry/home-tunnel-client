@@ -1,5 +1,6 @@
 // HOMEDESK: 主窗口标题栏保留拖动、缩放和系统按钮，取消重复的主页/设置页签。
 import 'package:flutter/material.dart';
+import 'homedesk_theme.dart';
 
 class HomeDeskTitleBar extends StatelessWidget {
   final String brand;
@@ -45,7 +46,7 @@ class HomeDeskTitleBar extends StatelessWidget {
     return Container(
         height: 44,
         decoration: BoxDecoration(
-            color: colors.surface,
+            color: HomeDeskTokens.of(context).chrome,
             border: Border(bottom: BorderSide(color: colors.outlineVariant))),
         child: Row(children: [
           _button(context, '返回主页', Icons.home_rounded, onHome),

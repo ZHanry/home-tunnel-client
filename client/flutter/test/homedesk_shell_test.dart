@@ -20,37 +20,39 @@ void main() {
       var backed = false;
       await tester.pumpWidget(MaterialApp(
           theme: homeDeskTheme(dark ? ThemeData.dark() : ThemeData.light()),
-          home: Scaffold(body: MediaQuery(
-              data: const MediaQueryData(textScaler: TextScaler.linear(2)),
-              child: StatefulBuilder(
-                  builder: (context, update) => HomeDeskSettingsShell(
-                        labels: const ['常规', '安全', '网络', '关于'],
-                        icons: const [
-                          Icons.tune,
-                          Icons.lock,
-                          Icons.link,
-                          Icons.info
-                        ],
-                        selected: selected,
-                        onSelected: (index) => update(() => selected = index),
-                        onBack: () => backed = true,
-                        child: ListView(children: [
-                          HomeDeskSettingsCard(
-                              title: '当前页面 $selected',
-                              children: [
-                                const Padding(
-                                    padding: EdgeInsets.all(16),
-                                    child: Text('连接配置与输入内容')),
-                              ])
-                        ]),
-                      ))))));
+          home: Scaffold(
+              body: MediaQuery(
+                  data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+                  child: StatefulBuilder(
+                      builder: (context, update) => HomeDeskSettingsShell(
+                            labels: const ['常规', '安全', '网络', '关于'],
+                            icons: const [
+                              Icons.tune,
+                              Icons.lock,
+                              Icons.link,
+                              Icons.info
+                            ],
+                            selected: selected,
+                            onSelected: (index) =>
+                                update(() => selected = index),
+                            onBack: () => backed = true,
+                            child: ListView(children: [
+                              HomeDeskSettingsCard(
+                                  title: '当前页面 $selected',
+                                  children: [
+                                    const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: Text('连接配置与输入内容')),
+                                  ])
+                            ]),
+                          ))))));
       await tester
           .ensureVisible(find.byKey(const ValueKey('settings-section-2')));
       await tester.tap(find.byKey(const ValueKey('settings-section-2')));
       await tester.pumpAndSettle();
       expect(selected, 2);
       expect(find.text('当前页面 2'), findsOneWidget);
-      await tester.tap(find.byTooltip('返回主页'));
+      await tester.tap(find.byTooltip('家庭设备'));
       expect(backed, isTrue);
       expect(tester.takeException(), isNull);
     });

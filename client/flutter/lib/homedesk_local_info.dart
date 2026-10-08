@@ -1,5 +1,6 @@
 // HOMEDESK: 本机信息的展示组件；凭据和操作由既有服务模型提供。
 import 'package:flutter/material.dart';
+import 'homedesk_theme.dart';
 
 class HomeDeskLocalInfo extends StatefulWidget {
   final TextEditingController id;
@@ -57,9 +58,9 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
         key: key,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
         decoration: BoxDecoration(
-            color: colors.onSurface.withOpacity(0.035),
+            color: HomeDeskTokens.of(context).sunken,
             border: Border.all(color: colors.outlineVariant),
-            borderRadius: BorderRadius.circular(12)),
+            borderRadius: BorderRadius.circular(HomeDeskTokens.blockRadius)),
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
@@ -152,7 +153,8 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
         child: SingleChildScrollView(
             key: const ValueKey('local-info-scroll'),
             controller: _scroll,
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            padding: const EdgeInsets.fromLTRB(HomeDeskTokens.dialogPadding, 4,
+                HomeDeskTokens.dialogPadding, HomeDeskTokens.dialogPadding),
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -175,8 +177,9 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
                         key: const ValueKey('local-info-portable'),
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                            color: colors.primary.withOpacity(0.06),
-                            borderRadius: BorderRadius.circular(12),
+                            color: HomeDeskTokens.of(context).accentSoft,
+                            borderRadius: BorderRadius.circular(
+                                HomeDeskTokens.blockRadius),
                             border: Border.all(color: colors.outlineVariant)),
                         child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,

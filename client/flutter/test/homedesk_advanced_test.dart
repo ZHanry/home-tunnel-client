@@ -106,6 +106,6 @@ void main() {
     ack.complete('后台拒绝保存');
     await tester.pumpAndSettle();
     expect(find.text('后台拒绝保存'), findsOneWidget);
-    expect(find.text('HomeDesk 网络模式'), findsOneWidget);
+    expect(find.text('网络模式'), findsOneWidget);
   });
 }

@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'homedesk_theme.dart';
 
 import 'homedesk_tunnel_api.dart';
 import 'homedesk_device_label.dart';
@@ -260,9 +261,8 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
     super.dispose();
   }
 
-  InputDecoration _decoration(String label, {String? hint, String? helper}) =>
+  InputDecoration _decoration({String? hint, String? helper}) =>
       InputDecoration(
-          labelText: label,
           hintText: hint,
           helperText: helper,
           helperMaxLines: 2,
@@ -270,8 +270,8 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
           isDense: true,
           floatingLabelBehavior: FloatingLabelBehavior.always,
           contentPadding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          border: const OutlineInputBorder());
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          border: null);
 
   Widget _pair(Widget first, Widget second,
           {int firstFlex = 1, int secondFlex = 1}) =>
@@ -281,7 +281,7 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
         if (!wide) {
           return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [first, const SizedBox(height: 16), second]);
+              children: [first, const SizedBox(height: 12), second]);
         }
         return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(flex: firstFlex, child: first),
@@ -297,49 +297,55 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
     final types = <String>{...widget.supportedTypes, _proxyType};
     final saveAllowed =
         !_busy && (!_needsReview || (_reviewLoaded && _reviewed && _exists));
-    final name = TextFormField(
-        key: const ValueKey('service-name'),
-        controller: _name,
-        enabled: !_busy,
-        validator: _nameError,
-        textInputAction: TextInputAction.next,
-        decoration: _decoration('服务名称', hint: '例如家庭相册'));
-    final type = DropdownButtonFormField<String>(
-        key: const ValueKey('service-type'),
-        value: _proxyType,
-        isExpanded: true,
-        decoration: _decoration('连接类型'),
-        items: [
-          for (final type in types)
-            DropdownMenuItem(
-                value: type,
-                child: Text(
-                    type == 'http' ? '网页服务（HTTP / HTTPS）' : type.toUpperCase(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis))
-        ],
-        onChanged: _busy || !isNew
-            ? null
-            : (value) => _change(() {
-                  _proxyType = value ?? _proxyType;
-                  if (_proxyType != 'tcp') _applicationProtocol = null;
-                }));
-    final host = TextFormField(
-        key: const ValueKey('service-local-host'),
-        controller: _host,
-        enabled: !_busy,
-        autocorrect: false,
-        validator: _hostError,
-        textInputAction: TextInputAction.next,
-        decoration: _decoration('本地主机 / IP', hint: '127.0.0.1'));
-    final port = TextFormField(
-        key: const ValueKey('service-local-port'),
-        controller: _port,
-        enabled: !_busy,
-        keyboardType: TextInputType.number,
-        textInputAction: TextInputAction.next,
-        validator: _portError,
-        decoration: _decoration('本地端口'));
+    final name = HomeDeskFieldLabel('服务名称',
+        child: TextFormField(
+            key: const ValueKey('service-name'),
+            controller: _name,
+            enabled: !_busy,
+            validator: _nameError,
+            textInputAction: TextInputAction.next,
+            decoration: _decoration(hint: '例如家庭相册')));
+    final type = HomeDeskFieldLabel('连接类型',
+        child: DropdownButtonFormField<String>(
+            key: const ValueKey('service-type'),
+            value: _proxyType,
+            isExpanded: true,
+            decoration: _decoration(),
+            items: [
+              for (final type in types)
+                DropdownMenuItem(
+                    value: type,
+                    child: Text(
+                        type == 'http'
+                            ? '网页服务（HTTP / HTTPS）'
+                            : type.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis))
+            ],
+            onChanged: _busy || !isNew
+                ? null
+                : (value) => _change(() {
+                      _proxyType = value ?? _proxyType;
+                      if (_proxyType != 'tcp') _applicationProtocol = null;
+                    })));
+    final host = HomeDeskFieldLabel('本地主机 / IP',
+        child: TextFormField(
+            key: const ValueKey('service-local-host'),
+            controller: _host,
+            enabled: !_busy,
+            autocorrect: false,
+            validator: _hostError,
+            textInputAction: TextInputAction.next,
+            decoration: _decoration(hint: '127.0.0.1')));
+    final port = HomeDeskFieldLabel('本地端口',
+        child: TextFormField(
+            key: const ValueKey('service-local-port'),
+            controller: _port,
+            enabled: !_busy,
+            keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.next,
+            validator: _portError,
+            decoration: _decoration()));
     return PopScope(
         canPop: !_busy,
         child: Dialog(
@@ -356,7 +362,7 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                           padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
                           child: Text(isNew ? '添加家庭服务' : '编辑家庭服务',
                               style: const TextStyle(
-                                  fontSize: 20, fontWeight: FontWeight.w600))),
+                                  fontSize: 18, fontWeight: FontWeight.w600))),
                       Flexible(
                           child: Scrollbar(
                               controller: _scroll,
@@ -374,31 +380,35 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             if (isNew) ...[
-                                              DropdownButtonFormField<String>(
-                                                  key: const ValueKey(
-                                                      'service-device'),
-                                                  value: _deviceId,
-                                                  isExpanded: true,
-                                                  decoration:
-                                                      _decoration('提供服务的设备'),
-                                                  items: [
-                                                    for (final device
-                                                        in widget.devices)
-                                                      DropdownMenuItem(
-                                                          value: device.id,
-                                                          child: Text(
-                                                              homeDeskDeviceLabel(device.name),
-                                                              maxLines: 1,
-                                                              overflow:
-                                                                  TextOverflow
-                                                                      .ellipsis))
-                                                  ],
-                                                  onChanged: _busy
-                                                      ? null
-                                                      : (value) => _change(() =>
-                                                          _deviceId = value ??
-                                                              _deviceId)),
-                                              const SizedBox(height: 16),
+                                              HomeDeskFieldLabel('提供服务的设备',
+                                                  child: DropdownButtonFormField<
+                                                          String>(
+                                                      key: const ValueKey(
+                                                          'service-device'),
+                                                      value: _deviceId,
+                                                      isExpanded: true,
+                                                      decoration: _decoration(),
+                                                      items: [
+                                                        for (final device
+                                                            in widget.devices)
+                                                          DropdownMenuItem(
+                                                              value: device.id,
+                                                              child: Text(
+                                                                  homeDeskDeviceLabel(
+                                                                      device
+                                                                          .name),
+                                                                  maxLines: 1,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis))
+                                                      ],
+                                                      onChanged: _busy
+                                                          ? null
+                                                          : (value) => _change(
+                                                              () => _deviceId =
+                                                                  value ??
+                                                                      _deviceId))),
+                                              const SizedBox(height: 12),
                                             ],
                                             _pair(name, type),
                                             if (!isNew)
@@ -412,11 +422,11 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                                                           fontSize: 12,
                                                           color: colors
                                                               .onSurfaceVariant))),
-                                            const SizedBox(height: 16),
+                                            const SizedBox(height: 12),
                                             _pair(host, port, firstFlex: 3),
                                             Padding(
                                                 padding: const EdgeInsets.only(
-                                                    top: 8, bottom: 16),
+                                                    top: 8, bottom: 8),
                                                 child: Text(
                                                     '填写上方设备能访问的地址，例如本机 127.0.0.1 或 NAS 的内网 IP。',
                                                     style: TextStyle(
@@ -425,76 +435,84 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                                                             .onSurfaceVariant))),
                                             if (_proxyType == 'http')
                                               _pair(
-                                                  DropdownButtonFormField<
-                                                          String>(
-                                                      key: const ValueKey(
-                                                          'service-local-scheme'),
-                                                      value: _scheme,
-                                                      isExpanded: true,
-                                                      decoration: _decoration(
-                                                          '设备上的服务协议'),
-                                                      items: const [
-                                                        DropdownMenuItem(
-                                                            value: 'http',
-                                                            child:
-                                                                Text('HTTP')),
-                                                        DropdownMenuItem(
-                                                            value: 'https',
-                                                            child:
-                                                                Text('HTTPS')),
-                                                      ],
-                                                      onChanged: _busy
-                                                          ? null
-                                                          : (value) => _change(
-                                                              () => _scheme =
-                                                                  value ??
-                                                                      _scheme)),
-                                                  TextFormField(
-                                                      key: const ValueKey(
-                                                          'service-subdomain'),
-                                                      controller: _subdomain,
-                                                      enabled: !_busy,
-                                                      autocorrect: false,
-                                                      validator:
-                                                          _subdomainError,
-                                                      decoration: _decoration(
-                                                          '公网访问名称',
-                                                          hint: '例如 album',
-                                                          helper:
-                                                              '保存前会检查名称是否可用。')),
+                                                  HomeDeskFieldLabel('设备上的服务协议',
+                                                      child: DropdownButtonFormField<
+                                                              String>(
+                                                          key: const ValueKey(
+                                                              'service-local-scheme'),
+                                                          value: _scheme,
+                                                          isExpanded: true,
+                                                          decoration:
+                                                              _decoration(),
+                                                          items: const [
+                                                            DropdownMenuItem(
+                                                                value: 'http',
+                                                                child: Text(
+                                                                    'HTTP')),
+                                                            DropdownMenuItem(
+                                                                value: 'https',
+                                                                child: Text(
+                                                                    'HTTPS')),
+                                                          ],
+                                                          onChanged: _busy
+                                                              ? null
+                                                              : (value) => _change(
+                                                                  () => _scheme =
+                                                                      value ??
+                                                                          _scheme))),
+                                                  HomeDeskFieldLabel('公网访问名称',
+                                                      child: TextFormField(
+                                                          key: const ValueKey(
+                                                              'service-subdomain'),
+                                                          controller:
+                                                              _subdomain,
+                                                          enabled: !_busy,
+                                                          autocorrect: false,
+                                                          validator:
+                                                              _subdomainError,
+                                                          decoration: _decoration(
+                                                              hint: '例如 album',
+                                                              helper:
+                                                                  '保存前会检查名称是否可用。'))),
                                                   secondFlex: 2)
                                             else ...[
                                               if (_proxyType == 'tcp') ...[
-                                                DropdownButtonFormField<String>(
-                                                    key: const ValueKey(
-                                                        'service-application'),
-                                                    value:
-                                                        _applicationProtocol ??
-                                                            '',
-                                                    isExpanded: true,
-                                                    decoration:
-                                                        _decoration('应用类型'),
-                                                    items: const [
-                                                      DropdownMenuItem(
-                                                          value: '',
-                                                          child: Text('未指定')),
-                                                      DropdownMenuItem(
-                                                          value: 'ssh',
-                                                          child: Text('SSH')),
-                                                      DropdownMenuItem(
-                                                          value: 'rdp',
-                                                          child: Text('RDP')),
-                                                      DropdownMenuItem(
-                                                          value: 'rtsp',
-                                                          child: Text('RTSP')),
-                                                    ],
-                                                    onChanged: _busy
-                                                        ? null
-                                                        : (value) => _change(() =>
-                                                            _applicationProtocol =
-                                                                value == ''
-                                                                    ? null
-                                                                    : value)),
+                                                HomeDeskFieldLabel('应用类型',
+                                                    child: DropdownButtonFormField<
+                                                            String>(
+                                                        key: const ValueKey(
+                                                            'service-application'),
+                                                        value:
+                                                            _applicationProtocol ??
+                                                                '',
+                                                        isExpanded: true,
+                                                        decoration:
+                                                            _decoration(),
+                                                        items: const [
+                                                          DropdownMenuItem(
+                                                              value: '',
+                                                              child:
+                                                                  Text('未指定')),
+                                                          DropdownMenuItem(
+                                                              value: 'ssh',
+                                                              child:
+                                                                  Text('SSH')),
+                                                          DropdownMenuItem(
+                                                              value: 'rdp',
+                                                              child:
+                                                                  Text('RDP')),
+                                                          DropdownMenuItem(
+                                                              value: 'rtsp',
+                                                              child:
+                                                                  Text('RTSP')),
+                                                        ],
+                                                        onChanged: _busy
+                                                            ? null
+                                                            : (value) => _change(() =>
+                                                                _applicationProtocol =
+                                                                    value == ''
+                                                                        ? null
+                                                                        : value))),
                                                 const SizedBox(height: 12),
                                               ],
                                               Text(
@@ -744,24 +762,25 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
                             const SizedBox(height: 8),
                             const Text('设备名称由该设备上的 home-tunnel 客户端修改。',
                                 style: TextStyle(fontSize: 12)),
-                            const SizedBox(height: 16),
-                            TextFormField(
-                                key: const ValueKey('device-tags'),
-                                controller: _tags,
-                                enabled: !_busy,
-                                decoration: const InputDecoration(
-                                    labelText: '标签', helperText: '多个标签用逗号分隔。'),
-                                validator: (_) {
-                                  final tags = _draft.tags;
-                                  if (tags.length > 12 ||
-                                      tags.any((tag) =>
-                                          tag.length > 32 ||
-                                          RegExp(r'[\x00-\x1f\x7f]')
-                                              .hasMatch(tag))) {
-                                    return '最多 12 个标签，每个最多 32 个字符。';
-                                  }
-                                  return null;
-                                }),
+                            const SizedBox(height: 12),
+                            HomeDeskFieldLabel('标签',
+                                child: TextFormField(
+                                    key: const ValueKey('device-tags'),
+                                    controller: _tags,
+                                    enabled: !_busy,
+                                    decoration: const InputDecoration(
+                                        helperText: '多个标签用逗号分隔。'),
+                                    validator: (_) {
+                                      final tags = _draft.tags;
+                                      if (tags.length > 12 ||
+                                          tags.any((tag) =>
+                                              tag.length > 32 ||
+                                              RegExp(r'[\x00-\x1f\x7f]')
+                                                  .hasMatch(tag))) {
+                                        return '最多 12 个标签，每个最多 32 个字符。';
+                                      }
+                                      return null;
+                                    })),
                             CheckboxListTile(
                                 key: const ValueKey('device-favorite'),
                                 contentPadding: EdgeInsets.zero,

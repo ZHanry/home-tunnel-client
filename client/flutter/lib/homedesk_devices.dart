@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'common.dart';
 import 'homedesk_console_api.dart';
 import 'models/platform_model.dart';
+import 'homedesk_theme.dart';
+import 'homedesk_navigation.dart';
 
 class HomeDeskDevices extends StatefulWidget {
   final HomeDeskConsoleApi? api;
@@ -187,74 +189,75 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final t = HomeDeskTokens.of(context);
     final rooms = _devices.map(_roomOf).toSet().toList()..sort();
     final room = rooms.contains(_room) ? _room : '全部';
     final visible =
         _devices.where((d) => room == '全部' || _roomOf(d) == room).toList();
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Expanded(
-            child: Text(
-                '${_devices.length} 台设备 · ${_devices.where((d) => d['online'] == true).length} 台在线',
-                style:
-                    TextStyle(fontSize: 13, color: colors.onSurfaceVariant))),
-        IconButton(
-            tooltip: '刷新设备',
-            onPressed: _isConsoleAllowed ? _refresh : null,
-            icon: const Icon(Icons.refresh_rounded, size: 20)),
-      ]),
-      if (rooms.isNotEmpty)
-        Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: ['全部', ...rooms]
-                    .map(
-                      (value) => ChoiceChip(
+    final actions = HomeDeskHomeActions.of(context);
+    return LayoutBuilder(builder: (context, c) {
+      final scale = MediaQuery.textScalerOf(context).scale(1);
+      final columns = scale > 1.4
+          ? 1
+          : ((c.maxWidth + HomeDeskTokens.gap) /
+                  (HomeDeskTokens.minDeviceWidth + HomeDeskTokens.gap))
+              .floor()
+              .clamp(1, 4);
+      final width = (c.maxWidth - HomeDeskTokens.gap * (columns - 1)) / columns;
+      final stacked = width < 280 || scale > 1.4;
+      final height =
+          248 + (scale - 1).clamp(0.0, 3.0) * 200 + (stacked ? 52 : 0);
+      return SingleChildScrollView(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (actions != null) ...[actions.status(context)],
+        Row(children: [
+          Expanded(
+              child: Text(
+                  '我的设备 · ${_devices.length} 台 · ${_devices.where((d) => d['online'] == true).length} 台在线',
+                  style: t.sectionStyle)),
+          IconButton(
+              tooltip: '刷新设备',
+              onPressed: _isConsoleAllowed ? _refresh : null,
+              icon: const Icon(Icons.refresh_rounded, size: 20))
+        ]),
+        if (rooms.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: ['全部', ...rooms]
+                      .map((value) => ChoiceChip(
                           label: ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 140),
                               child: Text(value,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis)),
                           selected: room == value,
-                          onSelected: (_) => setState(() => _room = value)),
-                    )
-                    .toList())),
-      if (_message.isNotEmpty && _devices.isNotEmpty)
-        Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(_message,
-                style:
-                    TextStyle(color: colors.onSurfaceVariant, fontSize: 13))),
-      Expanded(
-          child: _devices.isEmpty
-              ? _empty(context)
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final scale = MediaQuery.textScalerOf(context).scale(1);
-                    final columns = scale > 1.4
-                        ? 1
-                        : (constraints.maxWidth / 300).floor().clamp(1, 3);
-                    final tileWidth =
-                        (constraints.maxWidth - 16 * (columns - 1)) / columns;
-                    final stacked = tileWidth < 280;
-                    return GridView.builder(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: columns,
-                            crossAxisSpacing: 16,
-                            mainAxisSpacing: 16,
-                            mainAxisExtent: 260 +
-                                (scale > 1 ? scale - 1 : 0) * 130 +
-                                (stacked ? 52 : 0)),
-                        itemCount: visible.length,
-                        itemBuilder: (_, index) =>
-                            _card(context, visible[index], stacked));
-                  },
-                )),
-    ]);
+                          onSelected: (_) => setState(() => _room = value)))
+                      .toList())),
+        if (_message.isNotEmpty && _devices.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(_message, style: t.auxiliaryStyle)),
+        if (_devices.isEmpty)
+          _empty(context)
+        else
+          Wrap(
+              spacing: HomeDeskTokens.gap,
+              runSpacing: HomeDeskTokens.gap,
+              children: [
+                for (final d in visible)
+                  SizedBox(
+                      width: width,
+                      height: height,
+                      child: _card(context, d, stacked))
+              ]),
+        const HomeDeskHomePanels(),
+        const SizedBox(height: 20),
+      ]));
+    });
   }
 
   String _roomOf(Map<String, dynamic> d) {
@@ -302,12 +305,17 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
               height: 72,
               decoration: BoxDecoration(
                   color: colors.primaryContainer,
-                  borderRadius: BorderRadius.circular(24)),
+                  borderRadius:
+                      BorderRadius.circular(HomeDeskTokens.cardRadius)),
               child: Icon(Icons.devices_rounded,
                   size: 36, color: colors.onPrimaryContainer)),
           const SizedBox(height: 24),
-          Text(_loading ? '正在查找家庭设备' : _readOption('homedesk-console-enabled') == 'N'
-              ? '家庭设备中心未启用' : '从连接第一台电脑开始',
+          Text(
+              _loading
+                  ? '正在查找家庭设备'
+                  : _readOption('homedesk-console-enabled') == 'N'
+                      ? '家庭设备中心未启用'
+                      : '从连接第一台电脑开始',
               textAlign: TextAlign.center,
               style:
                   const TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
@@ -333,11 +341,6 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
     final id = d['id'].toString();
     final online = d['online'] == true;
     final owner = d['owner']?.toString().trim() ?? '';
-    final statusColor = online
-        ? (colors.brightness == Brightness.dark
-            ? const Color(0xFF6DE2B6)
-            : const Color(0xFF127C60))
-        : colors.onSurfaceVariant;
     void open() {
       if (widget.onConnect != null) {
         widget.onConnect!(context, id);
@@ -353,7 +356,7 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
         child: Text(_waking.contains(id) ? '等待上线' : '远程开机'));
     return Card(
         child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(HomeDeskTokens.cardPadding),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -363,25 +366,24 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
                       height: 42,
                       decoration: BoxDecoration(
                           color: colors.primaryContainer.withOpacity(.55),
-                          borderRadius: BorderRadius.circular(13)),
+                          borderRadius: BorderRadius.circular(
+                              HomeDeskTokens.blockRadius)),
                       child: Icon(Icons.desktop_windows_rounded,
                           color: colors.primary, size: 23)),
                   const Spacer(),
-                  Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 9, vertical: 5),
-                      decoration: BoxDecoration(
-                          color: statusColor.withOpacity(.09),
-                          borderRadius: BorderRadius.circular(20)),
-                      child: Text(online ? '● 在线' : '○ 离线',
-                          style: TextStyle(color: statusColor, fontSize: 12))),
+                  HomeDeskBadge(online ? '在线' : '离线',
+                      tone:
+                          online ? HomeDeskTone.success : HomeDeskTone.neutral),
                 ]),
                 const SizedBox(height: 14),
                 Text(d['name']?.toString() ?? id,
+                    key: ValueKey('device-name-$id'),
+                    softWrap: false,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w600)),
+                        fontSize: HomeDeskTokens.sectionTitle,
+                        fontWeight: FontWeight.w600)),
                 const SizedBox(height: 7),
                 Text('${_roomOf(d)}${owner.isEmpty ? '' : ' · $owner'}',
                     maxLines: 1,
@@ -389,6 +391,11 @@ class _HomeDeskDevicesState extends State<HomeDeskDevices> {
                     style: TextStyle(
                         color: colors.onSurfaceVariant, fontSize: 13)),
                 const SizedBox(height: 7),
+                Text('设备 ID：$id',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: HomeDeskTokens.of(context).auxiliaryStyle),
+                const SizedBox(height: 4),
                 Text(_detailOf(d),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

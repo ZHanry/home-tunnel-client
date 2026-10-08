@@ -5,7 +5,7 @@ import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 
 import 'models/platform_model.dart';
-import 'common.dart' show appName; // HOMEDESK: 设置标题使用构建品牌。
+import 'homedesk_theme.dart';
 
 const _advancedModeKey = 'homedesk-advanced-mode';
 final RxBool homedeskAdvancedMode = false.obs;
@@ -192,36 +192,38 @@ Future<void> showHomeDeskNetworkSettings(BuildContext context,
               {String? hint}) =>
           Padding(
             padding: const EdgeInsets.only(top: 10),
-            child: TextField(
-              controller: controller,
-              enabled: !saving,
-              decoration: InputDecoration(labelText: label, hintText: hint),
-            ),
+            child: HomeDeskFieldLabel(label,
+                child: TextField(
+                  controller: controller,
+                  enabled: !saving,
+                  decoration: InputDecoration(hintText: hint),
+                )),
           );
       return AlertDialog(
-        title: Text('$appName 网络模式'), // HOMEDESK: 不保留旧显示品牌。
+        title: const Text('网络模式'), // HOMEDESK: 标题描述当前操作，品牌由外壳展示。
         content: SizedBox(
           width: 560,
           child: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              DropdownButtonFormField<String>(
-                value: mode,
-                decoration: const InputDecoration(labelText: '模式'),
-                items: const [
-                  DropdownMenuItem(value: 'lan_only', child: Text('纯内网')),
-                  DropdownMenuItem(value: 'self_hosted', child: Text('自建公网')),
-                ],
-                onChanged: saving
-                    ? null
-                    : (value) {
-                        if (value == null || value == mode) return;
-                        setState(() {
-                          mode = value;
-                          loadProfile(value);
-                          error = '';
-                        });
-                      },
-              ),
+              HomeDeskFieldLabel('模式',
+                  child: DropdownButtonFormField<String>(
+                    value: mode,
+                    items: const [
+                      DropdownMenuItem(value: 'lan_only', child: Text('纯内网')),
+                      DropdownMenuItem(
+                          value: 'self_hosted', child: Text('自建公网')),
+                    ],
+                    onChanged: saving
+                        ? null
+                        : (value) {
+                            if (value == null || value == mode) return;
+                            setState(() {
+                              mode = value;
+                              loadProfile(value);
+                              error = '';
+                            });
+                          },
+                  )),
               field('ID 服务器', server,
                   hint: mode == 'lan_only'
                       ? '192.168.50.10:21116'
@@ -241,8 +243,9 @@ Future<void> showHomeDeskNetworkSettings(BuildContext context,
               if (error.isNotEmpty)
                 Padding(
                     padding: const EdgeInsets.only(top: 10),
-                    child:
-                        Text(error, style: const TextStyle(color: Colors.red))),
+                    child: Text(error,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error))),
               if (saving)
                 const Padding(
                     padding: EdgeInsets.only(top: 12),

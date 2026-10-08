@@ -15,6 +15,7 @@ import 'package:flutter_hbb/homedesk_family_devices.dart'; // HOMEDESK: 同账�
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
+import 'package:flutter_hbb/homedesk_recent.dart'; // HOMEDESK: 独立最近连接表现层。
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
@@ -77,7 +78,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         onConnect: (id) => connect(context, id),
         readOption: (key) => bind.mainGetLocalOption(key: key), // HOMEDESK: 只读取公开状态和配置指纹。
         lanBuilder: (_) => HomeDeskDevices(onManualConnect: () => _dashboardKey.currentState?.showManualConnection())), // HOMEDESK: 公网账号设备自动显示，内网目录保留受控入口。
-      recentBuilder: (_) => const ConnectionPage(),
+      recentBuilder: (_) => const HomeDeskRecent(), // HOMEDESK: 读取上游最近、收藏和局域网数据。
       servicesBuilder: (_) => HomeDeskServices(account: _account, onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network)), // HOMEDESK: 登录状态共享，许可仍固定到当前配置。
       initializeAccount: true, // HOMEDESK: 只恢复已批准地址下明确保存的登录。
       localBuilder: (dialogContext) => buildHomeDeskLocalInfo(dialogContext), // HOMEDESK: 不复用固定 200 像素侧栏。

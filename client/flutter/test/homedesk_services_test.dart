@@ -425,19 +425,21 @@ void main() {
     expect(api.logins, 1);
     expect(find.text('家庭 NAS'), findsWidgets);
     expect(find.text('家庭相册'), findsOneWidget);
-    expect(find.text('设备心跳在线'), findsOneWidget);
-    await tester.ensureVisible(find.text('打开服务'));
+    expect(find.text('● 设备心跳在线'), findsOneWidget);
+    await tester.ensureVisible(find.text('打开'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('打开服务'));
+    await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('复制访问地址'));
+    await tester.ensureVisible(find.text('复制地址'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('复制访问地址'));
+    await tester.tap(find.text('复制地址'));
     await tester.pumpAndSettle();
     expect(opened.single.toString(), 'https://album.example.com');
     expect(copied.single, 'edge.example.com:10000');
-    await tester
-        .ensureVisible(find.byKey(const ValueKey('tunnel-account-menu')));
+    await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('tunnel-account-menu')), -180,
+        scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('打开管理台'));
@@ -541,7 +543,7 @@ void main() {
     expect(find.text('添加服务'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('还没有发布服务'), 160,
         scrollable: find.byType(Scrollable).first);
-    expect(find.text('设备心跳在线'), findsOneWidget);
+    expect(find.text('● 设备心跳在线'), findsOneWidget);
     expect(find.text('隧道设备已连接'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -563,7 +565,7 @@ void main() {
         )));
     expect(tester.takeException(), isNull);
     await enterCredentials(tester);
-    await tester.scrollUntilVisible(find.text('复制访问地址'), 180,
+    await tester.scrollUntilVisible(find.text('复制地址'), 180,
         scrollable: find.byType(Scrollable).last);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -603,7 +605,7 @@ void main() {
   });
 
   testWidgets('许可代次变化后的首次旧按钮点击不会打开或复制旧地址', (tester) async {
-    for (final action in ['打开服务', '复制访问地址']) {
+    for (final action in ['打开', '复制地址']) {
       var permission = 'permit-before';
       final api = PortalFixtureApi();
       var opened = 0;
@@ -682,6 +684,7 @@ void main() {
     await enterCredentials(tester);
     await tester
         .ensureVisible(find.byKey(const ValueKey('edit-service-fixture-web')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('edit-service-fixture-web')));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -714,6 +717,7 @@ void main() {
     await enterCredentials(tester);
     await tester
         .ensureVisible(find.byKey(const ValueKey('edit-service-fixture-web')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('edit-service-fixture-web')));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -808,6 +812,11 @@ void main() {
     final api = PortalFixtureApi();
     await tester.pumpWidget(portalHost(page: fixturePage(api)));
     await enterCredentials(tester);
+    final more = find.byKey(const ValueKey('more-service-fixture-web'));
+    await tester.ensureVisible(more);
+    await tester.pumpAndSettle();
+    await tester.tap(more);
+    await tester.pumpAndSettle();
     final toggle = find.byKey(const ValueKey('toggle-service-fixture-web'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
@@ -818,6 +827,10 @@ void main() {
             .firstWhere((item) => item.id == 'fixture-web')
             .enabled,
         isFalse);
+    await tester.ensureVisible(more);
+    await tester.pumpAndSettle();
+    await tester.tap(more);
+    await tester.pumpAndSettle();
     final delete = find.byKey(const ValueKey('delete-service-fixture-web'));
     await tester.ensureVisible(delete);
     await tester.tap(delete);
@@ -826,6 +839,8 @@ void main() {
     await tester.tap(find.text('取消').last);
     await tester.pumpAndSettle();
     expect(api.deletes, 0);
+    await tester.tap(more);
+    await tester.pumpAndSettle();
     await tester.tap(delete);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('confirm-delete-fixture-web')));
