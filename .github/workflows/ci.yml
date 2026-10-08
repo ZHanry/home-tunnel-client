@@ -47,16 +47,34 @@ jobs:
         vcpkgGitCommitId: 120deac3062162151622ca4860575a33844ba10b
         vcpkgJsonGlob: client/vcpkg.json
         doNotCache: false
-    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      id: native-deps
       with:
         path: |-
           D:/vcpkg/installed
           D:/vcpkg/buildtrees
           D:/vcpkg/downloads
-        key: homedesk-vcpkg-win2022-120deac-${{ hashFiles('client/vcpkg.json') }}
+        key: homedesk-vcpkg-win2022-static-host-120deac-${{ hashFiles('client/vcpkg.json') }}
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |-
+          ~/.cargo/bin
+          ~/.cargo/registry
+          ~/.cargo/git
+          client/target
+        key: homedesk-rust-win2022-1.96-${{ hashFiles('client/Cargo.lock') }}-${{ github.sha }}
+        restore-keys: homedesk-rust-win2022-1.96-${{ hashFiles('client/Cargo.lock') }}-
     - name: Prepare locked native toolchain
       shell: pwsh
       run: .\build\ci\setup-windows.ps1
+    - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      if: ${{ steps.native-deps.outputs.cache-hit != 'true' }}
+      with:
+        path: |-
+          D:/vcpkg/installed
+          D:/vcpkg/buildtrees
+          D:/vcpkg/downloads
+        key: ${{ steps.native-deps.outputs.cache-primary-key }}
     - name: Build native P2P client
       run: python build/ci/build-client.py --target win-x64 --config build/config.toml.example
     - name: Analyze and test the current Flutter product
@@ -91,6 +109,7 @@ jobs:
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: homedesk-windows
+        include-hidden-files: true
         path: |-
           products/*
           material-input/**
@@ -119,6 +138,7 @@ jobs:
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: homedesk-cli
+        include-hidden-files: true
         path: |-
           products/*
           material-input/**

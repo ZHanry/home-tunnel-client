@@ -13,6 +13,11 @@ cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --loc
 if ($LASTEXITCODE -ne 0) { throw 'FRB installation failed' }
 Push-Location client
 try {
-    & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static "--x-install-root=$env:VCPKG_ROOT/installed"
+    # FFmpeg is a host dependency in the upstream manifest. Rust links the
+    # static triplet, so host and target must use the same installation layout.
+    & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static --host-triplet x64-windows-static "--x-install-root=$env:VCPKG_ROOT/installed"
     if ($LASTEXITCODE -ne 0) { throw 'Native dependency build failed' }
+    if (!(Test-Path "$env:VCPKG_ROOT/installed/x64-windows-static/include/libavcodec/avcodec.h")) {
+        throw 'FFmpeg headers are missing from the static triplet'
+    }
 } finally { Pop-Location }

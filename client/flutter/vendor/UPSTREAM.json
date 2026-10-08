@@ -1,0 +1,57 @@
+[
+  {
+    "package": "external_path",
+    "origin_version": "1.0.3",
+    "original_pubspec_sha256": "0f3e0f9fda0a98fc601803e3a9ef199541fd4d07b81a3484496b86f22905a304",
+    "android_namespace": "com.pinciat.external_path",
+    "changes": [
+      "declare original namespace for AGP 8",
+      "remove deprecated manifest package attributes"
+    ],
+    "origin": "https://pub.dev/packages/external_path"
+  },
+  {
+    "package": "flutter_keyboard_visibility",
+    "origin_version": "5.4.1",
+    "original_pubspec_sha256": "7c8335f059dff65cb1f80a0728dbe306502b110cb4b8643cdf06ec5c79406dbb",
+    "android_namespace": "com.jrai.flutter_keyboard_visibility",
+    "changes": [
+      "declare original namespace for AGP 8",
+      "remove deprecated manifest package attributes"
+    ],
+    "origin": "https://pub.dev/packages/flutter_keyboard_visibility"
+  },
+  {
+    "package": "qr_code_scanner",
+    "origin_version": "1.0.1",
+    "original_pubspec_sha256": "7d865e42bf56f52d6e0960c8b63d05ea3af808c79c9ed16ca7e92d2d71db4c22",
+    "android_namespace": "net.touchcapture.qr.flutterqr",
+    "changes": [
+      "declare original namespace for AGP 8",
+      "remove deprecated manifest package attributes"
+    ],
+    "origin": "https://pub.dev/packages/qr_code_scanner"
+  },
+  {
+    "package": "sqflite",
+    "origin_version": "2.2.0",
+    "original_pubspec_sha256": "2eea78a757c256e4f85731776012b3d45fd6d18a0c29dede49640659dd156145",
+    "android_namespace": "com.tekartik.sqflite",
+    "changes": [
+      "declare original namespace for AGP 8",
+      "remove deprecated manifest package attributes"
+    ],
+    "origin": "https://pub.dev/packages/sqflite"
+  },
+  {
+    "package": "uni_links",
+    "origin_version": "0.5.1",
+    "original_pubspec_sha256": "8457013ddc96e569b6531780ef78bbad89df49c5714e3ca53f1ea68965450c6a",
+    "android_namespace": "name.avioli.unilinks",
+    "changes": [
+      "declare original namespace for AGP 8",
+      "remove deprecated manifest package attributes"
+    ],
+    "origin": "https://github.com/rustdesk-org/uni_links/tree/f416118d843a7e9ed117c7bb7bdc2deda5a9e86f/uni_links"
+  }
+]
