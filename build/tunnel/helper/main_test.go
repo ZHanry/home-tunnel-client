@@ -1,3 +1,5 @@
+//go:build windows
+
 // HOMEDESK: 覆盖实际公共配置形状、服务器边界与单次登记发送状态。
 package main
 

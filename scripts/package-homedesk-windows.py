@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 
@@ -20,6 +21,15 @@ payload = ROOT / 'outputs/windows-payload'
 if payload.exists():
     raise SystemExit('Use a fresh staging directory')
 shutil.copytree(ROOT / 'client/flutter/build/windows/x64/runner/Release', payload)
+# HOMEDESK: Flutter/plugins use the Microsoft runtime on clean Windows machines.
+installer = Path(os.environ.get('ProgramFiles(x86)', 'C:/Program Files (x86)')) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+location = subprocess.check_output([str(installer), '-latest', '-products', '*', '-property', 'installationPath'], text=True).strip()
+redist = sorted((Path(location)/'VC/Redist/MSVC').glob('*/x64/Microsoft.VC143.CRT'))
+if not redist:
+    raise SystemExit('Missing licensed Microsoft Visual C++ redistributable runtime')
+for library in redist[-1].glob('*.dll'):
+    shutil.copy2(library, payload/library.name)
+(payload/'VCRUNTIME-NOTICES.txt').write_text('Microsoft Visual C++ Runtime redistributables from the installed Visual Studio 2022 toolchain. Copyright Microsoft Corporation. Redistributed with this C++ application under the Visual Studio license. https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files\n')
 for name in ('home-tunnel-agent.exe', 'homedesk-tunnel-helper.exe', 'runtime.json', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt'):
     shutil.copy2(runtime / name, payload / name)
 for name in ('LICENSE', 'LICENSE-RUSTDESK', 'README.md'):

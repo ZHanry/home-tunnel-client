@@ -47,6 +47,13 @@ jobs:
         vcpkgGitCommitId: 120deac3062162151622ca4860575a33844ba10b
         vcpkgJsonGlob: client/vcpkg.json
         doNotCache: false
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |-
+          D:/vcpkg/installed
+          D:/vcpkg/buildtrees
+          D:/vcpkg/downloads
+        key: homedesk-vcpkg-win2022-120deac-${{ hashFiles('client/vcpkg.json') }}
     - name: Prepare locked native toolchain
       shell: pwsh
       run: .\build\ci\setup-windows.ps1

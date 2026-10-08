@@ -1,3 +1,5 @@
+//go:build windows
+
 // HOMEDESK: 成功同步后的设备会话上报自己的远控 ID，不传递管理账号凭据。
 package main
 

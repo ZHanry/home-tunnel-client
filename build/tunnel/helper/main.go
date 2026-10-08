@@ -1,3 +1,5 @@
+//go:build windows
+
 // HOMEDESK: 仅供同目录 HomeDesk 父进程调用的受管隧道助手；不启动上游 GUI 或远控。
 package main
 

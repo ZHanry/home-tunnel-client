@@ -17,7 +17,7 @@
   "previous_immutable_tag": "api-v1.4.0",
   "tested_combination_scope": "Historical 10.0.0 record retained; not an acceptance claim for HomeDesk 11.x.",
   "target_combination": {
-    "server": "11.0.0-rc.1",
+    "server": "11.0.0-rc.2",
     "client": "11.0.0-rc.1",
     "android": "11.0.0-rc.1",
     "agent": "10.1.0"
