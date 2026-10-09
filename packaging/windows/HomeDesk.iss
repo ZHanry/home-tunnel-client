@@ -56,7 +56,7 @@ Type: files; Name: "{app}\home_tunnel_remote_host.exe"
 Type: files; Name: "{app}\home_tunnel_remote_host.dll"
 
 [Registry]
-Root: HKA; Subkey: "Software\Classes\homedesk"; ValueType: string; ValueData: "URL:HomeDesk"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\homedesk"; ValueType: string; ValueData: "URL:nestlink"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\homedesk"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\homedesk\shell\open\command"; ValueType: string; ValueData: """{app}\homedesk.exe"" ""%1"""
 
@@ -115,8 +115,8 @@ begin
      not UpgradeTargetAvailable('home-tunnel-service.exe') then
   begin
     if ActiveLanguage = 'chinesesimplified' then
-      Result := '请先从界面或托盘退出 Home Tunnel/HomeDesk，等待此安装目录的后台进程结束后重试。旧系统服务若仍运行，请以管理员身份停止；若文件仍不可写，请检查目录权限。账号及隧道配置会保留。'
+      Result := '请先从界面或托盘退出 nestlink，等待此安装目录的后台进程结束后重试。旧系统服务若仍运行，请以管理员身份停止；若文件仍不可写，请检查目录权限。账号及隧道配置会保留。'
     else
-      Result := 'Exit Home Tunnel/HomeDesk from its window or tray and wait for background processes in this installation folder to finish. If the legacy service is still running, stop it as administrator, then retry. Check folder permissions if files remain unavailable. Existing account and tunnel data are preserved.';
+      Result := 'Exit nestlink from its window or tray and wait for background processes in this installation folder to finish. If the legacy service is still running, stop it as administrator, then retry. Check folder permissions if files remain unavailable. Existing account and tunnel data are preserved.';
   end;
 end;

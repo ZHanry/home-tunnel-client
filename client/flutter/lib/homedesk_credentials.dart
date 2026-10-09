@@ -246,7 +246,7 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
     if (Platform.isLinux) {
       if (encrypt) {
         final id = _newGeneration();
-        await _secretTool(['store', '--label=NestLink account', 'application', 'HomeDesk', 'portal-record', id], secret: base64Encode(bytes));
+        await _secretTool(['store', '--label=nestlink account', 'application', 'HomeDesk', 'portal-record', id], secret: base64Encode(bytes));
         return Uint8List.fromList(ascii.encode('nlss:$id'));
       }
       final handle = ascii.decode(bytes);

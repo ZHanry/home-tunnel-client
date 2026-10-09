@@ -24,7 +24,7 @@ class HomeDeskPortalCredential {
           result.isEmpty ||
           result.length > max ||
           RegExp(r'[\x00-\x1f\x7f]').hasMatch(result)) {
-        throw const FormatException('保存的 HomeTunnel 会话格式无效');
+        throw const FormatException('保存的 nestlink 会话格式无效');
       }
       return result;
     }
@@ -48,7 +48,7 @@ class HomeDeskPortalCredential {
         !RegExp(r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
             .hasMatch(userId) ||
         !RegExp(r'^[a-zA-Z0-9_-]{16,1024}$').hasMatch(refresh)) {
-      throw const FormatException('保存的 HomeTunnel 会话格式无效');
+      throw const FormatException('保存的 nestlink 会话格式无效');
     }
     return HomeDeskPortalCredential(
         origin: origin,
