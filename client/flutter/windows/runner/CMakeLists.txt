@@ -24,6 +24,8 @@ target_compile_options(${BINARY_NAME} PRIVATE /utf-8) # HOMEDESK: 中文注释�
 
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
+string(REGEX REPLACE "\\+.*$" "" HOMEDESK_PRODUCT_VERSION "${FLUTTER_VERSION}")
+target_compile_definitions(${BINARY_NAME} PRIVATE "HOMEDESK_PRODUCT_VERSION=\"${HOMEDESK_PRODUCT_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MINOR=${FLUTTER_VERSION_MINOR}")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_PATCH=${FLUTTER_VERSION_PATCH}")

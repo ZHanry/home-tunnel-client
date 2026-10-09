@@ -24,7 +24,7 @@ $urlCommand = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Classes\homedesk\sh
 if ($urlCommand -ne ('"' + (Join-Path $destination 'homedesk.exe') + '" "%1"')) { throw 'URL handler does not target this installation' }
 $guiPath = Join-Path $destination 'homedesk.exe'
 $versionInfo = (Get-Item -LiteralPath $guiPath).VersionInfo
-if ($versionInfo.ProductVersion -ne $build.version -or $versionInfo.FileVersion -ne $build.version) { throw 'Installed GUI version mismatch' }
+if ($versionInfo.ProductVersion -ne $build.version -or $versionInfo.FileVersion -ne $build.version) { throw "Installed GUI version mismatch: product=$($versionInfo.ProductVersion), file=$($versionInfo.FileVersion), expected=$($build.version)" }
 if (Test-Path -LiteralPath (Join-Path $destination 'home-tunnel-client.exe')) { throw 'Retired standalone CLI must not ship' }
 $gui = Start-Process -FilePath $guiPath -WorkingDirectory $destination -WindowStyle Hidden -PassThru
 try {
