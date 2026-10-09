@@ -17,7 +17,7 @@ def valid_contract_ref(value):
 root = Path(__file__).resolve().parents[1]
 compat = json.loads((root / "compatibility.json").read_text(encoding="utf-8"))
 component = compat["component"]
-assert compat["api_major"] == 1
+assert compat["api_major"] == 2
 assert compat["stage"] in ("internal-testing", "public-release")
 for directory in ("linux-client", "windows-agent", "android-client"):
     assert not (root / directory).exists(), f"Legacy component directory: {directory}"
@@ -31,13 +31,13 @@ if component == "server":
 else:
     lock = json.loads((root / "contracts/lock.json").read_text())
     assert lock['ref'] == compat['contract_ref']
-    required = {'contracts/home-tunnel.v1.json','contracts/openapi.v1.json','contracts/api.schema.json'}
+    required = {'contracts/home-tunnel.v1.json','contracts/openapi.v1.json','contracts/api.schema.json','contracts/home-tunnel.v2.json','contracts/openapi.v2.json','contracts/api.v2.schema.json','contracts/nestlink-auth.v2-vectors.json'}
     assert len(lock['files']) == len(required) and {item['path'] for item in lock['files']} == required
     for item in lock['files']:
         name, checksum = item['path'], item['sha256']
         assert re.fullmatch(r'[a-f0-9]{64}', checksum)
         assert hashlib.sha256((root/name).read_bytes()).hexdigest() == checksum, f'Contract drift: {name}'
-    specification = json.loads((root/'contracts/openapi.v1.json').read_text(encoding='utf-8'))
+    specification = json.loads((root/'contracts/openapi.v2.json').read_text(encoding='utf-8'))
     assert specification['x-contract-ref'] == lock['ref']
     assert specification['components']['schemas']['BatchInput']['properties']['items']['maxItems'] == 50
     assert '/api/v1/public/capabilities' in specification['paths']
@@ -77,7 +77,7 @@ else:
         assert (root / "tests/browser/desktop.spec.mjs").exists()
         version = re.search(r'const Version = "([^"]+)"', (root / "internal/model/model.go").read_text(encoding="utf-8")).group(1)
         assert compat['version'] == version, 'Product metadata version drift'
-        if version.startswith('11.'):
+        if version.startswith(('11.', '12.')):
             assert f'version = "{version}"' in (root/'client/Cargo.toml').read_text()
             assert f'version: {version}+' in (root/'client/flutter/pubspec.yaml').read_text()
         assert f'HOST_VERSION = "{version}"' in (root / "native/remote/generated/host_version.hpp").read_text(), "Native host version drift"
@@ -99,4 +99,4 @@ for name in filter(None, files):
     assert "github.com/ZHanry/home-tunnel/linux-client" not in text, f"Old Go module import in {name}"
     if ".github/workflows/" in name or name.startswith("packaging/"):
         assert not re.search(r"(?:linux-client|windows-agent|android-client)[/\\]", text), f"Sibling source dependency in {name}"
-print(f"{component}: repository boundaries, local versions and API v1 fixture verified")
+print(f"{component}: repository boundaries, local versions and API v2 and immutable v1 fixtures verified")

@@ -31,14 +31,16 @@ for library in redist[-1].glob('*.dll'):
     shutil.copy2(library, payload/library.name)
 (payload/'VCRUNTIME-NOTICES.txt').write_text('Microsoft Visual C++ Runtime redistributables from the installed Visual Studio 2022 toolchain. Copyright Microsoft Corporation. Redistributed with this C++ application under the Visual Studio license. https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files\n')
 for name in ('home-tunnel-agent.exe', 'homedesk-tunnel-helper.exe', 'runtime.json', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt'):
-    shutil.copy2(runtime / name, payload / name)
+    (payload / 'tunnel-runtime').mkdir(exist_ok=True)
+    shutil.copy2(runtime / name, payload / 'tunnel-runtime' / name)
 for name in ('LICENSE', 'LICENSE-RUSTDESK', 'README.md'):
     shutil.copy2(ROOT / name, payload / name)
 shutil.copy2(ROOT / 'client/res/icon.ico', payload / 'HomeDesk.ico')
 shutil.copy2(ROOT / 'packaging/windows/independent-tunnel.ps1', payload)
+shutil.copy2(runtime / 'home-tunnel-agent.exe', payload / 'home-tunnel-agent.exe')
 agent_sha = manifest['agent_sha256']
 subprocess.run(['go', 'build', '-mod=readonly', '-trimpath', '-ldflags',
-    '-s -w -X main.agentVersion=10.1.0 -X main.expectedAgentSHA256=' + agent_sha,
+    '-s -w -X main.expectedAgentSHA256=' + agent_sha,
     '-o', str(payload / 'home-tunnel-client.exe'), './cmd/home-tunnel-client'], cwd=ROOT, check=True)
 products = ROOT / 'products'
 products.mkdir(exist_ok=True)
@@ -47,10 +49,10 @@ subprocess.run([args.iscc, '/DAppVersion=' + version, '/DSourceDir=' + str(paylo
 evidence = ROOT / 'material-input'
 evidence.mkdir(exist_ok=True)
 build = {'revision': revision, 'version': version, 'architecture': 'windows-x64',
-         'engine_origin_version': '1.4.9', 'agent_version': '10.1.0',
+         'engine_origin_version': '1.4.9', 'agent_version': version,
          'policy': 'require_direct', 'authenticode': 'unsigned',
          'payload_sha256': {p.relative_to(payload).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                             for p in payload.rglob('*') if p.is_file()}}
 (evidence / 'windows-build.json').write_text(json.dumps(build, indent=2) + '\n')
 shutil.copy2(runtime / 'runtime.json', evidence)
-print(json.dumps({'installer': f'HomeDesk-Setup-{version}-x64.exe', 'revision': revision}))
+print(json.dumps({'installer': f'NestLink-Setup-{version}-x64.exe', 'revision': revision}))

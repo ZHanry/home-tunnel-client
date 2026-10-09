@@ -1,7 +1,7 @@
 # Official generic builds contain no server, key or embedded credentials.
-# Configure your own hbbs address/key and family CIDR in the app after installation.
+# Sign in to your self-hosted service; signal configuration is retrieved after authentication.
 [brand]
-app_name = "HomeDesk"
+app_name = "NestLink"
 executable_name = "homedesk"
 package_name = "homedesk"
 config_namespace = "HomeDesk"

@@ -35,20 +35,20 @@ def build_environment():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--target',required=True,choices=['win-x64','linux-x64','linux-arm64'])
+    parser.add_argument('--target',required=True,choices=['win-x64','mac-x64','mac-arm64','linux-x64','linux-arm64'])
     parser.add_argument('--config',type=Path,default=ROOT/'build/config.toml')
     parser.add_argument('--check',action='store_true',help='仅检查，不构建')
     args=parser.parse_args()
     machine=platform.machine().lower()
-    if platform.system() not in ('Windows','Linux') or machine not in ('x86_64','amd64','aarch64','arm64'):
+    if platform.system() not in ('Windows','Linux','Darwin') or machine not in ('x86_64','amd64','aarch64','arm64'):
         raise SystemExit('此入口仅支持 Windows/Linux 的 x64 与 ARM64 构建环境')
-    actual=('win-' if platform.system()=='Windows' else 'linux-')+('arm64' if machine in ('aarch64','arm64') else 'x64')
+    actual={'Windows':'win-', 'Linux':'linux-', 'Darwin':'mac-'}[platform.system()]+('arm64' if machine in ('aarch64','arm64') else 'x64')
     if args.target!=actual: raise SystemExit(f'需要 {args.target} 原生构建机；当前为 {actual}，不会伪装目标架构')
     config=load_config(args.config.resolve())
     env=build_environment()
     sdk='flutter-elinux' if args.target=='linux-arm64' else 'flutter'
     missing=[tool for tool in ['cargo','rustc','cmake',sdk,'flutter_rust_bridge_codegen','cargo-expand'] if not shutil.which(tool,path=env.get('PATH'))]
-    if platform.system()!='Windows': missing += [tool for tool in ['clang','pkg-config','ninja','dpkg-deb'] if not shutil.which(tool)]
+    if platform.system()=='Linux': missing += [tool for tool in ['clang','pkg-config','ninja','dpkg-deb'] if not shutil.which(tool)]
     vcpkg=Path(env.get('VCPKG_ROOT','__missing__'))
     if not (vcpkg/'installed').is_dir(): missing.append('VCPKG_ROOT 下的原生库')
     if missing: raise SystemExit('缺少构建前置项：'+', '.join(missing))
@@ -61,7 +61,10 @@ def main():
     if result.returncode and args.target=='win-x64' and 'requires symlink support' in result.stdout+result.stderr:
         shell=shutil.which('pwsh',path=env['PATH']) or 'powershell.exe'
         subprocess.run([shell,'-NoProfile','-File',str(ROOT/'build/ci/prepare-windows-plugins.ps1')],env=env,check=True)
-        result=subprocess.run(pub,cwd=ROOT/'client/flutter',env=env,capture_output=True,text=True,encoding='utf-8',errors='replace')
+        # pub already resolved the locked graph before its symlink post-step failed.
+        # Re-running it deletes the junctions we just prepared on restricted hosts.
+        if (ROOT/'client/flutter/.dart_tool/package_config.json').is_file() and (ROOT/'client/flutter/.flutter-plugins-dependencies').is_file():
+            result.returncode=0
     print(result.stdout)
     if result.returncode:print(result.stderr,file=sys.stderr);raise SystemExit(result.returncode)
     # 上游不提交生成式桥接文件；每次从当前接口重新生成，避免漏编或使用过期 ABI。
@@ -76,7 +79,8 @@ def main():
         subprocess.run([shell,'-NoProfile','-File',str(ROOT/'build/ci/prepare-windows-plugins.ps1')],env=env,check=True)
     command=[sys.executable,'build.py','--flutter']
     if args.target=='win-x64':command+=['--portable','--skip-portable-pack','--hwcodec']
-    else:command+=['--hwcodec','--unix-file-copy-paste']
+    elif args.target.startswith('linux'):command+=['--hwcodec','--unix-file-copy-paste']
+    else:command+=['--hwcodec']
     subprocess.run(command,cwd=ROOT/'client',env=env,check=True)
 
 if __name__=='__main__':main()

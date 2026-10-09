@@ -21,24 +21,28 @@ jobs:
       PYTHONUTF8: '1'
       FLUTTER_SUPPRESS_ANALYTICS: 'true'
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - &id001
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         submodules: recursive
         fetch-depth: 0
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - &id002
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
         go-version: 1.27.0
         cache-dependency-path: go.sum
-    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+    - &id003
+      uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
       with:
         toolchain: 1.96.0
         components: rustfmt
     - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
-      with:
+      with: &id004
         channel: stable
         flutter-version: 3.24.5
         cache: true
-    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+    - &id005
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
       with:
         python-version: '3.12'
     - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
@@ -97,8 +101,7 @@ jobs:
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force .downloads | Out-Null
-        Invoke-WebRequest -Uri https://github.com/ZHanry/home-tunnel-client/releases/download/v10.1.0/HomeTunnel-Windows-10.1.0-x64.zip -OutFile .downloads/agent.zip
-        python build/tunnel/build-runtime.py --package .downloads/agent.zip
+        python build/tunnel/build-runtime.py --target win-x64
         if ($LASTEXITCODE -ne 0) { throw 'Managed helper failed' }
         $compilerLines = .\packaging\windows\install-inno-setup.ps1
         $compiler = ($compilerLines | Where-Object { $_ -like 'ISCC=*' }) -replace '^ISCC=', ''
@@ -107,7 +110,7 @@ jobs:
         python scripts/package-homedesk-windows.py --iscc $compiler
         if ($LASTEXITCODE -ne 0) { throw 'Installer failed' }
         $version = (Get-Content -Raw compatibility.json | ConvertFrom-Json).version
-        ./packaging/windows/test-homedesk-installer.ps1 -Installer "products/HomeDesk-Setup-$version-x64.exe"
+        ./packaging/windows/test-homedesk-installer.ps1 -Installer "products/NestLink-Setup-$version-x64.exe"
     - name: Preserve corresponding source and native notices
       run: python scripts/collect-native-materials.py
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -120,7 +123,7 @@ jobs:
         if-no-files-found: error
         retention-days: 30
   cli:
-    name: Independent CLI and tunnel regression
+    name: Current-source CLI and independent tunnel regression
     runs-on: ubuntu-24.04
     env:
       CGO_ENABLED: '0'
@@ -182,6 +185,7 @@ jobs:
     - windows
     - cli
     - policy
+    - unix
     steps:
     - name: Require every current-product check
       env:
@@ -192,3 +196,63 @@ jobs:
         failed = {k:v['result'] for k,v in json.loads(os.environ['RESULTS']).items() if v['result'] != 'success'}
         if failed: raise SystemExit(str(failed))
         PY
+  unix:
+    name: GUI (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - target: mac-x64
+          runner: macos-15-intel
+        - target: mac-arm64
+          runner: macos-15
+        - target: linux-x64
+          runner: ubuntu-24.04
+        - target: linux-arm64
+          runner: ubuntu-24.04-arm
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      PYTHONUTF8: '1'
+    steps:
+    - *id001
+    - *id002
+    - *id003
+    - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+      with: *id004
+      if: matrix.target != 'linux-arm64'
+    - *id005
+    - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      with:
+        vcpkgDirectory: ${{ runner.temp }}/vcpkg
+        vcpkgGitCommitId: 120deac3062162151622ca4860575a33844ba10b
+        vcpkgJsonGlob: client/vcpkg.json
+        doNotCache: true
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |-
+          ~/.cargo/registry
+          ~/.cargo/git
+          client/target
+          ${{ runner.temp }}/vcpkg/installed
+          ${{ runner.temp }}/vcpkg/buildtrees
+          ${{ runner.temp }}/vcpkg/downloads
+        key: nestlink-native-${{ matrix.target }}-120deac-${{ hashFiles('client/Cargo.lock', 'client/vcpkg.json') }}
+    - name: Prepare pinned native toolchain
+      run: bash build/ci/setup-unix.sh "${{ matrix.target }}"
+    - name: Build shared GUI from current source
+      run: python3 build/ci/build-client.py --target "${{ matrix.target }}" --config build/config.toml.example
+    - name: Package current Agent and native GUI
+      run: |-
+        python3 scripts/package-nestlink-unix.py --target "${{ matrix.target }}"
+        python3 scripts/collect-native-materials.py
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: nestlink-${{ matrix.target }}
+        include-hidden-files: true
+        path: |-
+          products/*
+          material-input/**
+        if-no-files-found: error
+        retention-days: 30

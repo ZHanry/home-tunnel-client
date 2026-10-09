@@ -20,7 +20,7 @@ function Install-PinnedCargoTool([string]$Name, [string]$Version, [string[]]$Ext
     cargo install $Name --version $Version --locked --force @ExtraArguments
     if ($LASTEXITCODE -ne 0) { throw "$Name installation failed" }
 }
-Install-PinnedCargoTool 'cargo-expand' '1.0.95'
+Install-PinnedCargoTool 'cargo-expand' '1.0.118'
 Install-PinnedCargoTool 'flutter_rust_bridge_codegen' '1.80.1' @('--features', 'uuid')
 Push-Location client
 try {

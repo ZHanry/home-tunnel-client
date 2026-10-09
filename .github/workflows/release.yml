@@ -3,6 +3,7 @@ name: Release client
   push:
     tags:
     - v*-rc.*
+    - v*-RC*
 permissions:
   contents: write
   checks: read
@@ -33,13 +34,19 @@ jobs:
         cp imported/windows/products/* imported/cli/products/* products/
         cp -R imported/windows/material-input/. material-input/
         cp -R imported/cli/material-input/. material-input/
+        for target in mac-x64 mac-arm64 linux-x64 linux-arm64; do
+          gh run download "$BUILD_RUN" -n "nestlink-$target" -D "imported/$target"
+          cp imported/$target/products/* products/
+          mkdir -p "material-input/$target"
+          cp -R imported/$target/material-input/. "material-input/$target/"
+        done
     - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
     - name: Bind payloads to source and seal four attachments
       env:
         VERSION: ${{ steps.metadata.outputs.version }}
-      run: python3 scripts/homedesk-release.py pack --component client --input products
-        --select "HomeDesk-Setup-$VERSION-x64.exe" --select "HomeTunnel-CLI-Agent-$VERSION.zip"
-        --evidence material-input
+      run: python3 scripts/homedesk-release.py pack --component client --input products --select "NestLink-Setup-$VERSION-x64.exe"
+        --select "NestLink-CLI-Agent-$VERSION.zip" --select "NestLink-macOS-$VERSION-x64.dmg" --select "NestLink-macOS-$VERSION-arm64.dmg"
+        --select "NestLink-Linux-$VERSION-x64.deb" --select "NestLink-Linux-$VERSION-arm64.deb" --evidence material-input
     - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
       with:
         subject-path: release-public/SHA256SUMS.txt
