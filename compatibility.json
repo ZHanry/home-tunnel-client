@@ -3,8 +3,8 @@
   "stage": "internal-testing",
   "api_major": 1,
   "contract_ref": "api-v1.6.0",
-  "support_policy": "11.0.0-rc.1 candidate. Governed tunnels retain API v1; HomeDesk remote control is authenticated encrypted direct P2P only, with hbbs signaling and no relay. Full cross-network/media/physical-device acceptance pending.",
-  "version": "11.0.0-rc.1",
+  "support_policy": "11.0.0-rc.2 fixes Windows upgrade preflight. Governed tunnels retain API v1; HomeDesk remote control is authenticated encrypted direct P2P only, with hbbs signaling and no relay. Full cross-network/media/physical-device acceptance pending.",
+  "version": "11.0.0-rc.2",
   "minimum_server": "7.0.0",
   "tested_combination": {
     "server": "10.0.0",
@@ -18,7 +18,7 @@
   "tested_combination_scope": "Historical 10.0.0 record retained; not an acceptance claim for HomeDesk 11.x.",
   "target_combination": {
     "server": "11.0.0-rc.2",
-    "client": "11.0.0-rc.1",
+    "client": "11.0.0-rc.2",
     "android": "11.0.0-rc.1",
     "agent": "10.1.0"
   }

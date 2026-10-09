@@ -1,8 +1,8 @@
 # HomeDesk / Home Tunnel Client
 
-当前主线为 **11.0.0-rc.1 候选版**。暖居 Flutter 界面与 RustDesk 原生核心提供远控；必须认证加密并通过 P2P 直连，禁止中继和供应商服务器回退。直连失败会明确停止。
+当前主线为 **11.0.0-rc.2 候选版**。暖居 Flutter 界面与 RustDesk 原生核心提供远控；必须认证加密并通过 P2P 直连，禁止中继和供应商服务器回退。直连失败会明确停止。
 
-[English](README.en.md) · [候选发行](https://github.com/ZHanry/home-tunnel-client/releases/tag/v11.0.0-rc.1) · [最后稳定版 10.1.0](https://github.com/ZHanry/home-tunnel-client/releases/tag/v10.1.0)
+[English](README.en.md) · [候选发行](https://github.com/ZHanry/home-tunnel-client/releases/tag/v11.0.0-rc.2) · [最后稳定版 10.1.0](https://github.com/ZHanry/home-tunnel-client/releases/tag/v10.1.0)
 
 ## 下载与接入
 
@@ -10,7 +10,9 @@
 
 安装前核验 SHA-256。Windows 安装器未做 Authenticode 签名。通用包不含服务器地址、公钥或账户凭据；先配置你自己的 hbbs 地址、公钥和允许的来源，再登录 HTTPS 管理台。远控目标需明确开启共享并授权；接入账号不等于自动授权远控。
 
-HTTP/HTTPS、受控 TCP/UDP、端口池、权限、ACL、流量治理、诊断和 NAS 使用原 Go/FRP 协议。自有 Agent 保持 10.1.0 已校验原始字节，CLI 与 HomeDesk 为 11.0.0-rc.1；内置 FRP 0.70.1。不混用平台 Agent。
+HTTP/HTTPS、受控 TCP/UDP、端口池、权限、ACL、流量治理、诊断和 NAS 使用原 Go/FRP 协议。自有 Agent 保持 10.1.0 已校验原始字节，CLI 与 HomeDesk 为 11.0.0-rc.2；内置 FRP 0.70.1。不混用平台 Agent。
+
+RC.2 修复每用户升级误拦截：安装目录中遗留旧服务程序、但没有运行服务时可正常安装。安装器检查实际文件占用及写入权限；仍在运行的 GUI、后台进程或服务会阻止覆盖，需退出后重试。已有账号与隧道配置保留。
 
 ```sh
 home-tunnel-client enroll --state /secure/home-tunnel/state.json \

@@ -63,7 +63,9 @@ jobs:
           ~/.cargo/git
           client/target
         key: homedesk-rust-win2022-1.96-${{ hashFiles('client/Cargo.lock') }}-${{ github.sha }}
-        restore-keys: homedesk-rust-win2022-1.96-${{ hashFiles('client/Cargo.lock') }}-
+        restore-keys: |-
+          homedesk-rust-win2022-1.96-${{ hashFiles('client/Cargo.lock') }}-
+          homedesk-rust-win2022-1.96-
     - name: Prepare locked native toolchain
       shell: pwsh
       run: .\build\ci\setup-windows.ps1
@@ -100,6 +102,8 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw 'Managed helper failed' }
         $compilerLines = .\packaging\windows\install-inno-setup.ps1
         $compiler = ($compilerLines | Where-Object { $_ -like 'ISCC=*' }) -replace '^ISCC=', ''
+        python scripts/test-homedesk-upgrade.py --iscc $compiler --evidence material-input/windows-upgrade.json
+        if ($LASTEXITCODE -ne 0) { throw 'Upgrade preflight regression failed' }
         python scripts/package-homedesk-windows.py --iscc $compiler
         if ($LASTEXITCODE -ne 0) { throw 'Installer failed' }
         $version = (Get-Content -Raw compatibility.json | ConvertFrom-Json).version

@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "11.0.0-rc.1"
+  #define AppVersion "11.0.0-rc.2"
 #endif
 #ifndef SourceDir
   #define SourceDir "."
@@ -12,7 +12,7 @@
 AppId={{8F3C1B2A-7D54-4E19-9A6C-2B0E5D8F4A11}
 AppName=HomeDesk
 AppVersion={#AppVersion}
-VersionInfoVersion=11.0.0.1
+VersionInfoVersion=11.0.0.2
 AppPublisher=Home Tunnel
 AppPublisherURL=https://github.com/ZHanry/home-tunnel-client
 DefaultDirName={localappdata}\Home Tunnel
@@ -63,6 +63,32 @@ Root: HKA; Subkey: "Software\Classes\homedesk\shell\open\command"; ValueType: st
 Filename: "{app}\homedesk.exe"; Description: "{cm:LaunchProgram,HomeDesk}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function OpenUpgradeTarget(FileName: String; DesiredAccess, ShareMode: LongWord;
+  SecurityAttributes: NativeUInt; CreationDisposition, FlagsAndAttributes: LongWord;
+  TemplateFile: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+
+function CloseUpgradeTarget(Handle: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+function UpgradeTargetAvailable(Name: String): Boolean;
+var
+  Target: String;
+  Handle: THandle;
+begin
+  Target := AddBackslash(ExpandConstant('{app}')) + Name;
+  Result := True;
+  if not FileExists(Target) then
+    Exit;
+  { OPEN_EXISTING only probes the file. Loaded executables and files that
+    cannot be replaced must still block the upgrade, regardless of the
+    legacy service command's result. }
+  Handle := OpenUpgradeTarget(Target, $C0000000, 0, 0, 3, 0, 0);
+  Result := Handle <> THandle(-1);
+  if Result then
+    CloseUpgradeTarget(Handle);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   LegacyService: String;
@@ -70,9 +96,26 @@ var
 begin
   Result := '';
   LegacyService := ExpandConstant('{app}\home-tunnel-service.exe');
-  if FileExists(LegacyService) then
+  { Per-user installations can retain the old executable without having a
+    system service. Do not request service-control privileges for a file
+    that is already available. An attempted stop is best-effort; the file
+    probes below are the final condition for safely replacing this folder. }
+  if FileExists(LegacyService) and
+     not UpgradeTargetAvailable('home-tunnel-service.exe') then
+    Exec(LegacyService, 'stop', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+
+  if not UpgradeTargetAvailable('homedesk.exe') or
+     not UpgradeTargetAvailable('homedesk-tunnel-helper.exe') or
+     not UpgradeTargetAvailable('home-tunnel-client.exe') or
+     not UpgradeTargetAvailable('home-tunnel-gui.exe') or
+     not UpgradeTargetAvailable('home-tunnel-agent.exe') or
+     not UpgradeTargetAvailable('home_tunnel_remote_host.exe') or
+     not UpgradeTargetAvailable('home_tunnel_remote_host.dll') or
+     not UpgradeTargetAvailable('home-tunnel-service.exe') then
   begin
-    if not Exec(LegacyService, 'stop', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) or (ExitCode <> 0) then
-      Result := 'Close the old Home Tunnel service before upgrading. Existing account and tunnel data are preserved.';
+    if ActiveLanguage = 'chinesesimplified' then
+      Result := '请先从界面或托盘退出 Home Tunnel/HomeDesk，等待此安装目录的后台进程结束后重试。旧系统服务若仍运行，请以管理员身份停止；若文件仍不可写，请检查目录权限。账号及隧道配置会保留。'
+    else
+      Result := 'Exit Home Tunnel/HomeDesk from its window or tray and wait for background processes in this installation folder to finish. If the legacy service is still running, stop it as administrator, then retry. Check folder permissions if files remain unavailable. Existing account and tunnel data are preserved.';
   end;
 end;
