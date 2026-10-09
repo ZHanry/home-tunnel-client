@@ -694,7 +694,11 @@ class ServerModel with ChangeNotifier {
   }
 
   void sendLoginResponse(Client client, bool res) async {
-    if (res && !bind.mainNestlinkAccountReady()) res = false;
+    // Desktop consent runs in a separate CM process. The authenticated daemon
+    // validates its current account and the connection's signed permit before
+    // sending a successful logon response; CM has no foreground account state.
+    // Android consent runs in the account-owning process itself.
+    if (res && isAndroid && !bind.mainNestlinkAccountReady()) res = false;
     if (res) {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {
