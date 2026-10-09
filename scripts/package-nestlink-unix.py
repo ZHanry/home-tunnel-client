@@ -20,8 +20,9 @@ parser.add_argument('--target', required=True, choices=['mac-x64','mac-arm64','l
 args = parser.parse_args()
 version = json.loads((ROOT/'compatibility.json').read_text())['version']
 revision = subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
-if subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip():
-    raise SystemExit('Package only an exact clean source commit')
+changed=subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip()
+if changed:
+    raise SystemExit('Package only an exact clean source commit:\n'+changed)
 spec = importlib.util.spec_from_file_location('runtime',ROOT/'build/tunnel/build-runtime.py')
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)

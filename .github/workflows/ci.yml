@@ -11,7 +11,7 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   windows:
     name: Build HomeDesk Windows installer
