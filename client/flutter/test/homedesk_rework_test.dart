@@ -34,6 +34,36 @@ HomeDeskLocalAgent failedAgent() => HomeDeskLocalAgent(
     name: '合成设备')
   ..error = const HomeDeskAgentException('RUNTIME_FAILED');
 void main() {
+  testWidgets('recent device names follow a live theme switch', (tester) async {
+    final dark = ValueNotifier<bool>(false);
+    addTearDown(dark.dispose);
+    final recent = HomeDeskRecent(recent: [device('123456789', '书房电脑')]);
+    await tester.pumpWidget(MaterialApp(
+        home: ValueListenableBuilder<bool>(
+            valueListenable: dark,
+            child: recent,
+            builder: (context, value, child) => Theme(
+                data:
+                    homeDeskTheme(value ? ThemeData.dark() : ThemeData.light()),
+                child: Scaffold(body: child)))));
+    dark.value = true;
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(find.text('书房电脑')).style?.color,
+        HomeDeskTokens.dark.text);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('recent empty guidance fits the fixed workspace short list area',
+      (tester) async {
+    const recent = HomeDeskRecent(recent: []);
+    await tester.pumpWidget(host(
+        const Center(child: SizedBox(width: 800, height: 200, child: recent))));
+    await tester.pumpAndSettle();
+    final panel = tester.getRect(find.byWidget(recent));
+    final guidance = tester.getRect(find.text('输入设备 ID，开始第一次连接。'));
+    expect(guidance.top, greaterThanOrEqualTo(panel.top));
+    expect(guidance.bottom, lessThanOrEqualTo(panel.bottom));
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('上游三个对端卡片的公开菜单接线可复用，无需修改上游', (tester) async {
     final peer = device('123456789', '书房电脑');
     await tester.pumpWidget(host(Builder(builder: (context) {
@@ -118,7 +148,7 @@ void main() {
     expect(find.text('局域网发现'), findsNothing);
     expect(tester.takeException(), isNull);
   });
-  testWidgets('最近页和首页摘要导航重新可见时重载，远控返回窗口时重载当前分段', (tester) async {
+  testWidgets('远控最近连接和设备页重新可见时重载，返回窗口只重载当前页', (tester) async {
     final peer = device('123456789', '书房电脑'), loads = <String>[];
     final summaryKey = GlobalKey<HomeDeskRecentState>(),
         recentKey = GlobalKey<HomeDeskRecentState>();
@@ -139,17 +169,17 @@ void main() {
         onSettings: () {},
         onConnect: (_) {})));
     await tester.pumpAndSettle();
-    expect(loads.where((s) => s.startsWith('summary:')).length, 1);
-    await tester.tap(find.byTooltip('最近连接'));
-    await tester.pumpAndSettle();
+    expect(loads.where((s) => s.startsWith('summary:')), isEmpty);
     expect(loads.last, 'recent:PeerTabIndex.recent');
+    await tester.ensureVisible(find.byKey(const ValueKey('recent-filter-1')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('recent-filter-1')));
     await tester.pumpAndSettle();
     expect(loads.last, 'recent:PeerTabIndex.fav');
-    await tester.tap(find.byTooltip('家庭设备'));
+    await tester.tap(find.byKey(const ValueKey('nav-devices')));
     await tester.pumpAndSettle();
-    expect(loads.where((s) => s.startsWith('summary:')).length, 2);
-    await tester.tap(find.byTooltip('最近连接'));
+    expect(loads.where((s) => s.startsWith('summary:')).length, 1);
+    await tester.tap(find.byKey(const ValueKey('nav-remote')));
     await tester.pumpAndSettle();
     final before = loads.length;
     summaryKey.currentState!.onWindowFocus();
@@ -353,7 +383,7 @@ void main() {
     api.close();
     expect(tester.takeException(), isNull);
   });
-  testWidgets('800×600窄栏全部导航项完整可见，家庭账号不被底栏遮挡', (tester) async {
+  testWidgets('800×600工作台全部导航与语言主题账号版本入口可点击且互不遮挡', (tester) async {
     tester.view.physicalSize = const Size(800, 600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -367,13 +397,11 @@ void main() {
         dark: true,
         dashboard: GlobalKey<HomeDeskDashboardState>()));
     await tester.pumpAndSettle();
-    final footer = tester.getRect(
-        find.byWidgetPredicate((w) => w is HomeDeskStatus && w.footer));
+    final entries = <Rect>[];
     for (final value in [
+      'remote',
       'devices',
-      'recent',
       'services',
-      'local',
       'settings',
       'account'
     ]) {
@@ -381,7 +409,21 @@ void main() {
       expect(item.hitTestable(), findsOneWidget);
       final rect = tester.getRect(item);
       expect(rect.top, greaterThanOrEqualTo(44));
-      expect(rect.bottom, lessThanOrEqualTo(footer.top));
+      expect(rect.bottom, lessThanOrEqualTo(600));
+      entries.add(rect);
+    }
+    for (final label in ['English', '切换主题', '13.0.0']) {
+      final item = find.byTooltip(label);
+      expect(item.hitTestable(), findsOneWidget);
+      final rect = tester.getRect(item);
+      expect(rect.top, greaterThanOrEqualTo(44));
+      expect(rect.bottom, lessThanOrEqualTo(600));
+      entries.add(rect);
+    }
+    for (var i = 0; i < entries.length; i++) {
+      for (var j = i + 1; j < entries.length; j++) {
+        expect(entries[i].overlaps(entries[j]), isFalse);
+      }
     }
     await tester.pumpWidget(const SizedBox());
     account.dispose();

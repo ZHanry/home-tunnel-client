@@ -239,77 +239,78 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
     super.dispose();
   }
 
-  Widget _row(BuildContext context, Peer peer) {
-    final t = HomeDeskTokens.of(context);
-    final name = peer.alias.isNotEmpty
-        ? peer.alias
-        : peer.hostname.isNotEmpty
-            ? peer.hostname
-            : peer.id;
-    final detail =
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Flexible(
-            child: Text(homeDeskDeviceLabel(name),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: t.sectionStyle)),
-        if (_favorite(peer)) ...[
-          const SizedBox(width: 6),
-          Icon(Icons.star_rounded, color: t.accent, size: 16)
-        ]
-      ]),
-      const SizedBox(height: 4),
-      Text(
-          '${nl('设备 ID', 'Device ID')}: ${peer.id}${peer.platform.isEmpty ? '' : ' · ${peer.platform}'}',
-          style: t.auxiliaryStyle),
-      const SizedBox(height: 6),
-      HomeDeskBadge(peer.online ? nl('在线', 'Online') : nl('离线', 'Offline'),
-          tone: peer.online ? HomeDeskTone.success : HomeDeskTone.neutral),
-    ]);
-    final actions = Row(mainAxisSize: MainAxisSize.min, children: [
-      OutlinedButton(
-          onPressed: () {
-            if (widget.onConnect != null) {
-              widget.onConnect!(peer);
-            } else {
-              connectInPeerTab(context, peer, _tab);
-            }
-          },
-          child: Text(nl('连接', 'Connect'))),
-      const SizedBox(width: 4),
-      Builder(
-          builder: (anchor) => IconButton(
-              key: ValueKey('recent-more-${peer.id}'),
-              tooltip: nl('更多设备操作', 'More device actions'),
-              onPressed: () => _showMenu(anchor, peer),
-              icon: const Icon(Icons.more_horiz_rounded)))
-    ]);
-    return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Card(
-            child: Padding(
-                padding: const EdgeInsets.all(HomeDeskTokens.cardPadding),
-                child: LayoutBuilder(builder: (context, c) {
-                  if (c.maxWidth < 380 ||
-                      MediaQuery.textScalerOf(context).scale(1) > 1.5) {
-                    return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          detail,
-                          const SizedBox(height: 12),
-                          actions
-                        ]);
-                  }
-                  return Row(children: [
-                    Icon(Icons.computer_rounded, color: t.secondary, size: 28),
-                    const SizedBox(width: 12),
-                    Expanded(child: detail),
-                    const SizedBox(width: 12),
-                    actions
-                  ]);
-                }))));
-  }
+  Widget _row(BuildContext context, Peer peer) => Builder(builder: (context) {
+        final t = HomeDeskTokens.of(context);
+        final name = peer.alias.isNotEmpty
+            ? peer.alias
+            : peer.hostname.isNotEmpty
+                ? peer.hostname
+                : peer.id;
+        final detail =
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Flexible(
+                child: Text(homeDeskDeviceLabel(name),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.sectionStyle)),
+            if (_favorite(peer)) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.star_rounded, color: t.accent, size: 16)
+            ]
+          ]),
+          const SizedBox(height: 4),
+          Text(
+              '${nl('设备 ID', 'Device ID')}: ${peer.id}${peer.platform.isEmpty ? '' : ' · ${peer.platform}'}',
+              style: t.auxiliaryStyle),
+          const SizedBox(height: 6),
+          HomeDeskBadge(peer.online ? nl('在线', 'Online') : nl('离线', 'Offline'),
+              tone: peer.online ? HomeDeskTone.success : HomeDeskTone.neutral),
+        ]);
+        final actions = Row(mainAxisSize: MainAxisSize.min, children: [
+          OutlinedButton(
+              onPressed: () {
+                if (widget.onConnect != null) {
+                  widget.onConnect!(peer);
+                } else {
+                  connectInPeerTab(context, peer, _tab);
+                }
+              },
+              child: Text(nl('连接', 'Connect'))),
+          const SizedBox(width: 4),
+          Builder(
+              builder: (anchor) => IconButton(
+                  key: ValueKey('recent-more-${peer.id}'),
+                  tooltip: nl('更多设备操作', 'More device actions'),
+                  onPressed: () => _showMenu(anchor, peer),
+                  icon: const Icon(Icons.more_horiz_rounded)))
+        ]);
+        return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Card(
+                child: Padding(
+                    padding: const EdgeInsets.all(HomeDeskTokens.cardPadding),
+                    child: LayoutBuilder(builder: (context, c) {
+                      if (c.maxWidth < 380 ||
+                          MediaQuery.textScalerOf(context).scale(1) > 1.5) {
+                        return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              detail,
+                              const SizedBox(height: 12),
+                              actions
+                            ]);
+                      }
+                      return Row(children: [
+                        Icon(Icons.computer_rounded,
+                            color: t.secondary, size: 28),
+                        const SizedBox(width: 12),
+                        Expanded(child: detail),
+                        const SizedBox(width: 12),
+                        actions
+                      ]);
+                    }))));
+      });
 
   Widget _body(BuildContext context) {
     final peers = _filtered;
@@ -343,27 +344,33 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
       const SizedBox(height: HomeDeskTokens.moduleGap),
       Expanded(
           child: peers.isEmpty
-              ? Center(
-                  child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.desktop_windows_outlined,
-                            size: 32, color: HomeDeskTokens.of(context).muted),
-                        const SizedBox(height: 12),
-                        Text(
-                            _search.text.trim().isNotEmpty
-                                ? nl('没有找到匹配的设备', 'No matching devices')
-                                : _selected == 0
-                                    ? nl('还没有最近连接', 'No recent connections')
-                                    : nl('还没有收藏的设备', 'No favorite devices'),
-                            style: HomeDeskTokens.of(context).sectionStyle),
-                        const SizedBox(height: 6),
-                        Text(
-                            nl('输入设备 ID，开始第一次连接。',
-                                'Enter a device ID to start connecting.'),
-                            textAlign: TextAlign.center,
-                            style: HomeDeskTokens.of(context).auxiliaryStyle)
-                      ])))
+              ? LayoutBuilder(
+                  builder: (context, constraints) => Center(
+                      child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                            if (constraints.maxHeight >= 130) ...[
+                              Icon(Icons.desktop_windows_outlined,
+                                  size: 32,
+                                  color: HomeDeskTokens.of(context).muted),
+                              const SizedBox(height: 12),
+                            ],
+                            Text(
+                                _search.text.trim().isNotEmpty
+                                    ? nl('没有找到匹配的设备', 'No matching devices')
+                                    : _selected == 0
+                                        ? nl('还没有最近连接', 'No recent connections')
+                                        : nl('还没有收藏的设备', 'No favorite devices'),
+                                style: HomeDeskTokens.of(context).sectionStyle),
+                            const SizedBox(height: 6),
+                            Text(
+                                nl('输入设备 ID，开始第一次连接。',
+                                    'Enter a device ID to start connecting.'),
+                                textAlign: TextAlign.center,
+                                style:
+                                    HomeDeskTokens.of(context).auxiliaryStyle)
+                          ]))))
               : ListView.builder(
                   itemCount: peers.length,
                   itemBuilder: (context, i) => _row(context, peers[i]))),

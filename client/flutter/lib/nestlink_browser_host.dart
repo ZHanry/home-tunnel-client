@@ -69,6 +69,7 @@ class NestLinkBrowserHost {
       final inbox = await api.browserHostInbox();
       final items = inbox['items'] as List<Map<String, dynamic>>;
       if (_closed) return;
+      if (_id.isEmpty && _approval == null) nestlinkBrowserStatus.value = '';
       for (final request in items) {
         final id = request['session_id'];
         if (id is! String ||
