@@ -1,6 +1,7 @@
 // HOMEDESK: 本机信息的展示组件；凭据和操作由既有服务模型提供。
 import 'package:flutter/material.dart';
 import 'homedesk_theme.dart';
+import 'nestlink_locale.dart';
 
 class HomeDeskLocalInfo extends StatefulWidget {
   final TextEditingController id;
@@ -97,7 +98,7 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
 
   Widget _credentials(BuildContext context) {
     final id = _credential(
-        label: '设备 ID',
+        label: nl('设备 ID', 'Device ID'),
         key: const ValueKey('local-info-id'),
         controller: widget.id,
         actions: [
@@ -105,13 +106,15 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
               valueListenable: widget.id,
               builder: (context, value, _) => IconButton(
                   key: const ValueKey('local-info-copy-id'),
-                  tooltip: '复制设备 ID',
+                  tooltip: nl('复制设备 ID', 'Copy device ID'),
                   onPressed: value.text.trim().isEmpty ? null : widget.onCopyId,
                   icon: const Icon(Icons.copy_rounded, size: 18)))
         ]);
     final password = _credential(
         key: const ValueKey('local-info-password'),
-        label: widget.showTemporaryPassword ? '一次性密码' : '连接验证',
+        label: widget.showTemporaryPassword
+            ? nl('一次性密码', 'One-time password')
+            : nl('连接验证', 'Connection verification'),
         controller: widget.showTemporaryPassword ? widget.password : null,
         text: widget.passwordHint,
         fontSize: 20,
@@ -119,13 +122,13 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
           if (widget.showTemporaryPassword && widget.onRefreshPassword != null)
             IconButton(
                 key: const ValueKey('local-info-refresh-password'),
-                tooltip: '刷新一次性密码',
+                tooltip: nl('刷新一次性密码', 'Refresh password'),
                 onPressed: widget.onRefreshPassword,
                 icon: const Icon(Icons.refresh_rounded, size: 21)),
           if (widget.onPasswordSettings != null)
             IconButton(
                 key: const ValueKey('local-info-password-settings'),
-                tooltip: '密码与连接权限',
+                tooltip: nl('密码与连接权限', 'Password and permissions'),
                 onPressed: widget.onPasswordSettings,
                 icon: const Icon(Icons.tune_rounded, size: 20)),
         ]);
@@ -149,7 +152,8 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
     final colors = Theme.of(context).colorScheme;
     return Scrollbar(
         controller: _scroll,
-        thumbVisibility: true,
+        thumbVisibility: false,
+        thickness: 0,
         child: SingleChildScrollView(
             key: const ValueKey('local-info-scroll'),
             controller: _scroll,
@@ -161,8 +165,10 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
                   if (widget.warning != null) widget.warning!,
                   Text(
                       widget.incomingEnabled
-                          ? '在另一台电脑输入下方设备 ID，即可发起远程连接。'
-                          : '此客户端仅用于连接其他电脑，不接受远程连接。',
+                          ? nl('在另一台电脑输入下方设备 ID，即可发起远程连接。',
+                              'Enter this device ID on another device to connect.')
+                          : nl('此客户端仅用于连接其他电脑，不接受远程连接。',
+                              'Screen sharing is currently off.'),
                       style: TextStyle(
                           color: colors.onSurfaceVariant, fontSize: 13)),
                   if (widget.incomingEnabled) ...[
@@ -188,16 +194,19 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
                                 Icon(Icons.info_outline_rounded,
                                     size: 18, color: colors.primary),
                                 const SizedBox(width: 8),
-                                const Expanded(
-                                    child: Text('便携运行',
+                                Expanded(
+                                    child: Text(nl('便携运行', 'Portable app'),
                                         style: TextStyle(
                                             fontWeight: FontWeight.w600))),
                               ]),
                               const SizedBox(height: 8),
                               Text(
                                   widget.incomingEnabled
-                                      ? '便携版在系统权限窗口或管理员程序中可能无法操作。长期作为被控端，建议安装到系统。'
-                                      : '无需安装即可主动连接其他电脑，也可以安装到系统后使用。',
+                                      ? nl(
+                                          '便携版在系统权限窗口或管理员程序中可能无法操作。长期作为被控端，建议安装到系统。',
+                                          'Install this app for use with system permission windows and administrator apps.')
+                                      : nl('无需安装即可主动连接其他电脑，也可以安装到系统后使用。',
+                                          'You can connect now or install this app.'),
                                   style: TextStyle(
                                       fontSize: 12,
                                       color: colors.onSurfaceVariant)),
@@ -208,7 +217,7 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
                                   icon: const Icon(
                                       Icons.install_desktop_rounded,
                                       size: 18),
-                                  label: const Text('安装到系统')),
+                                  label: Text(nl('安装到系统', 'Install'))),
                             ])),
                   ],
                   if (widget.additionalHelp != null) widget.additionalHelp!,

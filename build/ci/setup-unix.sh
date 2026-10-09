@@ -2,8 +2,10 @@
 set -euo pipefail
 target="$1"
 if [[ "$target" == mac-* ]]; then
-  brew install llvm ninja cmake pkg-config nasm yasm
-  export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+  # bindgen 0.65/0.59 in the retained media core requires the LLVM 18 ABI.
+  # Unversioned Homebrew LLVM 23 made libvpx/libaom configuration structs opaque.
+  brew install llvm@18 ninja cmake pkg-config nasm yasm
+  export LIBCLANG_PATH="$(brew --prefix llvm@18)/lib"
   echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> "$GITHUB_ENV"
   # Media dependencies require the NASM 2.x command line.
   if nasm -v | grep -q 'version 3\.'; then
@@ -20,7 +22,7 @@ else
     libgtk-3-dev libasound2-dev libxdo-dev libxtst-dev libxrandr-dev libxi-dev libxfixes-dev \
     libxcursor-dev libxinerama-dev libpam0g-dev libudev-dev libva-dev libvdpau-dev libdrm-dev \
     libgbm-dev libpulse-dev libxcb-shape0-dev libxcb-xfixes0-dev libunwind-dev \
-    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libayatana-appindicator3-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libayatana-appindicator3-dev libxcb-randr0-dev \
     dbus-x11 gnome-keyring libsecret-tools xvfb
   triplet="x64-linux"
   [[ "$target" != linux-arm64 ]] || triplet="arm64-linux"

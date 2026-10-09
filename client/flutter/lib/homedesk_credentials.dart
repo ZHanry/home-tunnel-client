@@ -180,10 +180,16 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
     final record = _file(directory, _credentialFile);
     if (await record.exists()) {
       if (Platform.isLinux) {
-        final blob = await _readBlob(directory);
-        final handle = ascii.decode(blob);
-        if (RegExp(r'^nlss:[A-Za-z0-9_-]{43}$').hasMatch(handle)) {
-          await _secretTool(['clear', 'application', 'HomeDesk', 'portal-record', handle.substring(5)], allowMissing: true);
+        try {
+          final blob = await _readBlob(directory);
+          final handle = ascii.decode(blob);
+          if (RegExp(r'^nlss:[A-Za-z0-9_-]{43}$').hasMatch(handle)) {
+            await _secretTool(['clear', 'application', 'HomeDesk', 'portal-record', handle.substring(5)], allowMissing: true);
+          }
+        } on HomeDeskCredentialException catch (error) {
+          if (error.code != 'STORAGE_INVALID') rethrow;
+        } on FormatException {
+          // A corrupted handle cannot identify a keyring record; remove only its local file.
         }
       }
       await record.delete();

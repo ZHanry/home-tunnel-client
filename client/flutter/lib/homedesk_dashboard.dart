@@ -107,14 +107,14 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                     Padding(
                         padding: const EdgeInsets.fromLTRB(24, 16, 8, 8),
                         child: Row(children: [
-                          const Expanded(
-                              child: Text('本机共享',
+                          Expanded(
+                              child: Text(nl('本机共享', 'Share this device'),
                                   style: TextStyle(
                                       fontSize: 20,
                                       fontWeight: FontWeight.w600))),
                           IconButton(
                               onPressed: () => Navigator.pop(context),
-                              tooltip: '关闭',
+                              tooltip: nl('关闭', 'Close'),
                               icon: const Icon(Icons.close)),
                         ])),
                     Flexible(child: widget.localBuilder(context)),

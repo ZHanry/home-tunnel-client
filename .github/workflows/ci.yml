@@ -238,7 +238,7 @@ jobs:
           ${{ runner.temp }}/vcpkg/installed
           ${{ runner.temp }}/vcpkg/buildtrees
           ${{ runner.temp }}/vcpkg/downloads
-        key: nestlink-native-${{ matrix.target }}-120deac-${{ hashFiles('client/Cargo.lock', 'client/vcpkg.json') }}
+        key: nestlink-native-${{ matrix.target }}-llvm18-120deac-${{ hashFiles('client/Cargo.lock', 'client/vcpkg.json') }}
     - name: Prepare pinned native toolchain
       run: bash build/ci/setup-unix.sh "${{ matrix.target }}"
     - name: Build shared GUI from current source
@@ -247,6 +247,16 @@ jobs:
       run: |-
         python3 scripts/package-nestlink-unix.py --target "${{ matrix.target }}"
         python3 scripts/collect-native-materials.py
+    - name: Install, start and remove the actual macOS package with Keychain regression
+      if: startsWith(matrix.target, 'mac-')
+      run: python3 scripts/test-nestlink-unix.py --target "${{ matrix.target }}"
+    - name: Install, start and remove the actual DEB with Secret Service regression
+      if: startsWith(matrix.target, 'linux-')
+      run: |
+        xvfb-run -a dbus-run-session -- bash -eu -c '
+          eval "$(head -c 32 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets)"
+          python3 scripts/test-nestlink-unix.py --target "$1"
+        ' sh "${{ matrix.target }}"
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: nestlink-${{ matrix.target }}

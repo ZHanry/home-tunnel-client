@@ -292,5 +292,15 @@
       563,
       647
     ]
+  },
+  "contracts/nestlink-auth.v2-vectors.json": {
+    "sha256": "8328d7d3febfea627e5743e577ea22c857687056eebd13e5fc04c0456b6a0ebd",
+    "lines": [
+      23,
+      24,
+      27,
+      29
+    ],
+    "review": "Frozen api-v2.0.0 test_only Ed25519 public keys and offline fixture signatures. No private key or deployed bearer credential."
   }
 }
