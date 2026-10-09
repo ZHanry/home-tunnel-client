@@ -7,10 +7,21 @@ python -m pip install --disable-pip-version-check --target (Join-Path $env:RUNNE
 if ($LASTEXITCODE -ne 0) { throw 'libclang installation failed' }
 "LIBCLANG_PATH=$env:LIBCLANG_PATH" >> $env:GITHUB_ENV
 "FLUTTER_SUPPRESS_ANALYTICS=true" >> $env:GITHUB_ENV
-cargo install cargo-expand --version 1.0.95 --locked
-if ($LASTEXITCODE -ne 0) { throw 'cargo-expand installation failed' }
-cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid --locked
-if ($LASTEXITCODE -ne 0) { throw 'FRB installation failed' }
+function Install-PinnedCargoTool([string]$Name, [string]$Version, [string[]]$ExtraArguments = @()) {
+    # The cache can restore binaries without Cargo's installation metadata.
+    $tool = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($tool) {
+        $reported = & $tool.Source --version
+        if ($LASTEXITCODE -eq 0 -and "$reported".Trim() -eq "$Name $Version") {
+            Write-Output "Using cached $reported"
+            return
+        }
+    }
+    cargo install $Name --version $Version --locked --force @ExtraArguments
+    if ($LASTEXITCODE -ne 0) { throw "$Name installation failed" }
+}
+Install-PinnedCargoTool 'cargo-expand' '1.0.95'
+Install-PinnedCargoTool 'flutter_rust_bridge_codegen' '1.80.1' @('--features', 'uuid')
 Push-Location client
 try {
     # Cache the installation together with its patched source trees. A binary-
