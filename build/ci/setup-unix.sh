@@ -23,7 +23,7 @@ else
     libxcursor-dev libxinerama-dev libpam0g-dev libudev-dev libva-dev libvdpau-dev libdrm-dev \
     libgbm-dev libpulse-dev libxcb-shape0-dev libxcb-xfixes0-dev libunwind-dev \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libayatana-appindicator3-dev libxcb-randr0-dev \
-    dbus-x11 gnome-keyring libsecret-tools xvfb
+    dbus-x11 gnome-keyring libsecret-tools xvfb x11-utils
   triplet="x64-linux"
   [[ "$target" != linux-arm64 ]] || triplet="arm64-linux"
 fi

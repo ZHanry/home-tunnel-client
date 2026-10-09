@@ -1013,7 +1013,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                     !_busy && _allowed ? _openManagement : null,
                                 child: const Text('打开管理台')),
                             const SizedBox(height: 8),
-                            const Text('密码和动态码不会保存。管理台会在浏览器中单独登录。',
+                            const Text('密码不会保存。管理台会在浏览器中单独登录。',
                                 style: TextStyle(fontSize: 12)),
                           ]))))));
 
