@@ -109,14 +109,14 @@ class HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return HomeDeskDashboard(brandName: '栖云桥', initializeAccount: true,
+    return Scaffold(body: SafeArea(child: HomeDeskDashboard(brandName: '栖云桥', initializeAccount: true,
       devicesBuilder: (_) => HomeDeskFamilyDevices(account: _account,
           onLogin: () => HomeDeskDashboard.navigate('account'), onConnect: (id) => connect(context, id),
           readOption: (key) => bind.mainGetLocalOption(key: key)),
       recentBuilder: (_) => const HomeDeskRecent(summary: true),
       servicesBuilder: (_) => HomeDeskServices(account: _account),
       localBuilder: (_) => ServerPage(), statusBuilder: (_) => const SizedBox.shrink(),
-      onSettings: () => HomeDeskDashboard.navigate('settings'), onConnect: (id) => connect(context, id));
+      onSettings: () => HomeDeskDashboard.navigate('settings'), onConnect: (id) => connect(context, id))));
   }
 
   Widget buildLegacy(BuildContext context) {

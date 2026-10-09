@@ -9,6 +9,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_hbb/homedesk_console_api.dart';
 import 'package:flutter_hbb/homedesk_dashboard.dart';
 import 'package:flutter_hbb/homedesk_devices.dart';
+import 'package:flutter_hbb/homedesk_account.dart';
+import 'package:flutter_hbb/homedesk_family_devices.dart';
+import 'package:flutter_hbb/homedesk_services.dart';
+import 'homedesk_services_test.dart' as portal;
 
 class PreviewConsole extends HomeDeskConsoleApi {
   final bool empty;
@@ -125,6 +129,37 @@ Widget host(
 }
 
 void main() {
+  testWidgets('首次登录切换到远控仍保留账号会话所有者', (tester) async {
+    final account = HomeDeskAccount();
+    final api = portal.PortalFixtureApi();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: HomeDeskDashboard(
+      brandName: '栖云桥', initializeAccount: true,
+      devicesBuilder: (_) => HomeDeskFamilyDevices(account: account,
+          onLogin: () {}, onConnect: (_) {}, readOption: portal.portalOption),
+      servicesBuilder: (_) => HomeDeskServices(account: account,
+          readOption: portal.portalOption, saveOrigin: (_) async {},
+          credentialStoreFactory: () => portal.FixtureCredentialStore(),
+          apiBuilder: (_, {required isAllowed, credentialStorage}) => api),
+      recentBuilder: (_) => const SizedBox(), localBuilder: (_) => const SizedBox(),
+      statusBuilder: (_) => const SizedBox(), onSettings: () {}, onConnect: (_) {},
+    ))));
+    await tester.pumpAndSettle();
+    expect(account.signedIn, isFalse);
+    await portal.enterCredentials(tester);
+    await tester.pumpAndSettle();
+    expect(account.signedIn, isTrue);
+    expect(api.closed, isFalse);
+    expect(find.byKey(const ValueKey('remote-device-id')), findsOneWidget);
+    expect(find.byType(HomeDeskServices, skipOffstage: false), findsOneWidget);
+    await tester.pump(const Duration(seconds: 12));
+    expect(account.signedIn, isTrue);
+    expect(api.closed, isFalse);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    account.dispose();
+    expect(api.closed, isTrue);
+  });
+
   testWidgets('远控首页校验设备ID，凭据只在主动查看共享时展示', (tester) async {
     tester.view.physicalSize = const Size(1080, 800);
     tester.view.devicePixelRatio = 1;

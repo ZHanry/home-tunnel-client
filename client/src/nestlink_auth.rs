@@ -40,8 +40,13 @@ struct Presence {
 struct ValidatedAuth { request: AuthRequest, presence: Presence, valid_until: Instant, revision: u64, epoch: u64 }
 
 fn http_client() -> ResultType<reqwest::Client> {
-    Ok(reqwest::Client::builder().https_only(true).redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(5)).build()?)
+    let builder = reqwest::Client::builder().https_only(true).no_proxy()
+        .redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(5));
+    // Mobile OpenSSL does not load the operating-system trust store. Use the same
+    // certificate-verifying platform configuration as the existing native HTTP stack.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let builder = builder.use_preconfigured_tls(hbb_common::verifier::client_config_safe()?);
+    Ok(builder.build()?)
 }
 async fn request(auth: &AuthRequest, method: reqwest::Method, path: &str, body: Option<serde_json::Value>) -> ResultType<serde_json::Value> {
     let mut query = http_client()?.request(method, format!("{}{}", auth.origin, path)).bearer_auth(&auth.access_token);

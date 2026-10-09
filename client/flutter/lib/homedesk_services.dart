@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -16,6 +17,7 @@ import 'homedesk_service_editor.dart';
 import 'homedesk_tunnel_api.dart';
 import 'homedesk_tunnel_session.dart';
 import 'nestlink_native_session.dart';
+import 'nestlink_locale.dart';
 import 'models/platform_model.dart';
 
 typedef HomeTunnelApiBuilder = HomeTunnelApi Function(String origin,
@@ -924,7 +926,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   }
 
   Widget _loginFormContent() => SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
       child: Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
@@ -935,14 +937,15 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                       child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            const Icon(Icons.home_work_outlined, size: 38),
+                            Center(child: SvgPicture.asset('assets/icon.svg', width: 52, height: 52)),
                             const SizedBox(height: 14),
-                            const Text('登录你的家庭账号',
+                            Text(nl('登录栖云桥', 'Sign in to NestLink'),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     fontSize: 18, fontWeight: FontWeight.w600)),
                             const SizedBox(height: 10),
-                            const Text('登录后，本机会加入家庭设备，并显示同账号的电脑和服务。'),
+                            Text(nl('连接你的自建服务，管理设备、远控与内网穿透。',
+                                'Connect to your own service for devices, remote control and tunnels.'), textAlign: TextAlign.center),
                             const SizedBox(height: 20),
                             if (!_allowed) ...[
                               const Text('请确认内网穿透的 HTTPS 地址和账号授权。穿透服务独立于 P2P 远控设置。'),
@@ -955,7 +958,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                         label: const Text('打开网络设置'))),
                               const SizedBox(height: 12),
                             ],
-                            HomeDeskFieldLabel('服务端 HTTPS 地址',
+                            HomeDeskFieldLabel(nl('服务端 HTTPS 地址', 'HTTPS service address'),
                                 child: TextField(
                                     key: const ValueKey('tunnel-origin'),
                                     controller: _origin,
@@ -966,7 +969,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                         hintText: 'https://console.example.com',
                                         border: null))),
                             const SizedBox(height: 14),
-                            HomeDeskFieldLabel('账号',
+                            HomeDeskFieldLabel(nl('账号', 'Account'),
                                 child: TextField(
                                     key: const ValueKey('tunnel-username'),
                                     controller: _username,
@@ -975,7 +978,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                     decoration:
                                         const InputDecoration(border: null))),
                             const SizedBox(height: 14),
-                            HomeDeskFieldLabel('密码',
+                            HomeDeskFieldLabel(nl('密码', 'Password'),
                                 child: TextField(
                                     key: const ValueKey('tunnel-password'),
                                     controller: _password,
@@ -990,10 +993,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                             CheckboxListTile(
                                 key: const ValueKey('tunnel-remember'),
                                 contentPadding: EdgeInsets.zero,
-                                title: const Text('记住登录'),
+                                title: Text(nl('记住登录', 'Remember me')),
                                 subtitle: Text(_credentialStore.supported
-                                    ? '使用本机系统安全存储，下次启动时恢复。'
-                                    : '当前平台未启用安全存储，本次登录仅保留在内存中。'),
+                                    ? nl('使用本机系统安全存储，下次启动时恢复。', 'Restore with this device’s protected storage.')
+                                    : nl('当前平台未启用安全存储，本次登录仅保留在内存中。', 'Protected storage is unavailable; this login is kept in memory.')),
                                 value: _rememberLogin,
                                 onChanged: !_busy &&
                                         _allowed &&
@@ -1006,14 +1009,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                 key: const ValueKey('tunnel-login'),
                                 onPressed: !_busy && _allowed ? _login : null,
                                 icon: const Icon(Icons.login_rounded, size: 20),
-                                label: Text(_busy ? '正在登录…' : '登录并查看')),
+                                label: Text(_busy ? nl('正在登录…', 'Signing in…') : nl('登录并查看', 'Sign in'))),
                             const SizedBox(height: 8),
                             TextButton(
                                 onPressed:
                                     !_busy && _allowed ? _openManagement : null,
-                                child: const Text('打开管理台')),
+                                child: Text(nl('打开管理台', 'Open console'))),
                             const SizedBox(height: 8),
-                            const Text('密码不会保存。管理台会在浏览器中单独登录。',
+                            Text(nl('密码不会保存。管理台会在浏览器中单独登录。', 'Your password is never saved. The console has its own browser session.'),
                                 style: TextStyle(fontSize: 12)),
                           ]))))));
 
@@ -1653,13 +1656,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     ]);
   }
 
-  Widget _loginForm() =>
-      Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Padding(
-            padding: const EdgeInsets.symmetric(vertical: 24),
-            child: Text('内网穿透', style: HomeDeskTokens.of(context).titleStyle)),
-        Expanded(child: _loginFormContent()),
-      ]);
+  Widget _loginForm() => _loginFormContent();
 
   @override
   Widget build(BuildContext context) =>

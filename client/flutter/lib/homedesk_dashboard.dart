@@ -51,6 +51,8 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
   @override
   void initState() {
     super.initState();
+    // The foreground session owner must survive the transition from login to remote workspace.
+    _servicesInitialized = widget.initializeAccount;
     HomeDeskDashboard.active = this;
   }
 
