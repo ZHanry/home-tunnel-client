@@ -13,7 +13,7 @@ import (
 )
 
 func checkParent(parentID uint32) error {
-	if int(parentID) != os.Getppid() {
+	if int64(parentID) != int64(os.Getppid()) {
 		return errors.New("parent mismatch")
 	}
 	executable, err := os.Executable()

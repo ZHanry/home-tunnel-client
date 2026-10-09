@@ -23,21 +23,23 @@ def preserve_macos_generated_inputs():
         'client/flutter/macos/Runner.xcworkspace/contents.xcworkspacedata',
         'client/flutter/macos/Runner.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist',
         'client/flutter/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist',
+        'client/flutter/macos/Runner.xcodeproj/project.xcworkspace/contents.xcworkspacedata',
+        'client/flutter/macos/Runner.xcodeproj/project.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings',
     }
     changed = subprocess.check_output(['git','diff','--name-only','-z'],cwd=ROOT).decode().split('\0')
     changed = [path for path in changed if path]
     unknown = set(changed) - allowed
     if unknown:
         raise SystemExit('Native build unexpectedly changed source: ' + ', '.join(sorted(unknown)))
-    if not changed:return
     evidence = ROOT/'material-input/macos-generated-inputs'
     evidence.mkdir(parents=True,exist_ok=True)
     (evidence/'flutter-cocoapods.patch').write_bytes(subprocess.check_output(['git','diff','--',*changed],cwd=ROOT))
-    for path in changed:
+    for path in sorted(allowed):
+        if not (ROOT/path).is_file():continue
         destination=evidence/path
         destination.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(ROOT/path,destination)
-    subprocess.run(['git','restore','--worktree','--',*changed],cwd=ROOT,check=True)
+    if changed:subprocess.run(['git','restore','--worktree','--',*changed],cwd=ROOT,check=True)
 
 def build_environment():
     env=os.environ.copy()
