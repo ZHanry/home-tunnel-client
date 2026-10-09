@@ -760,7 +760,7 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w600)),
                             const SizedBox(height: 8),
-                            const Text('设备名称由该设备上的 home-tunnel 客户端修改。',
+                            const Text('设备名称由该设备上的 nestlink 客户端修改。',
                                 style: TextStyle(fontSize: 12)),
                             const SizedBox(height: 12),
                             HomeDeskFieldLabel('标签',
