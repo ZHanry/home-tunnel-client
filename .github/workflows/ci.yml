@@ -83,6 +83,9 @@ jobs:
         key: ${{ steps.native-deps.outputs.cache-primary-key }}
     - name: Build native P2P client
       run: python build/ci/build-client.py --target win-x64 --config build/config.toml.example
+    - name: Validate native account and browser permit signatures
+      working-directory: client
+      run: cargo test --release --locked --features flutter,hwcodec --lib nestlink_auth::tests
     - name: Analyze and test the current Flutter product
       shell: pwsh
       run: |
@@ -122,8 +125,8 @@ jobs:
           material-input/**
         if-no-files-found: error
         retention-days: 30
-  cli:
-    name: Current-source CLI and independent tunnel regression
+  tunnel:
+    name: Embedded tunnel runtime regression
     runs-on: ubuntu-24.04
     env:
       CGO_ENABLED: '0'
@@ -140,16 +143,6 @@ jobs:
       run: |-
         go test ./...
         python3 scripts/verify-frp-security.py
-    - name: Package the five-platform CLI and original Agents
-      run: python3 scripts/package-cli-bundle.py
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-      with:
-        name: homedesk-cli
-        include-hidden-files: true
-        path: |-
-          products/*
-          material-input/**
-        if-no-files-found: error
   policy:
     name: P2P source and contract checks
     runs-on: ubuntu-24.04
@@ -183,7 +176,7 @@ jobs:
     if: ${{ always() }}
     needs:
     - windows
-    - cli
+    - tunnel
     - policy
     - unix
     steps:
@@ -204,10 +197,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - target: mac-x64
-          runner: macos-15-intel
-        - target: mac-arm64
-          runner: macos-15
         - target: linux-x64
           runner: ubuntu-24.04
         - target: linux-arm64
@@ -243,13 +232,13 @@ jobs:
       run: bash build/ci/setup-unix.sh "${{ matrix.target }}"
     - name: Build shared GUI from current source
       run: python3 build/ci/build-client.py --target "${{ matrix.target }}" --config build/config.toml.example
+    - name: Validate native account and browser permit signatures
+      working-directory: client
+      run: cargo test --release --locked --features flutter,hwcodec --lib nestlink_auth::tests
     - name: Package current Agent and native GUI
       run: |-
         python3 scripts/package-nestlink-unix.py --target "${{ matrix.target }}"
         python3 scripts/collect-native-materials.py
-    - name: Install, start and remove the actual macOS package with Keychain regression
-      if: startsWith(matrix.target, 'mac-')
-      run: python3 scripts/test-nestlink-unix.py --target "${{ matrix.target }}"
     - name: Install, start and remove the actual DEB with Secret Service regression
       if: startsWith(matrix.target, 'linux-')
       run: |

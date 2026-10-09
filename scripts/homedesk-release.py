@@ -1,4 +1,4 @@
-"""Seal compact HomeDesk candidate assets and retain source and verification materials."""
+"""Seal versioned nestlink products with source, verified payloads and release evidence."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -36,8 +36,10 @@ def version():
 def candidate_metadata():
     value = version()
     tag = os.environ.get("GITHUB_REF_NAME", "")
-    if not re.fullmatch(r"\d+\.\d+\.\d+-(?:RC[1-9]\d*|rc\.[1-9]\d*)", value) or tag != "v" + value:
-        raise SystemExit("Only a matching candidate tag can publish HomeDesk; stable requires separate real acceptance.")
+    stable = value == "13.0.0"
+    candidate = re.fullmatch(r"\d+\.\d+\.\d+-(?:RC[1-9]\d*|rc\.[1-9]\d*)", value)
+    if (not stable and not candidate) or tag != "v" + value:
+        raise SystemExit("A matching supported product tag is required")
     revision = run("git", "rev-parse", "HEAD", capture=True)
     if revision != os.environ["GITHUB_SHA"]:
         raise SystemExit("Workflow checkout does not match the release revision")
@@ -53,11 +55,54 @@ def candidate_metadata():
         matches = [r for r in runs if r["name"] == name]
         if not matches or max(matches, key=lambda r: r["id"]).get("conclusion") != "success":
             raise SystemExit(f"The exact commit must pass {name}")
+    component = json.loads((ROOT/"compatibility.json").read_text())["component"] if (ROOT/"compatibility.json").is_file() else "hub"
+    acceptance = validate_acceptance(component, revision) if stable else None
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf8") as output:
         output.write(f"version={value}\n")
         cis = [r for r in runs if r["name"] in ("Client CI", "Android CI") and r.get("conclusion") == "success"]
-        if cis:
+        if acceptance and component in ("client", "android"):
+            selected_run = acceptance["build_run"]
+            selected = json.loads(run("gh", "api", f"repos/{repository}/actions/runs/{selected_run}", capture=True))
+            if selected.get("conclusion") != "success" or selected.get("head_sha") != acceptance["source_revision"]:
+                raise SystemExit("The accepted native payload must come from a successful exact-source CI run")
+            output.write(f"build-run={selected_run}\n")
+        elif cis:
             output.write(f"build-run={max(cis, key=lambda r:r['id'])['id']}\n")
+
+
+REQUIRED_SCENARIOS = {
+    "client": {"installed-native-p2p", "browser-screen-input", "account-revocation", "managed-tunnels"},
+    "server": {"account-migration", "browser-authorization", "native-authorization", "managed-tunnels"},
+    "android": {"installed-universal-apk", "account-login-management", "native-remote-control"},
+    "hub": {"component-bytes-signatures", "current-ui-site"},
+}
+
+def validate_acceptance(component, revision, payload=None):
+    path = ROOT/"docs/release/acceptance-13.0.0.json"
+    if not path.is_file():
+        raise SystemExit("13.0.0 requires recorded reproducible acceptance before publication")
+    record = json.loads(path.read_text(encoding="utf8"))
+    if record.get("version") != "13.0.0" or record.get("component") != component or record.get("status") != "passed_reproducible":
+        raise SystemExit("Release acceptance identity or status is invalid")
+    source = record.get("source_revision", "")
+    if not re.fullmatch(r"[a-f0-9]{40}", source):
+        raise SystemExit("Acceptance needs the tested source commit")
+    run("git", "merge-base", "--is-ancestor", source, revision)
+    changes = run("git", "diff", "--name-only", source, revision, capture=True).splitlines()
+    allowed = {"docs/release/acceptance-13.0.0.json", "docs/HOMEDESK_RELEASE.md", "docs/RELEASE_NOTES.md"}
+    if any(name not in allowed for name in changes):
+        raise SystemExit("Runtime source changed after acceptance: " + ", ".join(name for name in changes if name not in allowed))
+    scenarios = {item.get("name") for item in record.get("scenarios", []) if item.get("status") == "passed" and item.get("evidence")}
+    if not REQUIRED_SCENARIOS[component] <= scenarios:
+        raise SystemExit("Required reproducible integration scenarios did not pass")
+    if not {"physical-android-device", "carrier-network-nat", "long-duration-media"} <= set(record.get("unverified", [])):
+        raise SystemExit("The recorded scope must preserve the outstanding physical/network/media checks")
+    if payload is not None:
+        expected = record.get("deliverables", {})
+        actual = {file.name: digest(file) for file in payload}
+        if expected != actual:
+            raise SystemExit("Release payload bytes differ from the actually accepted installers/APK/deployment")
+    return record
 
 
 def add_source(bundle, checkout, prefix="source/"):
@@ -96,7 +141,7 @@ def pack(args):
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise SystemExit("Use an empty output directory; existing sealed assets are never overwritten")
-    maximum = {"server": 3, "client": 8, "android": 3, "hub": 2}[args.component]
+    maximum = {"server": 3, "client": 5, "android": 3, "hub": 2}[args.component]
     if len(args.select) + 2 > maximum or len(set(args.select)) != len(args.select):
         raise SystemExit("Too many or duplicate release attachments")
     selected = []
@@ -106,6 +151,7 @@ def pack(args):
             raise SystemExit(f"Missing deliverable: {name}")
         shutil.copyfile(source, output / name)
         selected.append(output / name)
+    acceptance = validate_acceptance(args.component, revision, selected) if value == "13.0.0" else None
     # The hub's only package already contains its distribution and corresponding source.
     material_name = f"NestLink-Distribution-{value}.zip" if args.component == "hub" else f"NestLink-{args.component}-Materials-{value}.zip"
     material = output / material_name
@@ -128,7 +174,8 @@ def pack(args):
         "policy": "require_direct", "relay_enabled": False,
         "deliverables": {p.name: digest(p) for p in selected}, "materials": payload,
         "build_run": os.environ.get("GITHUB_RUN_ID", "local"),
-        "acceptance": "candidate: cross-network NAT, sustained media and physical-device acceptance pending",
+        "acceptance": acceptance or "candidate: cross-network NAT, sustained media and physical-device acceptance pending",
+        "payload_source_revision": acceptance["source_revision"] if acceptance else revision,
     }
     manifest_path = staging / "BUILD.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf8")
@@ -164,10 +211,15 @@ def publish(args):
     tag = "v" + version()
     repository = os.environ["GITHUB_REPOSITORY"]
     notes = ROOT / "docs" / "HOMEDESK_RELEASE.md"
-    run("gh", "release", "create", tag, "--repo", repository, "--verify-tag", "--draft", "--prerelease",
-        "--title", "栖云桥 / NestLink " + version(), "--notes-file", str(notes))
+    stable = version() == "13.0.0"
+    creation = ["gh", "release", "create", tag, "--repo", repository, "--verify-tag", "--draft",
+                "--title", "nestlink " + version(), "--notes-file", str(notes)]
+    if not stable: creation.append("--prerelease")
+    run(*creation)
     run("gh", "release", "upload", tag, "--repo", repository, *[str(p) for p in sorted(directory.iterdir())])
-    run("gh", "release", "edit", tag, "--repo", repository, "--draft=false", "--prerelease", "--latest=false")
+    run("gh", "release", "edit", tag, "--repo", repository, "--draft=false",
+        "--prerelease=false" if stable else "--prerelease=true", "--latest=true" if stable else "--latest=false")
+
 
 
 if __name__ == "__main__":

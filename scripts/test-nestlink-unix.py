@@ -86,7 +86,7 @@ def main():
                     assert process.poll() is None, 'Installed native GUI exited during startup'
                     if args.target.startswith('linux'):
                         windows=subprocess.check_output(['xwininfo','-root','-tree'],text=True)
-                        assert re.search(r'"(?:NestLink|栖云桥)',windows), 'Installed GUI did not create its branded window'
+                        assert re.search(r'"(?:NestLink|NestLink)',windows), 'Installed GUI did not create its branded window'
                     record['startup']='installed native GUI remained running and created a window (Linux); no media assertion'
                 finally:
                     process.terminate()

@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "12.0.0-RC1"
+  #define AppVersion "13.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "."
@@ -10,17 +10,17 @@
 
 [Setup]
 AppId={{8F3C1B2A-7D54-4E19-9A6C-2B0E5D8F4A11}
-AppName=栖云桥 / NestLink
+AppName=nestlink
 AppVersion={#AppVersion}
 VersionInfoVersion=12.0.0.1
-AppPublisher=NestLink
+AppPublisher=nestlink
 AppPublisherURL=https://github.com/ZHanry/home-tunnel-client
 DefaultDirName={localappdata}\Home Tunnel
-DefaultGroupName=NestLink
+DefaultGroupName=nestlink
 DisableProgramGroupPage=yes
 LicenseFile={#SourceDir}\LICENSE-RUSTDESK
 OutputDir={#OutputDir}
-OutputBaseFilename=NestLink-Setup-{#AppVersion}-x64
+OutputBaseFilename=nestlink-Setup-{#AppVersion}-x64
 SetupIconFile={#SourceDir}\HomeDesk.ico
 Compression=lzma2
 SolidCompression=yes
@@ -44,9 +44,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\NestLink"; Filename: "{app}\homedesk.exe"
-Name: "{autodesktop}\NestLink"; Filename: "{app}\homedesk.exe"; Tasks: desktopicon
-Name: "{group}\Uninstall NestLink"; Filename: "{uninstallexe}"
+Name: "{group}\nestlink"; Filename: "{app}\homedesk.exe"
+Name: "{autodesktop}\nestlink"; Filename: "{app}\homedesk.exe"; Tasks: desktopicon
+Name: "{group}\Uninstall nestlink"; Filename: "{uninstallexe}"
 
 [InstallDelete]
 Type: files; Name: "{app}\home-tunnel-gui.exe"
@@ -60,7 +60,7 @@ Root: HKA; Subkey: "Software\Classes\homedesk"; ValueType: string; ValueName: "U
 Root: HKA; Subkey: "Software\Classes\homedesk\shell\open\command"; ValueType: string; ValueData: """{app}\homedesk.exe"" ""%1"""
 
 [Run]
-Filename: "{app}\homedesk.exe"; Description: "{cm:LaunchProgram,NestLink}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\homedesk.exe"; Description: "{cm:LaunchProgram,nestlink}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 function OpenUpgradeTarget(FileName: String; DesiredAccess, ShareMode: LongWord;

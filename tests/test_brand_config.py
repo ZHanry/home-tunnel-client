@@ -46,7 +46,7 @@ source_cidr = ""
 
     def test_example_brand_values(self) -> None:
         config = load_brand(REPO_ROOT / "build" / "config.toml.example")
-        self.assertEqual("NestLink", config.app_name)
+        self.assertEqual("nestlink", config.app_name)
         self.assertEqual("homedesk", config.executable_name)
         self.assertEqual("homedesk", config.package_name)
 
@@ -72,7 +72,7 @@ source_cidr = ""
             destination = Path(directory) / "out.desktop"
             source.write_text("Name=RustDesk\nExec=rustdesk %u\n", encoding="utf-8")
             copy_branded_text(source, destination, config)
-            self.assertEqual("Name=NestLink\nExec=homedesk %u\n", destination.read_text(encoding="utf-8"))
+            self.assertEqual("Name=nestlink\nExec=homedesk %u\n", destination.read_text(encoding="utf-8"))
 
     def test_environment_override(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

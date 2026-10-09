@@ -52,5 +52,9 @@ if packages.is_file():
             continue  # Exact repository/submodule bytes are in corresponding-source.zip.
         shutil.copytree(source, destination / 'dart-packages' / package['name'], dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('.git', 'build', '.dart_tool'))
+# The browser helper ships Pion and its locked Go graph as part of the desktop GUI.
+go_vendor = destination / 'go-vendor'
+subprocess.run(['go', 'mod', 'vendor', '-o', str(go_vendor)], cwd=ROOT, check=True)
+(destination / 'go-modules.json').write_bytes(subprocess.check_output(['go', 'list', '-m', '-json', 'all'], cwd=ROOT))
 (destination / 'README.txt').write_text('Corresponding repository source is in corresponding-source.zip. Rust dependencies are vendored with the lockfile; adjust the provided cargo directory path when extracting into a different layout. Native sources are the actual patched vcpkg inputs and their notices. dart-packages contains every resolved external Dart/Flutter package including its assets and license. Build tools/SDK versions and original download paths are pinned in the repository workflows.\n')
 print(json.dumps({'materials': str(destination), 'rust_dependencies': 'locked vendor', 'native_sources': 'patched vcpkg build inputs'}))

@@ -77,7 +77,7 @@ else:
         assert (root / "tests/browser/desktop.spec.mjs").exists()
         version = re.search(r'const Version = "([^"]+)"', (root / "internal/model/model.go").read_text(encoding="utf-8")).group(1)
         assert compat['version'] == version, 'Product metadata version drift'
-        if version.startswith(('11.', '12.')):
+        if version.startswith(('11.', '12.', '13.')):
             assert f'version = "{version}"' in (root/'client/Cargo.toml').read_text()
             assert f'version: {version}+' in (root/'client/flutter/pubspec.yaml').read_text()
         assert f'HOST_VERSION = "{version}"' in (root / "native/remote/generated/host_version.hpp").read_text(), "Native host version drift"
@@ -87,6 +87,10 @@ else:
         assert (root / "release-signing-cert.sha256").read_text().strip() == "d7779e338be1039acee6dda9a43417cbf2baf4b0c9995578d9708501e95af702"
         wrapper = root / "gradle/wrapper/gradle-wrapper.jar"
         assert hashlib.sha256(wrapper.read_bytes()).hexdigest() == "498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17"
+
+extension = json.loads((root/'contracts/browser.lock.json').read_text())
+for item in extension['files']:
+    assert hashlib.sha256((root/item['path']).read_bytes()).hexdigest()==item['sha256'], 'Browser extension drift'
 
 files = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=root).decode().split("\0")
 for name in filter(None, files):
