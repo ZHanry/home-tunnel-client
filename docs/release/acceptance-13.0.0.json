@@ -1,0 +1,717 @@
+{
+  "schema_version": 1,
+  "version": "13.0.0",
+  "component": "client",
+  "status": "passed_reproducible",
+  "source_revision": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+  "build_run": 37960914602,
+  "recorded_at": "2026-10-09T17:42:35.650030+00:00",
+  "deliverables": {
+    "NestLink-Setup-13.0.0-x64.exe": "9410616f7e8b961eb6612545bf260c25abe83196cf4fa05b533785dc3266a88a",
+    "NestLink-Linux-13.0.0-x64.deb": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+    "NestLink-Linux-13.0.0-arm64.deb": "c89325bba7dae33d1feee4a7087bf82751b0fa1e2d4d94a22545e7fb1bf7b6c0"
+  },
+  "scenarios": [
+    {
+      "name": "installed-native-p2p",
+      "status": "passed",
+      "evidence": {
+        "installed_payload": {
+          "component": "client",
+          "version": "13.0.0",
+          "source_revision": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "status": "passed",
+          "package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "gui_sha256": "43c8c8458daf937fe5505a31d3082061483dc10b9b6730b50a6187c237cd557e",
+          "flutter_app_sha256": "37b9e071e74c198a4cd46de1bf584449c4cc769c4ed15a2c3726a02722a5326c",
+          "verified_runtime_files": 100,
+          "running_processes": [
+            {
+              "pid": 1780721,
+              "uid": 1001,
+              "executable_sha256": "43c8c8458daf937fe5505a31d3082061483dc10b9b6730b50a6187c237cd557e"
+            },
+            {
+              "pid": 1781277,
+              "uid": 1002,
+              "executable_sha256": "43c8c8458daf937fe5505a31d3082061483dc10b9b6730b50a6187c237cd557e"
+            }
+          ],
+          "running_helpers": [
+            {
+              "pid": 1781771,
+              "uid": 1002,
+              "executable": "/usr/share/homedesk/tunnel-runtime/homedesk-tunnel-helper",
+              "sha256": "7e276bd206ec02d2fdd08cf4c2d5105fef30e1318585393c15fc8f0f5a482a6e"
+            },
+            {
+              "pid": 1781815,
+              "uid": 1002,
+              "executable": "/usr/share/homedesk/tunnel-runtime/home-tunnel-agent",
+              "sha256": "52b097a43cbbb2517420a4124f6eec9d33d1b00f9df221ee566844cc66699610"
+            },
+            {
+              "pid": 1788398,
+              "uid": 1001,
+              "executable": "/usr/share/homedesk/tunnel-runtime/homedesk-tunnel-helper",
+              "sha256": "7e276bd206ec02d2fdd08cf4c2d5105fef30e1318585393c15fc8f0f5a482a6e"
+            },
+            {
+              "pid": 1788407,
+              "uid": 1001,
+              "executable": "/usr/share/homedesk/tunnel-runtime/home-tunnel-agent",
+              "sha256": "52b097a43cbbb2517420a4124f6eec9d33d1b00f9df221ee566844cc66699610"
+            }
+          ],
+          "scope": "Actual installed package files, GUI and helper processes of the task users only."
+        },
+        "cross_account": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "status": "passed",
+          "scenario": "cross-account installed native approval, real screen, keyboard input and direct endpoint sockets",
+          "controller_account": "qa-one",
+          "host_account": "qa-two",
+          "input": "nestlink-native-input-13",
+          "direct_sockets": [
+            {
+              "local": "172.21.174.222:41273",
+              "remote": "172.21.174.222:35121",
+              "uid": 1001
+            },
+            {
+              "local": "172.21.174.222:35121",
+              "remote": "172.21.174.222:41273",
+              "uid": 1002
+            }
+          ],
+          "screenshots": {
+            "controller-input.png": "4ac7f5b0bae6af101651699a0c7a9c3bc0358e6d8e81041d9626c3e57682a9ad",
+            "controller-request.png": "92ba3a3b459bb8fc950820269bae673f9e11a34bdbb937db8bb7d49b8284e872",
+            "host-after-approval.png": "a5dc9e4e678f9adfd2a159755462801f924233d2fa21221cc4d023babc260818",
+            "host-approval.png": "bdea29ac309efb5ff22b8f593ff5abc71cb765954a203c634b8cc84dd397734b",
+            "host-input.png": "ac9344fbb5bfb9530fbf25845a8d5fb4c7e2cf5ce94fbc1d36c55f8728672f81",
+            "native-screen.png": "98ba0e07ef4ae4c424dd26c680e72c56eb68b17545edf56dbf05e059a52d9a7f"
+          },
+          "scope": "Two task users and X11 desktops on one WSL host; no physical desktop or carrier NAT claim."
+        },
+        "renewal": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "before": {
+            "id": "bfff63ac-7da9-455d-94fe-c2385604b146",
+            "updated_at": "2026-10-09T17:16:29.928Z",
+            "access_expires_at": "2026-10-09T17:31:29.928Z",
+            "refresh_expires_at": "2026-11-08T17:16:29.928Z"
+          },
+          "expired_at_unix": 1791566257.269328,
+          "scope": "Only this disposable account access expiry was shortened in the fixture database; real client and server authentication/renewal paths are unchanged.",
+          "after": {
+            "id": "bfff63ac-7da9-455d-94fe-c2385604b146",
+            "updated_at": "2026-10-09T17:17:41.320Z",
+            "access_expires_at": "2026-10-09T17:32:41.320Z",
+            "refresh_expires_at": "2026-11-08T17:16:29.928Z"
+          },
+          "status": "passed",
+          "observation_delay_seconds": 29.475
+        },
+        "remembered_login": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "status": "passed",
+          "scenarios": [
+            "qa-two restored remembered login after package upgrade and complete task session restart",
+            "qa-one signed in with remember-login and restored authenticated workspace after GUI process restart without re-entering credentials"
+          ],
+          "observed": [
+            "correct account names and stable remote IDs displayed",
+            "online host registration and configured tunnels restored"
+          ],
+          "screenshots": {
+            "release13-b-start.png": "49f462f90f87d161bc73982c42b8625b4e427fda7ea651bd530e1de2534ab390",
+            "release13-a-remembered.png": "2e431ebf5f371671ca8103c4e34e50032f02fe08e8af509c3f723f3ec7614d7c"
+          },
+          "scope": "Actual installed final Linux x64 GUI and real Secret Service; screenshots visually reviewed. Credentials and passwords are not included."
+        },
+        "fixed_workspace": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "status": "passed",
+          "before": {
+            "WINDOW": 4194307,
+            "X": 123,
+            "Y": 70,
+            "WIDTH": 1120,
+            "HEIGHT": 760,
+            "SCREEN": 0
+          },
+          "after_resize_attempt": {
+            "WINDOW": 4194307,
+            "X": 123,
+            "Y": 70,
+            "WIDTH": 1120,
+            "HEIGHT": 760,
+            "SCREEN": 0
+          },
+          "window_hints": "WM_NORMAL_HINTS(WM_SIZE_HINTS):\n\t\tprogram specified minimum size: 1120 by 760\n\t\tprogram specified maximum size: 1120 by 760\n\t\tprogram specified base size: 0 by 0\n\t\twindow gravity: NorthWest\n_NET_WM_ALLOWED_ACTIONS(ATOM) = _NET_WM_ACTION_CHANGE_DESKTOP, _NET_WM_ACTION_CLOSE, _NET_WM_ACTION_MOVE, _NET_WM_ACTION_MINIMIZE, _NET_WM_ACTION_FULLSCREEN, _NET_WM_ACTION_ABOVE, _NET_WM_ACTION_BELOW, _OB_WM_ACTION_UNDECORATE\n",
+          "scope": "Actual main-window constraints only; login restoration is recorded separately."
+        },
+        "native_installer_checks": {
+          "windows13-final": {
+            "status": "passed",
+            "revision": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+            "version": "13.0.0",
+            "scope": "silent install, exact payload hashes, URL protocol, GUI PE version, branded window startup and uninstall; no remote media acceptance",
+            "verified_files": 115,
+            "installer_sha256": "9410616f7e8b961eb6612545bf260c25abe83196cf4fa05b533785dc3266a88a"
+          },
+          "linux13-final": {
+            "target": "linux-x64",
+            "version": "13.0.0",
+            "revision": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+            "status": "passed",
+            "credentials": "real Secret Service protected record, cross-process consume, logout, corruption recovery",
+            "startup": "installed native GUI remained running and created a window (Linux); no media assertion",
+            "package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+            "scope": "actual package installation, protected credential fixture, startup and removal; physical-device permissions and media are separately verified"
+          },
+          "linuxarm13-final": {
+            "target": "linux-arm64",
+            "version": "13.0.0",
+            "revision": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+            "status": "passed",
+            "credentials": "real Secret Service protected record, cross-process consume, logout, corruption recovery",
+            "startup": "installed native GUI remained running and created a window (Linux); no media assertion",
+            "package_sha256": "c89325bba7dae33d1feee4a7087bf82751b0fa1e2d4d94a22545e7fb1bf7b6c0",
+            "scope": "actual package installation, protected credential fixture, startup and removal; physical-device permissions and media are separately verified"
+          }
+        },
+        "windows_upgrade_checks": {
+          "revision": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "status": "passed",
+          "cases": [
+            {
+              "case": "original RC1 reproduces false block",
+              "expected_exit": 7,
+              "actual_exit": 7,
+              "state_preserved": true,
+              "running_process_preserved": false
+            },
+            {
+              "case": "unregistered legacy executable upgrades",
+              "expected_exit": 0,
+              "actual_exit": 0,
+              "state_preserved": true,
+              "running_process_preserved": false
+            },
+            {
+              "case": "fresh install",
+              "expected_exit": 0,
+              "actual_exit": 0,
+              "state_preserved": true,
+              "running_process_preserved": false
+            },
+            {
+              "case": "running legacy service remains blocked",
+              "expected_exit": 7,
+              "actual_exit": 7,
+              "state_preserved": true,
+              "running_process_preserved": true
+            },
+            {
+              "case": "running HomeDesk remains blocked",
+              "expected_exit": 7,
+              "actual_exit": 7,
+              "state_preserved": true,
+              "running_process_preserved": true
+            }
+          ],
+          "scope": "Real Inno preflight and loaded-file checks in isolated, unregistered fixtures; no real service, account migration or remote media acceptance"
+        }
+      }
+    },
+    {
+      "name": "browser-screen-input",
+      "status": "passed",
+      "evidence": {
+        "connect": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "scenario": "connect",
+          "errors": [],
+          "transport": {
+            "connection": "connected",
+            "frames": 72,
+            "transport": {
+              "id": "T01",
+              "timestamp": 1791566408642.833,
+              "type": "transport",
+              "bytesReceived": 1087013,
+              "bytesSent": 38462,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceLocalUsernameFragment": "a0BA",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "localCertificateId": "CF18:A9:54:A0:AC:C0:29:FF:70:A9:8D:44:B5:D4:34:C2:58:B0:E1:73:23:E2:E2:AE:1B:CF:2F:2C:86:CB:F2:B9",
+              "packetsReceived": 1048,
+              "packetsSent": 580,
+              "remoteCertificateId": "CF26:E2:CE:97:C2:83:33:1C:B1:58:2C:45:9F:D8:DD:AC:57:9C:F3:31:10:9C:18:19:3B:6E:78:E6:72:F5:44:30",
+              "selectedCandidatePairChanges": 1,
+              "selectedCandidatePairId": "CPrvppse/e_jth+z0Xj",
+              "srtpCipher": "AES_CM_128_HMAC_SHA1_80",
+              "tlsVersion": "FEFD"
+            },
+            "pair": {
+              "id": "CPrvppse/e_jth+z0Xj",
+              "timestamp": 1791566408642.833,
+              "type": "candidate-pair",
+              "bytesDiscardedOnSend": 0,
+              "bytesReceived": 1087013,
+              "bytesSent": 38462,
+              "consentRequestsSent": 3,
+              "currentRoundTripTime": 0.001,
+              "lastPacketReceivedTimestamp": 1791566408529,
+              "lastPacketSentTimestamp": 1791566408529,
+              "localCandidateId": "Irvppse/e",
+              "nominated": true,
+              "packetsDiscardedOnSend": 0,
+              "packetsReceived": 1048,
+              "packetsSent": 580,
+              "priority": 9079290933605827000,
+              "remoteCandidateId": "Ijth+z0Xj",
+              "requestsReceived": 13,
+              "requestsSent": 4,
+              "responsesReceived": 4,
+              "responsesSent": 13,
+              "state": "succeeded",
+              "totalRoundTripTime": 0.003,
+              "transportId": "T01",
+              "writable": true
+            },
+            "local": {
+              "id": "Irvppse/e",
+              "timestamp": 1791566408642.833,
+              "type": "local-candidate",
+              "address": "172.21.174.222",
+              "candidateType": "host",
+              "foundation": "1381059684",
+              "ip": "172.21.174.222",
+              "isRemote": false,
+              "networkType": "unknown",
+              "port": 47588,
+              "priority": 2113937151,
+              "protocol": "udp",
+              "transportId": "T01",
+              "usernameFragment": "a0BA"
+            },
+            "remote": {
+              "id": "Ijth+z0Xj",
+              "timestamp": 1791566408642.833,
+              "type": "remote-candidate",
+              "address": "172.21.174.222",
+              "candidateType": "host",
+              "foundation": "909488115",
+              "ip": "172.21.174.222",
+              "isRemote": true,
+              "port": 44608,
+              "priority": 2130706431,
+              "protocol": "udp",
+              "transportId": "T01",
+              "usernameFragment": "CaxEdyqyVOdpmiMw"
+            }
+          },
+          "input": "nestlink-browser-input-13",
+          "status": "passed"
+        },
+        "decline": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "scenario": "decline",
+          "errors": [],
+          "message": "对方拒绝或结束了连接",
+          "frames": 0,
+          "status": "passed"
+        },
+        "wrong-password": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "scenario": "wrong-password",
+          "errors": [],
+          "message": "对方拒绝或结束了连接",
+          "frames": 0,
+          "status": "passed"
+        },
+        "offline": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "scenario": "offline",
+          "errors": [],
+          "message": "设备未就绪，请确认桌面客户端已登录并开启共享",
+          "frames": 0,
+          "status": "passed"
+        },
+        "revoke": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "scenario": "revoke",
+          "errors": [],
+          "transport": {
+            "connection": "connected",
+            "frames": 72,
+            "transport": {
+              "id": "T01",
+              "timestamp": 1791566533845.181,
+              "type": "transport",
+              "bytesReceived": 1090083,
+              "bytesSent": 41841,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceLocalUsernameFragment": "PstB",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "localCertificateId": "CFDD:1D:96:A4:45:45:A3:65:9E:C6:0A:C3:64:15:7F:86:49:7E:D4:83:03:F7:79:AF:85:F2:B9:A8:13:59:CC:A5",
+              "packetsReceived": 1102,
+              "packetsSent": 632,
+              "remoteCertificateId": "CF18:4D:C4:A4:15:1C:41:28:7A:B8:41:EA:78:FD:94:EC:DE:A5:F3:C5:9D:36:30:36:33:92:E6:CB:9E:A7:2C:B5",
+              "selectedCandidatePairChanges": 1,
+              "selectedCandidatePairId": "CPNAbqTYGC_KI2EFx/4",
+              "srtpCipher": "AES_CM_128_HMAC_SHA1_80",
+              "tlsVersion": "FEFD"
+            },
+            "pair": {
+              "id": "CPNAbqTYGC_KI2EFx/4",
+              "timestamp": 1791566533845.181,
+              "type": "candidate-pair",
+              "bytesDiscardedOnSend": 0,
+              "bytesReceived": 1090083,
+              "bytesSent": 41841,
+              "consentRequestsSent": 3,
+              "currentRoundTripTime": 0.001,
+              "lastPacketReceivedTimestamp": 1791566533812,
+              "lastPacketSentTimestamp": 1791566533812,
+              "localCandidateId": "INAbqTYGC",
+              "nominated": true,
+              "packetsDiscardedOnSend": 0,
+              "packetsReceived": 1102,
+              "packetsSent": 632,
+              "priority": 9079290933605827000,
+              "remoteCandidateId": "IKI2EFx/4",
+              "requestsReceived": 13,
+              "requestsSent": 4,
+              "responsesReceived": 4,
+              "responsesSent": 13,
+              "state": "succeeded",
+              "totalRoundTripTime": 0.003,
+              "transportId": "T01",
+              "writable": true
+            },
+            "local": {
+              "id": "INAbqTYGC",
+              "timestamp": 1791566533845.181,
+              "type": "local-candidate",
+              "address": "172.21.174.222",
+              "candidateType": "host",
+              "foundation": "1223460016",
+              "ip": "172.21.174.222",
+              "isRemote": false,
+              "networkType": "unknown",
+              "port": 41833,
+              "priority": 2113937151,
+              "protocol": "udp",
+              "transportId": "T01",
+              "usernameFragment": "PstB"
+            },
+            "remote": {
+              "id": "IKI2EFx/4",
+              "timestamp": 1791566533845.181,
+              "type": "remote-candidate",
+              "address": "172.21.174.222",
+              "candidateType": "host",
+              "foundation": "909488115",
+              "ip": "172.21.174.222",
+              "isRemote": true,
+              "port": 35881,
+              "priority": 2130706431,
+              "protocol": "udp",
+              "transportId": "T01",
+              "usernameFragment": "WdNtLxTKHVggzXCd"
+            }
+          },
+          "input": "nestlink-browser-input-13",
+          "revocation_disconnect_ms": 25,
+          "status": "passed"
+        }
+      }
+    },
+    {
+      "name": "account-revocation",
+      "status": "passed",
+      "evidence": {
+        "active_session_before_revoke": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "status": "passed",
+          "scenario": "cross-account installed native approval, real screen, keyboard input and direct endpoint sockets",
+          "controller_account": "qa-one",
+          "host_account": "qa-two",
+          "input": "nestlink-native-input-13",
+          "direct_sockets": [
+            {
+              "local": "172.21.174.222:43281",
+              "remote": "172.21.174.222:33305",
+              "uid": 1001
+            },
+            {
+              "local": "172.21.174.222:33305",
+              "remote": "172.21.174.222:43281",
+              "uid": 1002
+            }
+          ],
+          "screenshots": {
+            "controller-input.png": "846d4daf38e99d8350ed015a1a3eed4a03461f609a99bdd7a338cad31c577778",
+            "controller-request.png": "92ba3a3b459bb8fc950820269bae673f9e11a34bdbb937db8bb7d49b8284e872",
+            "host-after-approval.png": "a5dc9e4e678f9adfd2a159755462801f924233d2fa21221cc4d023babc260818",
+            "host-approval.png": "8182e2e3a5c5c8255cd1d278d5f46b3efc9d96c4452368009611a29bd69c59dd",
+            "host-input.png": "ac9344fbb5bfb9530fbf25845a8d5fb4c7e2cf5ce94fbc1d36c55f8728672f81",
+            "native-screen.png": "98ba0e07ef4ae4c424dd26c680e72c56eb68b17545edf56dbf05e059a52d9a7f"
+          },
+          "scope": "Two task users and X11 desktops on one WSL host; no physical desktop or carrier NAT claim."
+        },
+        "endpoint_closed": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "status": "passed",
+          "direct_sockets_after_revocation": [],
+          "scope": "The established native endpoint sockets closed after the task foreground management session was revoked."
+        },
+        "browser_closed": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "scenario": "revoke",
+          "errors": [],
+          "transport": {
+            "connection": "connected",
+            "frames": 72,
+            "transport": {
+              "id": "T01",
+              "timestamp": 1791566533845.181,
+              "type": "transport",
+              "bytesReceived": 1090083,
+              "bytesSent": 41841,
+              "dtlsCipher": "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+              "dtlsRole": "server",
+              "dtlsState": "connected",
+              "iceLocalUsernameFragment": "PstB",
+              "iceRole": "controlling",
+              "iceState": "connected",
+              "localCertificateId": "CFDD:1D:96:A4:45:45:A3:65:9E:C6:0A:C3:64:15:7F:86:49:7E:D4:83:03:F7:79:AF:85:F2:B9:A8:13:59:CC:A5",
+              "packetsReceived": 1102,
+              "packetsSent": 632,
+              "remoteCertificateId": "CF18:4D:C4:A4:15:1C:41:28:7A:B8:41:EA:78:FD:94:EC:DE:A5:F3:C5:9D:36:30:36:33:92:E6:CB:9E:A7:2C:B5",
+              "selectedCandidatePairChanges": 1,
+              "selectedCandidatePairId": "CPNAbqTYGC_KI2EFx/4",
+              "srtpCipher": "AES_CM_128_HMAC_SHA1_80",
+              "tlsVersion": "FEFD"
+            },
+            "pair": {
+              "id": "CPNAbqTYGC_KI2EFx/4",
+              "timestamp": 1791566533845.181,
+              "type": "candidate-pair",
+              "bytesDiscardedOnSend": 0,
+              "bytesReceived": 1090083,
+              "bytesSent": 41841,
+              "consentRequestsSent": 3,
+              "currentRoundTripTime": 0.001,
+              "lastPacketReceivedTimestamp": 1791566533812,
+              "lastPacketSentTimestamp": 1791566533812,
+              "localCandidateId": "INAbqTYGC",
+              "nominated": true,
+              "packetsDiscardedOnSend": 0,
+              "packetsReceived": 1102,
+              "packetsSent": 632,
+              "priority": 9079290933605827000,
+              "remoteCandidateId": "IKI2EFx/4",
+              "requestsReceived": 13,
+              "requestsSent": 4,
+              "responsesReceived": 4,
+              "responsesSent": 13,
+              "state": "succeeded",
+              "totalRoundTripTime": 0.003,
+              "transportId": "T01",
+              "writable": true
+            },
+            "local": {
+              "id": "INAbqTYGC",
+              "timestamp": 1791566533845.181,
+              "type": "local-candidate",
+              "address": "172.21.174.222",
+              "candidateType": "host",
+              "foundation": "1223460016",
+              "ip": "172.21.174.222",
+              "isRemote": false,
+              "networkType": "unknown",
+              "port": 41833,
+              "priority": 2113937151,
+              "protocol": "udp",
+              "transportId": "T01",
+              "usernameFragment": "PstB"
+            },
+            "remote": {
+              "id": "IKI2EFx/4",
+              "timestamp": 1791566533845.181,
+              "type": "remote-candidate",
+              "address": "172.21.174.222",
+              "candidateType": "host",
+              "foundation": "909488115",
+              "ip": "172.21.174.222",
+              "isRemote": true,
+              "port": 35881,
+              "priority": 2130706431,
+              "protocol": "udp",
+              "transportId": "T01",
+              "usernameFragment": "WdNtLxTKHVggzXCd"
+            }
+          },
+          "input": "nestlink-browser-input-13",
+          "revocation_disconnect_ms": 25,
+          "status": "passed"
+        }
+      }
+    },
+    {
+      "name": "managed-tunnels",
+      "status": "passed",
+      "evidence": {
+        "before_remote": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "server_image": "ghcr.io/zhanry/home-tunnel-control-center@sha256:1f586773c1273137a349f96676be5c6bc1967f7b7efa71d013151223501e3770",
+          "status": "passed",
+          "scenario": "release-before-remote",
+          "results": {
+            "http": {
+              "received": "nestlink-tunnel-13:/probe",
+              "passed": true
+            },
+            "https_backend": {
+              "received": "nestlink-tunnel-13:/probe",
+              "passed": true
+            },
+            "tcp": {
+              "received": "nestlink-tcp-13:acceptance",
+              "passed": true
+            },
+            "udp": {
+              "received": "nestlink-udp-13:acceptance",
+              "passed": true
+            }
+          },
+          "scope": "HTTP gateway and TLS local HTTPS backend; real FRP TCP/UDP data. Isolated loopback backends; no operator network NAT assertion."
+        },
+        "after_remote_close": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "server_image": "ghcr.io/zhanry/home-tunnel-control-center@sha256:1f586773c1273137a349f96676be5c6bc1967f7b7efa71d013151223501e3770",
+          "status": "passed",
+          "scenario": "release-after-remote-close",
+          "results": {
+            "http": {
+              "received": "nestlink-tunnel-13:/probe",
+              "passed": true
+            },
+            "https_backend": {
+              "received": "nestlink-tunnel-13:/probe",
+              "passed": true
+            },
+            "tcp": {
+              "received": "nestlink-tcp-13:acceptance",
+              "passed": true
+            },
+            "udp": {
+              "received": "nestlink-udp-13:acceptance",
+              "passed": true
+            }
+          },
+          "scope": "HTTP gateway and TLS local HTTPS backend; real FRP TCP/UDP data. Isolated loopback backends; no operator network NAT assertion."
+        },
+        "after_account_revoke": {
+          "version": "13.0.0",
+          "client_source": "4cf3d1603a7c6d22b37746f3f02fee707a9338d9",
+          "client_package_sha256": "bd2b9a612ea7078a745b4bcb977bf804b97f24b51871f5bd8f8be4d713a51957",
+          "server_source": "4ccf4a068f7b8353e1ca734918f9e36cc69a39e9",
+          "server_image": "ghcr.io/zhanry/home-tunnel-control-center@sha256:1f586773c1273137a349f96676be5c6bc1967f7b7efa71d013151223501e3770",
+          "status": "passed",
+          "scenario": "release-after-account-revoke",
+          "results": {
+            "http": {
+              "received": "nestlink-tunnel-13:/probe",
+              "passed": true
+            },
+            "https_backend": {
+              "received": "nestlink-tunnel-13:/probe",
+              "passed": true
+            },
+            "tcp": {
+              "received": "nestlink-tcp-13:acceptance",
+              "passed": true
+            },
+            "udp": {
+              "received": "nestlink-udp-13:acceptance",
+              "passed": true
+            }
+          },
+          "scope": "HTTP gateway and TLS local HTTPS backend; real FRP TCP/UDP data. Isolated loopback backends; no operator network NAT assertion."
+        }
+      }
+    }
+  ],
+  "quality_evidence": {
+    "client_ci": "https://github.com/ZHanry/home-tunnel-client/actions/runs/37960914602",
+    "codeql": "https://github.com/ZHanry/home-tunnel-client/actions/runs/37960914604",
+    "secret_scan": "https://github.com/ZHanry/home-tunnel-client/actions/runs/37960914691"
+  },
+  "reproduction": {
+    "installers": "Use the exact source CI receipts and hash each installer before installing. Windows runner checks 115 installed files, PE version, URL protocol, startup, uninstall and isolated upgrade preflight. Linux x64/ARM64 runners install and launch the actual DEBs, verify real Secret Service records across processes, logout/corruption recovery and removal.",
+    "native": "Install the accepted x64 DEB into isolated X11 test desktops for two OS users and separate accounts. Sign in to the accepted server image digests. Request the other account device by ID and approve on the host. View real screen, send a unique keyboard marker into a host terminal and inspect the paired direct endpoint sockets. Expire only the disposable foreground access lease, observe server renewal and retained direct connection. Revoke the foreground session and require sockets to close.",
+    "browser": "Connect with Chromium to the actual accepted Web server and installed Linux host. Require nominated UDP host/srflx/prflx ICE candidates, connected DTLS, increasing frame count and the unique host keyboard marker. Reject, give an incorrect password and target an offline ID; require closed peer connection and zero frames. Revoke the active browser session and observe immediate disconnection.",
+    "tunnels": "Configure disposable HTTP, HTTPS local-backend, TCP and UDP services through the GUI. Probe real gateway/FRP responses before remote control, after viewer close and after foreground account revocation. Their independently credentialed lifecycle must continue.",
+    "workspace": "Inspect real X11 main-window min/max hints and absence of resize/maximize actions; attempt 900x650 and require unchanged 1120x760. Force-close/restart the signed-in GUI and verify remembered account restoration without password entry."
+  },
+  "unverified": [
+    "physical-android-device",
+    "carrier-network-nat",
+    "long-duration-media",
+    "windows-remote-media",
+    "linux-arm64-remote-media",
+    "wayland-remote-desktop",
+    "audio-file-clipboard",
+    "successful-fixed-password-session",
+    "multiple-monitor-dpi-runtime"
+  ],
+  "scope": "Final installed Linux x64 remote sessions and browser integration; Windows and Linux ARM64 exact-package installation/startup/credential checks are separate from actual media. Browser JPEG maximum 1920x1080, approximately 6.7 fps. Windows has no Authenticode publisher signature. No production deployment upgrade."
+}
