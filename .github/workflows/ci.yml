@@ -92,7 +92,7 @@ jobs:
         cd client/flutter
         flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
         if ($LASTEXITCODE -ne 0) { throw 'Dart errors' }
-        flutter test --no-pub test/homedesk_devices_test.dart test/homedesk_dashboard_test.dart test/homedesk_advanced_test.dart test/homedesk_services_test.dart test/homedesk_mobile_test.dart
+        flutter test --no-pub test/homedesk_devices_test.dart test/homedesk_dashboard_test.dart test/homedesk_advanced_test.dart test/homedesk_services_test.dart test/homedesk_mobile_test.dart test/homedesk_android_credentials_test.dart
         if ($LASTEXITCODE -ne 0) { throw 'Widget tests failed' }
         cd ../..
         $env:HOMEDESK_TEST_OPENSSL = "C:/Program Files/Git/usr/bin/openssl.exe"
