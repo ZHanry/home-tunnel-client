@@ -30,18 +30,12 @@ if not redist:
 for library in redist[-1].glob('*.dll'):
     shutil.copy2(library, payload/library.name)
 (payload/'VCRUNTIME-NOTICES.txt').write_text('Microsoft Visual C++ Runtime redistributables from the installed Visual Studio 2022 toolchain. Copyright Microsoft Corporation. Redistributed with this C++ application under the Visual Studio license. https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files\n')
-for name in ('home-tunnel-agent.exe', 'homedesk-tunnel-helper.exe', 'runtime.json', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt'):
+for name in ('home-tunnel-agent.exe', 'homedesk-tunnel-helper.exe', 'nestlink-browser-helper.exe', 'runtime.json', 'LICENSE.txt', 'FRP-LICENSE.txt', 'THIRD-PARTY-NOTICES.txt'):
     (payload / 'tunnel-runtime').mkdir(exist_ok=True)
     shutil.copy2(runtime / name, payload / 'tunnel-runtime' / name)
 for name in ('LICENSE', 'LICENSE-RUSTDESK', 'README.md'):
     shutil.copy2(ROOT / name, payload / name)
 shutil.copy2(ROOT / 'client/res/icon.ico', payload / 'HomeDesk.ico')
-shutil.copy2(ROOT / 'packaging/windows/independent-tunnel.ps1', payload)
-shutil.copy2(runtime / 'home-tunnel-agent.exe', payload / 'home-tunnel-agent.exe')
-agent_sha = manifest['agent_sha256']
-subprocess.run(['go', 'build', '-mod=readonly', '-trimpath', '-ldflags',
-    '-s -w -X main.expectedAgentSHA256=' + agent_sha,
-    '-o', str(payload / 'home-tunnel-client.exe'), './cmd/home-tunnel-client'], cwd=ROOT, check=True)
 products = ROOT / 'products'
 products.mkdir(exist_ok=True)
 subprocess.run([args.iscc, '/DAppVersion=' + version, '/DSourceDir=' + str(payload),

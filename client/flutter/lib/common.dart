@@ -2068,6 +2068,8 @@ Future<bool> restoreWindowPosition(WindowType type,
       case WindowType.Main:
         // Center the main window only if no position is saved (on first run).
         if (isWindows || isLinux) {
+          final size = await _adjustRestoreMainWindowSize(1120, 760);
+          await windowManager.setSize(size);
           await windowManager.center();
         }
         // For MacOS, the window is already centered by default.

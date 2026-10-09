@@ -368,12 +368,20 @@ class HomeTunnelApi {
       bool mutation = false}) async {
     _checkGeneration(generation);
     final bytes = body == null ? null : utf8.encode(jsonEncode(body));
-    if (bytes != null && bytes.length > 16 * 1024) {
+    if (bytes != null &&
+        bytes.length > (path.startsWith('/browser/') ? 36 * 1024 : 16 * 1024)) {
       throw const HomeTunnelApiException(
           'HomeTunnel 请求内容过大。', 'REQUEST_TOO_LARGE');
     }
-    final namespace = path.startsWith('/auth/') || path.startsWith('/remote/') || path.startsWith('/homedesk/') || path.startsWith('/public/updates/') ? 'v2' : 'v1';
-    final uri = base.replace(path: '/api/$namespace$path', queryParameters: query);
+    final namespace = path.startsWith('/auth/') ||
+            path.startsWith('/remote/') ||
+            path.startsWith('/browser/') ||
+            path.startsWith('/homedesk/') ||
+            path.startsWith('/public/updates/')
+        ? 'v2'
+        : 'v1';
+    final uri =
+        base.replace(path: '/api/$namespace$path', queryParameters: query);
     final operation = _Operation();
     _operations.add(operation);
     try {
@@ -570,10 +578,10 @@ class HomeTunnelApi {
   String get _clientType => Platform.isAndroid
       ? 'android'
       : Platform.isWindows
-      ? 'windows'
-      : Platform.isMacOS
-          ? 'macos'
-          : 'linux';
+          ? 'windows'
+          : Platform.isMacOS
+              ? 'macos'
+              : 'linux';
 
   Future<void> _eraseRemembered() async {
     final storage = _credentialStorage;
@@ -715,7 +723,7 @@ class HomeTunnelApi {
         password.isEmpty ||
         password.length > 256) {
       throw const HomeTunnelApiException(
-          '请输入有效的栖云桥账号和密码。', 'INPUT_INVALID');
+          '请输入有效的NestLink账号和密码。', 'INPUT_INVALID');
     }
     _loginBusy = true;
     _clearSession();
@@ -1059,13 +1067,23 @@ class HomeTunnelApi {
     return List.unmodifiable(bindings);
   }
 
-  Future<void> registerGuiDevice({required String installId, required String fingerprint, required String name}) async {
+  Future<void> registerGuiDevice(
+      {required String installId,
+      required String fingerprint,
+      required String name}) async {
     if (_guiDeviceId.isNotEmpty) return;
     final generation = _generation;
-    final value = _success(await _authenticated('POST', '/auth/devices', generation: generation, body: {
-      'name': name, 'install_id': installId, 'fingerprint_hash': fingerprint,
-      'client_version': '12.0.0-RC1', 'client_type': _clientType, 'credential_purpose': 'gui',
-    }, mutation: true));
+    final value = _success(await _authenticated('POST', '/auth/devices',
+        generation: generation,
+        body: {
+          'name': name,
+          'install_id': installId,
+          'fingerprint_hash': fingerprint,
+          'client_version': '13.0.0',
+          'client_type': _clientType,
+          'credential_purpose': 'gui',
+        },
+        mutation: true));
     _checkGeneration(generation);
     _guiDeviceId = _id(value['device_id']);
     _setGuiSession(value);
@@ -1079,16 +1097,21 @@ class HomeTunnelApi {
   }
 
   Future<Map<String, String>> nativeAuthorization() async {
-    if (!isSignedIn || _guiAccess == null) throw const HomeTunnelApiException('请先登录自建服务。', 'LOGIN_REQUIRED');
+    if (!isSignedIn || _guiAccess == null)
+      throw const HomeTunnelApiException('请先登录自建服务。', 'LOGIN_REQUIRED');
     final generation = _generation;
-    if (_guiAccessExpires == null || _guiAccessExpires!.isBefore(DateTime.now().toUtc().add(const Duration(seconds: 30)))) {
+    if (_guiAccessExpires == null ||
+        _guiAccessExpires!.isBefore(
+            DateTime.now().toUtc().add(const Duration(seconds: 30)))) {
       if (_guiRefreshing == null) {
         final refresh = _guiRefresh;
         _guiRefresh = null;
         _guiRefreshing = () async {
           try {
-            if (refresh == null) throw const HomeTunnelApiException('设备登录已失效。', 'SESSION_REVOKED');
-            final value = _success(await _request('POST', '/auth/refresh', generation: generation,
+            if (refresh == null)
+              throw const HomeTunnelApiException('设备登录已失效。', 'SESSION_REVOKED');
+            final value = _success(await _request('POST', '/auth/refresh',
+                generation: generation,
                 body: {'refresh_token': refresh, 'client_type': _clientType}));
             _checkGeneration(generation);
             _setGuiSession(value);
@@ -1098,20 +1121,76 @@ class HomeTunnelApi {
           }
         }();
       }
-      try { await _guiRefreshing; } finally { _guiRefreshing = null; }
+      try {
+        await _guiRefreshing;
+      } finally {
+        _guiRefreshing = null;
+      }
     }
     _checkGeneration(generation);
-    return {'origin': base.origin, 'device_id': _guiDeviceId, 'access_token': _guiAccess!};
+    return {
+      'origin': base.origin,
+      'device_id': _guiDeviceId,
+      'access_token': _guiAccess!
+    };
   }
 
   Future<void> publishNativeBinding(Map<String, dynamic> binding) async {
     final authorization = await nativeAuthorization();
     final value = {...binding, 'platform': _clientType};
-    _success(await _request('PUT', '/homedesk/devices/current', generation: _generation,
-        token: authorization['access_token'], body: value));
+    _success(await _request('PUT', '/homedesk/devices/current',
+        generation: _generation,
+        token: authorization['access_token'],
+        body: value));
   }
 
-  Future<Map<String, dynamic>> accountSummary() => _get('/auth/me', _generation, {});
+  Future<Map<String, dynamic>> _browserRequest(String method, String path,
+      {Map<String, Object?>? body}) async {
+    final authorization = await nativeAuthorization();
+    return _success(await _request(method, '/browser$path',
+        generation: _generation,
+        token: authorization['access_token'],
+        body: body));
+  }
+
+  Future<Map<String, dynamic>> browserHostInbox() async {
+    final value = await _browserRequest('POST', '/hosts/poll', body: {});
+    final items = value['items'];
+    if (items is! List || items.length > 4)
+      throw const HomeTunnelApiException('远控请求无效', 'RESPONSE_INVALID');
+    final urls = value['stun_urls'];
+    if (urls is! List ||
+        urls.length > 4 ||
+        urls.any((url) =>
+            url is! String ||
+            !RegExp(r'^stun:([a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\]):[0-9]{1,5}$')
+                .hasMatch(url))) {
+      throw const HomeTunnelApiException('直连配置无效', 'RESPONSE_INVALID');
+    }
+    return {
+      'items': items.map((item) => _object(item)).toList(),
+      'stun_urls': urls.cast<String>()
+    };
+  }
+
+  Future<void> browserHostStop() async {
+    await _browserRequest('POST', '/hosts/stop', body: {});
+  }
+
+  Future<Map<String, dynamic>> browserDecision(String id,
+          {required bool approve, String? answer}) =>
+      _browserRequest('POST', '/sessions/${_id(id)}/decision',
+          body: {'approve': approve, if (answer != null) 'answer': answer});
+  Future<Map<String, dynamic>> browserHeartbeat(String id) =>
+      _browserRequest('POST', '/sessions/${_id(id)}/heartbeat', body: {});
+  Future<void> browserClose(String id) async {
+    final authorization = await nativeAuthorization();
+    await _request('DELETE', '/browser/sessions/${_id(id)}',
+        generation: _generation, token: authorization['access_token']);
+  }
+
+  Future<Map<String, dynamic>> accountSummary() =>
+      _get('/auth/me', _generation, {});
 
   Future<List<Map<String, dynamic>>> managementSessions() async {
     final value = await _get('/auth/sessions', _generation, {});
@@ -1121,20 +1200,33 @@ class HomeTunnelApi {
     }
     return items.map((item) {
       final session = _object(item);
-      return {'id': _id(session['id']), 'client_type': _text(session['client_type'], maxLength: 32),
-        'created_at': _text(session['created_at'], maxLength: 40), 'current': _boolean(session['current'])};
+      return {
+        'id': _id(session['id']),
+        'client_type': _text(session['client_type'], maxLength: 32),
+        'created_at': _text(session['created_at'], maxLength: 40),
+        'current': _boolean(session['current'])
+      };
     }).toList(growable: false);
   }
 
-  Future<void> revokeManagementSession(String sessionId) => _mutate('session:${_id(sessionId)}', (generation) async {
-    final reply = await _authenticated('DELETE', '/auth/sessions/$sessionId', generation: generation, mutation: true);
-    if (reply.status != 204) throw _failure(reply);
-  });
+  Future<void> revokeManagementSession(String sessionId) =>
+      _mutate('session:${_id(sessionId)}', (generation) async {
+        final reply = await _authenticated(
+            'DELETE', '/auth/sessions/$sessionId',
+            generation: generation, mutation: true);
+        if (reply.status != 204) throw _failure(reply);
+      });
 
-  Future<void> changeAccountPassword(String currentPassword, String newPassword) async {
+  Future<void> changeAccountPassword(
+      String currentPassword, String newPassword) async {
     await _mutate('account-password', (generation) async {
-      final reply = await _authenticated('POST', '/auth/password/change', generation: generation, mutation: true,
-          body: {'current_password': currentPassword, 'new_password': newPassword});
+      final reply = await _authenticated('POST', '/auth/password/change',
+          generation: generation,
+          mutation: true,
+          body: {
+            'current_password': currentPassword,
+            'new_password': newPassword
+          });
       if (reply.status != 204) throw _failure(reply);
     });
     await revoke();
@@ -1144,34 +1236,64 @@ class HomeTunnelApi {
     if (!['client', 'android'].contains(component)) {
       throw const HomeTunnelApiException('未知更新组件。', 'RESPONSE_INVALID');
     }
-    final value = _success(await _request('GET', '/public/updates/$component', generation: _generation));
+    final value = _success(await _request('GET', '/public/updates/$component',
+        generation: _generation));
     final latest = _object(value['latest']);
     final url = Uri.tryParse(_text(latest['url'], maxLength: 512));
-    final repository = component == 'android' ? 'home-tunnel-android' : 'home-tunnel-client';
-    if (url == null || url.scheme != 'https' || url.host != 'github.com' || url.hasPort ||
-        url.userInfo.isNotEmpty || !url.path.startsWith('/ZHanry/$repository/releases/tag/')) {
+    final repository =
+        component == 'android' ? 'home-tunnel-android' : 'home-tunnel-client';
+    if (url == null ||
+        url.scheme != 'https' ||
+        url.host != 'github.com' ||
+        url.hasPort ||
+        url.userInfo.isNotEmpty ||
+        !url.path.startsWith('/ZHanry/$repository/releases/tag/')) {
       throw const HomeTunnelApiException('更新地址无效。', 'RESPONSE_INVALID');
     }
-    return {'update_available': _boolean(value['update_available']), 'version': _text(latest['version'], maxLength: 64),
-      'notes': latest['notes'] is String ? (latest['notes'] as String).substring(0, (latest['notes'] as String).length.clamp(0, 24000)) : '',
-      'url': url.toString()};
+    return {
+      'update_available': _boolean(value['update_available']),
+      'version': _text(latest['version'], maxLength: 64),
+      'notes': latest['notes'] is String
+          ? (latest['notes'] as String)
+              .substring(0, (latest['notes'] as String).length.clamp(0, 24000))
+          : '',
+      'url': url.toString()
+    };
   }
 
   Future<WebSocket> realtime() async {
     final authorization = await nativeAuthorization();
-    final socket = await WebSocket.connect(base.replace(scheme: 'wss', path: '/api/v2/ws').toString(),
-        headers: {'Authorization': 'Bearer ${authorization['access_token']}'}).timeout(_requestTimeout);
-    if (!isSignedIn) { await socket.close(); throw const HomeTunnelApiException('登录已失效。', 'SESSION_REVOKED'); }
+    final socket = await WebSocket.connect(
+        base.replace(scheme: 'wss', path: '/api/v2/ws').toString(),
+        headers: {
+          'Authorization': 'Bearer ${authorization['access_token']}'
+        }).timeout(_requestTimeout);
+    if (!isSignedIn) {
+      await socket.close();
+      throw const HomeTunnelApiException('登录已失效。', 'SESSION_REVOKED');
+    }
     return socket;
   }
 
-  Future<Map<String, dynamic>> registerBackgroundDevice(String name, String installId, String fingerprint) =>
+  Future<Map<String, dynamic>> registerBackgroundDevice(
+          String name, String installId, String fingerprint) =>
       _mutate('local-background-device', (generation) async {
-        final result = _success(await _authenticated('POST', '/auth/devices', generation: generation, mutation: true, body: {
-          'name': name, 'install_id': installId, 'fingerprint_hash': fingerprint, 'client_version': '12.0.0-RC1',
-          'client_type': _clientType, 'credential_purpose': 'background',
-        }));
-        return {'device_id': _id(result['device_id']), 'device_credential': _token(result['device_credential']), 'config_version': 1};
+        final result = _success(await _authenticated('POST', '/auth/devices',
+            generation: generation,
+            mutation: true,
+            body: {
+              'name': name,
+              'install_id': installId,
+              'fingerprint_hash': fingerprint,
+              'client_version': '13.0.0',
+              'client_type': _clientType,
+              'credential_purpose': 'background',
+            }));
+        return {
+          'device_id': _id(result['device_id']),
+          'device_credential': _token(result['device_credential']),
+          'config_version': 1
+        };
       });
 
   int _version(Object? value) {

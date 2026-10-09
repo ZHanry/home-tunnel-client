@@ -1,10 +1,9 @@
-// HOMEDESK: 消费上游最近、收藏和局域网模型，复用对端菜单和经典视图。
+// Account-only recent connections and favorites reuse native peer records.
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'common.dart' hide Dialog;
 import 'common/widgets/peer_card.dart';
-import 'desktop/pages/connection_page.dart';
 import 'desktop/widgets/material_mod_popup_menu.dart' as peer_menu;
 import 'models/peer_tab_model.dart';
 import 'models/platform_model.dart';
@@ -12,25 +11,23 @@ import 'models/peer_model.dart';
 import 'homedesk_device_label.dart';
 import 'homedesk_peer_menu.dart';
 import 'homedesk_theme.dart';
+import 'nestlink_locale.dart';
 
 class HomeDeskRecent extends StatefulWidget {
-  final List<Peer>? recent, favorites, discovered;
+  final List<Peer>? recent, favorites;
   final ValueChanged<Peer>? onConnect;
   final HomeDeskPeerMenuBuilder? menuBuilder;
   final ValueChanged<PeerTabIndex>? onLoad;
   final ValueChanged<List<String>>? onQueryOnline;
-  final WidgetBuilder? classicBuilder;
   final bool summary;
   const HomeDeskRecent(
       {super.key,
       this.recent,
       this.favorites,
-      this.discovered,
       this.onConnect,
       this.menuBuilder,
       this.onLoad,
       this.onQueryOnline,
-      this.classicBuilder,
       this.summary = false});
   @override
   State<HomeDeskRecent> createState() => HomeDeskRecentState();
@@ -47,8 +44,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
       _minimized = false,
       _reloadQueued = false;
   DateTime? _restoredAt;
-  PeerTabIndex get _tab =>
-      [PeerTabIndex.recent, PeerTabIndex.fav, PeerTabIndex.lan][_selected];
+  PeerTabIndex get _tab => [PeerTabIndex.recent, PeerTabIndex.fav][_selected];
   @override
   void initState() {
     super.initState();
@@ -56,11 +52,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
     WidgetsBinding.instance.addObserver(this);
     if (widget.recent == null) {
       try {
-        _models = [
-          gFFI.recentPeersModel,
-          gFFI.favoritePeersModel,
-          gFFI.lanPeersModel
-        ];
+        _models = [gFFI.recentPeersModel, gFFI.favoritePeersModel];
       } catch (_) {/* 原生桥接不可用时显示空态。 */}
     }
     if (_models.isNotEmpty || widget.onQueryOnline != null) {
@@ -80,11 +72,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
   }
 
   List<Peer> get _peers => widget.recent != null
-      ? [
-          widget.recent!,
-          widget.favorites ?? <Peer>[],
-          widget.discovered ?? <Peer>[]
-        ][_selected]
+      ? [widget.recent!, widget.favorites ?? <Peer>[]][_selected]
       : _models.isEmpty
           ? []
           : _models[_selected].peers;
@@ -131,9 +119,6 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
         bind.mainLoadRecentPeers();
       case PeerTabIndex.fav:
         bind.mainLoadFavPeers();
-      case PeerTabIndex.lan:
-        bind.mainLoadLanPeers();
-        bind.mainDiscover();
       default:
         break;
     }
@@ -238,36 +223,10 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-            const SnackBar(content: Text('对端操作暂不可用，请打开经典视图重试。')));
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(nl('设备操作暂不可用，请稍后重试。',
+                'Device actions are unavailable. Try again.'))));
       }
-    }
-  }
-
-  Future<void> _classic() async {
-    await showDialog<void>(
-        context: context,
-        builder: (context) => Dialog(
-            insetPadding: const EdgeInsets.all(16),
-            child: SizedBox(
-                width: 1100,
-                height: MediaQuery.sizeOf(context).height - 32,
-                child: Column(children: [
-                  Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
-                      child: Row(children: [
-                        const Expanded(child: Text('经典视图')),
-                        IconButton(
-                            tooltip: '关闭经典视图',
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.close_rounded))
-                      ])),
-                  Expanded(
-                      child: widget.classicBuilder?.call(context) ??
-                          const ConnectionPage())
-                ]))));
-    if (mounted) {
-      _scheduleReload();
     }
   }
 
@@ -302,10 +261,10 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
       ]),
       const SizedBox(height: 4),
       Text(
-          '设备 ID：${peer.id}${peer.platform.isEmpty ? '' : ' · ${peer.platform}'}',
+          '${nl('设备 ID', 'Device ID')}: ${peer.id}${peer.platform.isEmpty ? '' : ' · ${peer.platform}'}',
           style: t.auxiliaryStyle),
       const SizedBox(height: 6),
-      HomeDeskBadge(peer.online ? '在线' : '离线',
+      HomeDeskBadge(peer.online ? nl('在线', 'Online') : nl('离线', 'Offline'),
           tone: peer.online ? HomeDeskTone.success : HomeDeskTone.neutral),
     ]);
     final actions = Row(mainAxisSize: MainAxisSize.min, children: [
@@ -317,12 +276,12 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
               connectInPeerTab(context, peer, _tab);
             }
           },
-          child: const Text('连接')),
+          child: Text(nl('连接', 'Connect'))),
       const SizedBox(width: 4),
       Builder(
           builder: (anchor) => IconButton(
               key: ValueKey('recent-more-${peer.id}'),
-              tooltip: '更多对端操作',
+              tooltip: nl('更多设备操作', 'More device actions'),
               onPressed: () => _showMenu(anchor, peer),
               icon: const Icon(Icons.more_horiz_rounded)))
     ]);
@@ -359,7 +318,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: peers.isEmpty
               ? [
-                  Text('还没有最近连接记录。',
+                  Text(nl('还没有最近连接记录。', 'No recent connections.'),
                       style: HomeDeskTokens.of(context).auxiliaryStyle)
                 ]
               : peers.take(2).map((p) => _row(context, p)).toList());
@@ -368,34 +327,43 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
       Row(children: [
         Expanded(
             child: HomeDeskSegments(
-                labels: const ['最近', '收藏', '局域网发现'],
+                labels: [nl('最近', 'Recent'), nl('收藏', 'Favorites')],
                 selected: _selected,
                 onSelected: _select,
-                keyPrefix: 'recent-filter')),
-        TextButton(onPressed: _classic, child: const Text('经典视图'))
+                keyPrefix: 'recent-filter'))
       ]),
       const SizedBox(height: 12),
       TextField(
           key: const ValueKey('recent-search'),
           controller: _search,
           onChanged: (_) => setState(() {}),
-          decoration: const InputDecoration(
-              hintText: '搜索设备名称或 ID', prefixIcon: Icon(Icons.search_rounded))),
+          decoration: InputDecoration(
+              hintText: nl('搜索设备名称或 ID', 'Search by name or ID'),
+              prefixIcon: Icon(Icons.search_rounded))),
       const SizedBox(height: HomeDeskTokens.moduleGap),
       Expanded(
           child: peers.isEmpty
-              ? Align(
-                  alignment: Alignment.topLeft,
-                  child: Card(
-                      child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(_search.text.trim().isNotEmpty
-                              ? '没有找到匹配的设备。'
-                              : [
-                                  '还没有最近连接记录，可使用“手动连接”开始。',
-                                  '还没有收藏的设备。',
-                                  '暂未发现局域网设备，请确认设备发现已启用。'
-                                ][_selected]))))
+              ? Center(
+                  child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.desktop_windows_outlined,
+                            size: 32, color: HomeDeskTokens.of(context).muted),
+                        const SizedBox(height: 12),
+                        Text(
+                            _search.text.trim().isNotEmpty
+                                ? nl('没有找到匹配的设备', 'No matching devices')
+                                : _selected == 0
+                                    ? nl('还没有最近连接', 'No recent connections')
+                                    : nl('还没有收藏的设备', 'No favorite devices'),
+                            style: HomeDeskTokens.of(context).sectionStyle),
+                        const SizedBox(height: 6),
+                        Text(
+                            nl('输入设备 ID，开始第一次连接。',
+                                'Enter a device ID to start connecting.'),
+                            textAlign: TextAlign.center,
+                            style: HomeDeskTokens.of(context).auxiliaryStyle)
+                      ])))
               : ListView.builder(
                   itemCount: peers.length,
                   itemBuilder: (context, i) => _row(context, peers[i]))),

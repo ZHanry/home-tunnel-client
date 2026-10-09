@@ -10,9 +10,13 @@ import 'package:flutter_hbb/homedesk_console_api.dart';
 import 'package:flutter_hbb/homedesk_dashboard.dart';
 import 'package:flutter_hbb/homedesk_devices.dart';
 import 'package:flutter_hbb/homedesk_account.dart';
+import 'package:flutter_hbb/homedesk_tunnel_api.dart';
 import 'package:flutter_hbb/homedesk_family_devices.dart';
 import 'package:flutter_hbb/homedesk_services.dart';
 import 'homedesk_services_test.dart' as portal;
+import 'homedesk_family_devices_test.dart' as family;
+import 'package:flutter_hbb/homedesk_recent.dart';
+import 'package:flutter_hbb/models/peer_model.dart';
 
 class PreviewConsole extends HomeDeskConsoleApi {
   final bool empty;
@@ -133,7 +137,7 @@ void main() {
     final account = HomeDeskAccount();
     final api = portal.PortalFixtureApi();
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: HomeDeskDashboard(
-      brandName: '栖云桥', initializeAccount: true,
+      brandName: 'NestLink', initializeAccount: true,
       devicesBuilder: (_) => HomeDeskFamilyDevices(account: account,
           onLogin: () {}, onConnect: (_) {}, readOption: portal.portalOption),
       servicesBuilder: (_) => HomeDeskServices(account: account,
@@ -183,8 +187,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('remote-connect')));
     await tester.pumpAndSettle();
     expect(connected, '123456');
-    await tester.ensureVisible(find.text('查看本机共享'));
-    await tester.tap(find.text('查看本机共享'));
+    await tester.ensureVisible(find.text('共享与授权'));
+    await tester.tap(find.text('共享与授权'));
     await tester.pumpAndSettle();
     expect(find.text('测试凭据：默认不可见'), findsOneWidget);
     await tester.tap(find.byTooltip('关闭'));
@@ -295,7 +299,7 @@ void main() {
 
   if (Platform.environment.containsKey('HOMEDESK_UI_PREVIEW')) {
     testWidgets('导出合成设备的深浅色预览', (tester) async {
-      tester.view.physicalSize = const Size(960, 720);
+      tester.view.physicalSize = const Size(1120, 760);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -312,9 +316,21 @@ void main() {
         final dark = sample != 'light';
         final key = GlobalKey<HomeDeskDashboardState>();
         final paint = GlobalKey();
-        final api = sample == 'empty' ? null : PreviewConsole();
-        await tester.pumpWidget(
-            host(api: api, dashboard: key, paintKey: paint, dark: dark));
+        final account = HomeDeskAccount();
+        final api = family.FamilyApi()..signedIn = true;
+        if (sample == 'empty') { api.result = HomeTunnelCatalog(devices: [], services: []); api.bindings = []; }
+        account.publish(api, api.result, family.one, (_) async {});
+        await tester.pumpWidget(MaterialApp(
+          theme: ThemeData(brightness: dark ? Brightness.dark : Brightness.light, fontFamily: 'HomeDeskPreview'),
+          home: Scaffold(body: RepaintBoundary(key: paint, child: HomeDeskDashboard(
+            key: key, brandName: 'nestlink',
+            devicesBuilder: (_) => HomeDeskFamilyDevices(account: account, onLogin: () {}, onConnect: (_) {}, readOption: family.option),
+            recentBuilder: (_) => HomeDeskRecent(recent: sample == 'empty' ? [] : [
+              Peer.fromJson({'id':'987654321','alias':'书房电脑','platform':'Windows','online':true}),
+              Peer.fromJson({'id':'246813579','alias':'Linux 工作站','platform':'Linux','online':false})], onLoad: (_) {}, onQueryOnline: (_) {}),
+            servicesBuilder: (_) => const SizedBox.shrink(), localBuilder: (_) => const SizedBox.shrink(),
+            statusBuilder: (_) => const SizedBox.shrink(), onSettings: () {}, onConnect: (_) {},
+          )))));
         await tester.pumpAndSettle();
         final boundary =
             paint.currentContext!.findRenderObject()! as RenderRepaintBoundary;
@@ -329,6 +345,7 @@ void main() {
         });
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
+        account.dispose(); api.close();
       }
     });
   }

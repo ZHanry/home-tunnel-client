@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'homedesk_tunnel_api.dart';
 import 'models/platform_model.dart';
+import 'nestlink_browser_host.dart';
 
 /// One foreground account owns native remote authorization. Tunnel Agents have their own credentials.
 class NestLinkNativeSession {
@@ -13,6 +14,7 @@ class NestLinkNativeSession {
   String _installedToken = '';
   DateTime _lastBinding = DateTime.fromMillisecondsSinceEpoch(0);
   String message = '';
+  NestLinkBrowserHost? _browser;
   NestLinkNativeSession(this.api);
 
   Future<void> start() async {
@@ -94,6 +96,16 @@ class NestLinkNativeSession {
           }
         });
       }
+      if (_browser == null && (Platform.isWindows || Platform.isLinux)) {
+        final browser = NestLinkBrowserHost(api);
+        _browser = browser;
+        try {
+          await browser.start();
+        } catch (_) {
+          browser.close();
+          _browser = null;
+        }
+      }
       message = '';
     } on HomeTunnelApiException catch (error) {
       message = error.message;
@@ -108,6 +120,8 @@ class NestLinkNativeSession {
     if (_closed) return;
     _closed = true;
     _timer?.cancel();
+    _browser?.close();
+    _browser = null;
     unawaited(_socket?.close());
     _socket = null;
     unawaited(bind

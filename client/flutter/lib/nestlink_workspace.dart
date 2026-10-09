@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'common.dart' show MyTheme;
@@ -9,8 +10,9 @@ import 'homedesk_account.dart';
 import 'homedesk_theme.dart';
 import 'homedesk_tunnel_api.dart';
 import 'nestlink_locale.dart';
+import 'nestlink_browser_host.dart';
 
-const nestlinkVersion = '12.0.0-RC1';
+const nestlinkVersion = '13.0.0';
 final nestlinkRelease = ValueNotifier<Map<String, dynamic>?>(null);
 
 Future<void> checkNestLinkVersion(HomeTunnelApi? api) async {
@@ -36,12 +38,14 @@ class NestLinkRemoteWorkspace extends StatefulWidget {
   final HomeDeskAccount? account;
   final ValueChanged<String> onConnect;
   final VoidCallback onLocal;
+  final VoidCallback? onManageDevices;
   final Widget recent, status;
   const NestLinkRemoteWorkspace(
       {super.key,
       this.account,
       required this.onConnect,
       required this.onLocal,
+      this.onManageDevices,
       required this.recent,
       required this.status});
   @override
@@ -51,6 +55,7 @@ class NestLinkRemoteWorkspace extends StatefulWidget {
 
 class _NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
   final _id = TextEditingController();
+  final _focus = FocusNode();
   String _error = '';
   void _connect() {
     final id = _id.text.trim();
@@ -69,20 +74,30 @@ class _NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
   @override
   void dispose() {
     _id.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final t = HomeDeskTokens.of(context);
+    final localBinding =
+        widget.account?.bindings[widget.account?.localDeviceId];
+    final localId = localBinding?.remoteId ?? '';
+    final mobile = Platform.isAndroid || Platform.isIOS;
     final connect = Card(
         child: Padding(
             padding: const EdgeInsets.all(24),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Icon(Icons.desktop_windows_outlined, size: 34),
-              const SizedBox(height: 20),
-              Text(nl('连接一台设备', 'Connect to a device'), style: t.titleStyle),
+              Row(children: [
+                Icon(Icons.desktop_windows_outlined,
+                    color: t.accentText, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: Text(nl('连接一台设备', 'Connect to a device'),
+                        style: t.sectionStyle)),
+              ]),
               const SizedBox(height: 8),
               Text(
                   nl('输入设备 ID。同一服务下，也可以协助其他账号的设备。',
@@ -92,12 +107,20 @@ class _NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
               TextField(
                   key: const ValueKey('remote-device-id'),
                   controller: _id,
+                  focusNode: _focus,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 1,
+                      color: t.text),
                   onSubmitted: (_) => _connect(),
                   decoration: InputDecoration(
                       labelText: nl('设备 ID', 'Device ID'),
                       hintText: nl('输入对方的设备 ID', 'Enter their device ID'),
                       errorText: _error.isEmpty ? null : _error)),
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
@@ -116,20 +139,73 @@ class _NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
             padding: const EdgeInsets.all(24),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              SvgPicture.asset('assets/icon.svg', width: 42, height: 42),
-              const SizedBox(height: 20),
-              Text(nl('共享这台设备', 'Share this device'), style: t.titleStyle),
+              Row(children: [
+                Icon(Icons.screen_share_outlined,
+                    color: t.accentText, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                    child:
+                        Text(nl('这台设备', 'This device'), style: t.sectionStyle)),
+                HomeDeskBadge(
+                    localBinding?.online == true
+                        ? nl('在线', 'Online')
+                        : nl('登记中', 'Registering'),
+                    tone: localBinding?.online == true
+                        ? HomeDeskTone.success
+                        : HomeDeskTone.neutral),
+              ]),
               const SizedBox(height: 8),
               Text(
-                  nl('查看本机设备 ID、共享状态和连接授权。',
-                      'View this device ID, sharing status and connection permissions.'),
+                  nl('将设备 ID 发给对方，再批准连接。',
+                      'Share your device ID, then approve the connection.'),
                   style: t.auxiliaryStyle),
               const SizedBox(height: 24),
+              Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                      color: t.sunken, borderRadius: BorderRadius.circular(10)),
+                  child: Row(children: [
+                    Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Text(nl('本机设备 ID', 'Your device ID'),
+                              style: t.auxiliaryStyle),
+                          const SizedBox(height: 4),
+                          SelectableText(
+                              localId.isEmpty
+                                  ? nl('正在获取…', 'Getting ID…')
+                                  : localId,
+                              key: const ValueKey('workspace-local-id'),
+                              style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 1.2,
+                                  color: t.text)),
+                        ])),
+                    IconButton(
+                        key: const ValueKey('workspace-copy-id'),
+                        tooltip: nl('复制设备 ID', 'Copy device ID'),
+                        onPressed: localId.isEmpty
+                            ? null
+                            : () async {
+                                await Clipboard.setData(
+                                    ClipboardData(text: localId));
+                                if (context.mounted)
+                                  ScaffoldMessenger.maybeOf(context)
+                                      ?.showSnackBar(SnackBar(
+                                          content: Text(nl('设备 ID 已复制',
+                                              'Device ID copied'))));
+                              },
+                        icon: const Icon(Icons.copy_outlined, size: 18)),
+                  ])),
+              const SizedBox(height: 16),
               OutlinedButton.icon(
                   onPressed: widget.onLocal,
                   icon: const Icon(Icons.screen_share_outlined),
-                  label: Text(nl('查看本机共享', 'Manage sharing'))),
-              const SizedBox(height: 20),
+                  label: Text(nl('共享与授权', 'Sharing and permissions'))),
+              const SizedBox(height: 16),
               Row(children: [
                 Icon(Icons.verified_user_outlined, color: t.success, size: 18),
                 const SizedBox(width: 8),
@@ -138,34 +214,114 @@ class _NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
                         nl('远控使用加密 P2P 直连', 'Encrypted P2P remote control'),
                         style: t.auxiliaryStyle))
               ]),
-              const SizedBox(height: 8),
-              Text(
-                  nl('内网穿透独立运行，可以单独启动和停止。',
-                      'Tunnels run independently and can be started or stopped separately.'),
-                  style: t.auxiliaryStyle),
               const SizedBox(height: 12),
               widget.status,
+              ValueListenableBuilder<String>(
+                  valueListenable: nestlinkBrowserStatus,
+                  builder: (context, status, _) => status.isEmpty
+                      ? const SizedBox.shrink()
+                      : Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Wrap(
+                              spacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(status, style: t.auxiliaryStyle),
+                                if (status ==
+                                        nl('浏览器已连接', 'Browser connected') ||
+                                    status ==
+                                        nl('浏览器正在连接', 'Browser connecting'))
+                                  TextButton(
+                                      onPressed: () => NestLinkBrowserHost
+                                          .active
+                                          ?.disconnect(),
+                                      child:
+                                          Text(nl('结束连接', 'End connection'))),
+                              ]))),
             ])));
-    return SingleChildScrollView(
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      LayoutBuilder(
-          builder: (context, constraints) => constraints.maxWidth >= 780
-              ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Expanded(flex: 6, child: connect),
-                  const SizedBox(width: 20),
-                  Expanded(flex: 5, child: local)
-                ])
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [connect, const SizedBox(height: 16), local])),
-      const SizedBox(height: 24),
-      Text(nl('最近连接', 'Recent connections'), style: t.sectionStyle),
-      const SizedBox(height: 12),
-      SizedBox(height: 340, child: widget.recent),
-      const SizedBox(height: 24),
-    ]));
+    final recent = Card(
+        child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(nl('最近连接', 'Recent connections'), style: t.sectionStyle),
+                  const SizedBox(height: 16),
+                  Expanded(child: widget.recent),
+                ])));
+    return Shortcuts(
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.keyL, control: true):
+              _FocusDeviceIntent()
+        },
+        child: Actions(
+            actions: {
+              _FocusDeviceIntent:
+                  CallbackAction<_FocusDeviceIntent>(onInvoke: (_) {
+                _focus.requestFocus();
+                _id.selection =
+                    TextSelection(baseOffset: 0, extentOffset: _id.text.length);
+                return null;
+              })
+            },
+            child: LayoutBuilder(builder: (context, c) {
+              final wide = !mobile &&
+                  c.maxWidth >= 720 &&
+                  MediaQuery.textScalerOf(context).scale(1) <= 1.35;
+              final panels = wide
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                          Expanded(flex: 6, child: connect),
+                          const SizedBox(width: 20),
+                          Expanded(flex: 5, child: local),
+                        ])
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                          connect,
+                          if (!mobile) ...[
+                            const SizedBox(height: 16),
+                            local
+                          ] else if (widget.onManageDevices != null)
+                            Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: OutlinedButton.icon(
+                                    onPressed: widget.onManageDevices,
+                                    icon: const Icon(Icons.devices_outlined),
+                                    label: Text(
+                                        nl('管理我的设备', 'Manage my devices'))))
+                        ]);
+              // At normal desktop sizes the recent list owns scrolling; short windows retain all controls.
+              if (wide && c.maxHeight >= 620) {
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      panels,
+                      const SizedBox(height: 16),
+                      Expanded(child: recent),
+                      const SizedBox(height: 16)
+                    ]);
+              }
+              return SingleChildScrollView(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                    panels,
+                    const SizedBox(height: 20),
+                    SizedBox(
+                        height: wide
+                            ? (c.maxHeight - 365).clamp(260.0, 520.0)
+                            : 350,
+                        child: recent),
+                    const SizedBox(height: 20),
+                  ]));
+            })));
   }
+}
+
+class _FocusDeviceIntent extends Intent {
+  const _FocusDeviceIntent();
 }
 
 Future<void> showNestLinkVersion(BuildContext context) => showDialog<void>(
@@ -176,7 +332,7 @@ Future<void> showNestLinkVersion(BuildContext context) => showDialog<void>(
               title: Row(children: [
                 SvgPicture.asset('assets/icon.svg', width: 32, height: 32),
                 const SizedBox(width: 12),
-                const Expanded(child: Text('栖云桥 / NestLink'))
+                const Expanded(child: Text('nestlink'))
               ]),
               content: SizedBox(
                   width: 420,
@@ -394,7 +550,7 @@ class _NestLinkSettingsState extends State<NestLinkSettings> {
       section(nl('版本', 'Version'), [
         ListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('栖云桥 / NestLink'),
+            title: const Text('nestlink'),
             subtitle: const Text(nestlinkVersion),
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => showNestLinkVersion(context))

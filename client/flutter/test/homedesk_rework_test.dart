@@ -49,7 +49,7 @@ void main() {
     })));
     expect(tester.takeException(), isNull);
   });
-  testWidgets('对端菜单动作可达并调用注入动作，搜索按名称和ID过滤，经典视图可打开', (tester) async {
+  testWidgets('对端菜单动作可达并调用注入动作，搜索按名称和ID过滤，仅保留账号设备入口', (tester) async {
     final peer = device('123456789', '书房电脑'),
         other = device('987654321', '客厅电脑');
     final calls = <String>[];
@@ -67,8 +67,6 @@ void main() {
     await tester.pumpWidget(host(HomeDeskRecent(
         recent: [peer, other],
         favorites: [peer],
-        discovered: [peer],
-        classicBuilder: (_) => const Text('经典视图保留排序、多选和ID补全'),
         menuBuilder: (context, p, tab) async {
           expect(p.id, peer.id);
           tabs.add(tab);
@@ -104,7 +102,7 @@ void main() {
     expect(find.text('书房电脑'), findsNothing);
     await tester.enterText(find.byKey(const ValueKey('recent-search')), '');
     await tester.pump();
-    for (final pair in [(1, '取消收藏'), (2, '远程开机')]) {
+    for (final pair in [(1, '取消收藏')]) {
       await tester.tap(find.byKey(ValueKey('recent-filter-${pair.$1}')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('recent-more-123456789')));
@@ -115,13 +113,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(calls.last, pair.$2);
     }
-    expect(tabs,
-        containsAll([PeerTabIndex.recent, PeerTabIndex.fav, PeerTabIndex.lan]));
-    await tester.tap(find.text('经典视图'));
-    await tester.pumpAndSettle();
-    expect(find.text('经典视图保留排序、多选和ID补全'), findsOneWidget);
-    await tester.tap(find.byTooltip('关闭经典视图'));
-    await tester.pumpAndSettle();
+    expect(tabs, containsAll([PeerTabIndex.recent, PeerTabIndex.fav]));
+    expect(find.text('经典视图'), findsNothing);
+    expect(find.text('局域网发现'), findsNothing);
     expect(tester.takeException(), isNull);
   });
   testWidgets('最近页和首页摘要导航重新可见时重载，远控返回窗口时重载当前分段', (tester) async {

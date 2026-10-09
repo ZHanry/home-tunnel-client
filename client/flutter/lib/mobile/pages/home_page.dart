@@ -109,7 +109,7 @@ class HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(body: SafeArea(child: HomeDeskDashboard(brandName: '栖云桥', initializeAccount: true,
+    return Scaffold(body: SafeArea(child: HomeDeskDashboard(brandName: 'nestlink', initializeAccount: true,
       devicesBuilder: (_) => HomeDeskFamilyDevices(account: _account,
           onLogin: () => HomeDeskDashboard.navigate('account'), onConnect: (id) => connect(context, id),
           readOption: (key) => bind.mainGetLocalOption(key: key)),

@@ -71,6 +71,7 @@ pub fn current_request() -> Option<AuthRequest> {
     AUTH.read().unwrap().as_ref().filter(|auth| Instant::now() < auth.valid_until).map(|auth| auth.request.clone())
 }
 pub fn clear() {
+    crate::nestlink_browser::stop();
     {
         let mut auth = AUTH.write().unwrap();
         *auth = None;
@@ -85,6 +86,50 @@ pub fn clear() {
     AUTH_UPDATES.send_replace(REVISION.load(Ordering::SeqCst));
     #[cfg(not(target_os = "ios"))]
     crate::rendezvous_mediator::RendezvousMediator::restart();
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserClaims {
+    v: u32, typ: String, jti: String, realm: String, host_device: String, host_session: String,
+    controller_session: String, offer_sha256: String, answer_sha256: String,
+    iat: u64, exp: u64, policy: String,
+}
+
+fn verify_browser_grant_at(token: &str, trust: &Trust, now: u64) -> ResultType<BrowserClaims> {
+    let parts: Vec<_> = token.split('.').collect();
+    if token.len() > 4096 || parts.len() != 3 || parts[0] != "nlb1" || trust.algorithm != "Ed25519" { bail!("浏览器远控许可无效"); }
+    let key = sign::PublicKey::from_slice(&STANDARD.decode(&trust.public_key)?).ok_or_else(|| anyhow!("服务公钥无效"))?;
+    let signature = sign::Signature::from_bytes(&URL_SAFE_NO_PAD.decode(parts[2])?).map_err(|_| anyhow!("许可签名无效"))?;
+    if !sign::verify_detached(&signature, format!("nlb1.{}", parts[1]).as_bytes(), &key) { bail!("许可签名无效"); }
+    let claims: BrowserClaims = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1])?)?;
+    if claims.v != 1 || claims.typ != "NestLink-Browser" || claims.realm != trust.realm
+        || claims.policy != "require_direct" || claims.iat > now.saturating_add(5) || claims.exp <= now
+        || claims.exp.checked_sub(claims.iat) != Some(15)
+        || [&claims.jti, &claims.host_device, &claims.host_session, &claims.controller_session].iter().any(|id| uuid::Uuid::parse_str(id).is_err())
+        || ![&claims.offer_sha256, &claims.answer_sha256].iter().all(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())) {
+        bail!("浏览器远控许可已失效或范围无效");
+    }
+    Ok(claims)
+}
+pub(crate) fn browser_grant(token: &str, expected_id: &str, offer: &str, answer: &str) -> ResultType<(u64, Duration)> {
+    let auth = AUTH.read().unwrap();
+    let auth = auth.as_ref().filter(|value| Instant::now() < value.valid_until)
+        .ok_or_else(|| anyhow!("请先登录自建服务"))?;
+    if Config::get_option("stop-service") == "Y" { bail!("本机共享已关闭"); }
+    let trust = &auth.presence.permit_trust;
+    let now = now_seconds();
+    let claims = verify_browser_grant_at(token, trust, now)?;
+    if claims.jti != expected_id || claims.offer_sha256 != offer || claims.answer_sha256 != answer
+        || claims.host_device != auth.request.device_id || claims.host_session != auth.presence.session_id
+    {
+        bail!("浏览器远控许可已失效或不属于本机登录");
+    }
+    Ok((auth.epoch, Duration::from_secs(claims.exp - now)))
+}
+
+pub(crate) fn browser_epoch_live(epoch: u64) -> bool {
+    ready() && epoch == EPOCH.load(Ordering::SeqCst) && Config::get_option("stop-service") != "Y"
 }
 pub fn subscribe() -> tokio::sync::watch::Receiver<u64> { AUTH_UPDATES.subscribe() }
 fn clear_revision(revision: u64) {
@@ -391,6 +436,29 @@ mod tests {
 
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!("../../contracts/nestlink-auth.v2-vectors.json")).unwrap()
+    }
+
+    #[test]
+    fn browser_grants_require_signature_realm_short_lifetime_and_valid_peer_scope() {
+        let (public, secret) = sign::keypair_from_seed(&sign::Seed::from_slice(&[7;32]).unwrap());
+        let trust = Trust { algorithm:"Ed25519".into(), public_key:STANDARD.encode(public.0), realm:"test-realm".into() };
+        let claims = serde_json::json!({"v":1,"typ":"NestLink-Browser", "jti":"11111111-1111-4111-8111-111111111111",
+            "realm":"test-realm", "host_device":"22222222-2222-4222-8222-222222222222", "host_session":"33333333-3333-4333-8333-333333333333",
+            "controller_session":"44444444-4444-4444-8444-444444444444", "offer_sha256":"a".repeat(64),"answer_sha256":"b".repeat(64),
+            "iat":1700000000u64,"exp":1700000015u64,"policy":"require_direct"});
+        let encode = |value: &serde_json::Value| { let payload=URL_SAFE_NO_PAD.encode(serde_json::to_vec(value).unwrap());
+            let input=format!("nlb1.{payload}"); let signature=sign::sign_detached(input.as_bytes(),&secret);
+            format!("{input}.{}",URL_SAFE_NO_PAD.encode(signature.to_bytes())) };
+        let token=encode(&claims); let now=1700000000;
+        assert!(verify_browser_grant_at(&token,&trust,now+14).is_ok());
+        assert!(verify_browser_grant_at(&token,&trust,now+15).is_err());
+        assert!(verify_browser_grant_at(&token,&trust,now-6).is_err());
+        assert!(verify_browser_grant_at(&token.replace("nlb1.","nlb1.A"),&trust,now).is_err());
+        for (field,value) in [("realm",serde_json::json!("foreign")),("policy",serde_json::json!("relay")),
+            ("exp",serde_json::json!(1700000060u64)),("host_device",serde_json::json!("")),("offer_sha256",serde_json::json!("short"))] {
+            let mut invalid=claims.clone(); invalid[field]=value;
+            assert!(verify_browser_grant_at(&encode(&invalid),&trust,now).is_err());
+        }
     }
 
     #[test]

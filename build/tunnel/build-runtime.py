@@ -47,10 +47,16 @@ def build_runtime(target, parent, output, go='go'):
     subprocess.run([go, 'build', '-mod=readonly', '-trimpath', '-ldflags', flags,
                     '-o', str(helper), './cmd/homedesk-tunnel-helper'], cwd=ROOT, env=env, check=True)
     helper.chmod(0o755)
+    browser = output / ('nestlink-browser-helper' + suffix)
+    browser_flags = '-s -w' + (' -H=windowsgui' if target == 'win-x64' else '')
+    subprocess.run([go, 'build', '-mod=readonly', '-trimpath', '-ldflags', browser_flags,
+                    '-o', str(browser), './cmd/nestlink-browser-helper'], cwd=ROOT, env=env, check=True)
+    browser.chmod(0o755)
     for src, name in [(ROOT/'LICENSE', 'LICENSE.txt'), (ROOT/'agent/FRP-LICENSE.txt', 'FRP-LICENSE.txt'),
                       (ROOT/'agent/THIRD-PARTY-NOTICES.txt', 'THIRD-PARTY-NOTICES.txt')]:
         shutil.copyfile(src, output / name)
     manifest.update({'parent_executable': parent, 'helper_sha256': digest(helper),
+                     'browser_helper_sha256': digest(browser),
                      'helper_source_revision': manifest['source_revision'],
                      'helper_source_tree_dirty': manifest['source_tree_dirty'],
                      'helper_go_version': manifest['agent_go_version']})

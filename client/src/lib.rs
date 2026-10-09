@@ -3,6 +3,7 @@ mod homedesk_brand; // HOMEDESK: Isolate the compiled application-name default f
 mod homedesk_async; // HOMEDESK: 异步配置任务的可测试截止时间策略。
 mod homedesk_config; // HOMEDESK: 隔离家庭内网服务器、公钥与白名单默认值。
 mod nestlink_auth;
+mod nestlink_browser;
 mod homedesk_tunnel_runtime; // HOMEDESK: 同目录受管隧道助手、账号隔离和许可撤销。
 mod homedesk_connection_path; // HOMEDESK: 会话连接路径的被动展示分类。
 mod homedesk_net; // HOMEDESK: 独立、可测试的 RFC1918 网络边界。

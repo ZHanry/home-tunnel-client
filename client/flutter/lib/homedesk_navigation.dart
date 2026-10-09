@@ -75,7 +75,8 @@ class HomeDeskNavigation extends StatelessWidget {
                         color: t.accent,
                         borderRadius:
                             BorderRadius.circular(HomeDeskTokens.blockRadius)),
-                    child: SvgPicture.asset('assets/icon.svg', width: 36, height: 36)),
+                    child: SvgPicture.asset('assets/icon.svg',
+                        width: 36, height: 36)),
                 if (!compact) ...[
                   const SizedBox(width: 10),
                   Expanded(
@@ -86,36 +87,87 @@ class HomeDeskNavigation extends StatelessWidget {
                 ]
               ])),
       const SizedBox(height: 12),
-      _item(context, 'remote', nl('远程控制', 'Remote control'), Icons.desktop_windows_outlined),
-      if (services) _item(context, 'services', nl('内网穿透', 'Tunnels'), Icons.hub_outlined,
-          count: account?.catalog?.services.length.toString()),
+      _item(context, 'remote', nl('远程控制', 'Remote control'),
+          Icons.desktop_windows_outlined),
+      if (services)
+        _item(context, 'services', nl('内网穿透', 'Tunnels'), Icons.hub_outlined,
+            count: account?.catalog?.services.length.toString()),
       _item(context, 'devices', nl('设备', 'Devices'), Icons.devices_rounded,
           count: account?.catalog?.devices.length.toString()),
       _item(context, 'settings', nl('设置', 'Settings'), Icons.settings_outlined),
     ];
-    final lower = <Widget>[
-      SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () => setNestLinkLanguage(nestlinkEnglish ? 'zh-cn' : 'en'),
-        icon: const Icon(Icons.language_outlined, size: 18), label: Text(nestlinkEnglish ? '简体中文' : 'English'))), const SizedBox(height: 8),
-      SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () => MyTheme.changeDarkMode(
-          Theme.of(context).brightness == Brightness.dark ? ThemeMode.light : ThemeMode.dark),
-          icon: Icon(Theme.of(context).brightness == Brightness.dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined, size: 18),
-          label: Text(nl('切换主题', 'Change theme')))),
-      const SizedBox(height: 8),
-      Divider(color: t.border, height: 12),
-      _item(
-          context,
-          'account',
-          compact
-              ? nl('账号', 'Account')
-              : account?.signedIn == true
-                  ? account!.displayName
-                  : nl('登录账号', 'Sign in'),
-          Icons.person_outline_rounded),
-      ValueListenableBuilder<Map<String, dynamic>?>(valueListenable: nestlinkRelease, builder: (context, release, _) =>
-        SizedBox(width: double.infinity, child: TextButton.icon(onPressed: () => showNestLinkVersion(context),
-          icon: Icon(release?['update_available'] == true ? Icons.system_update_alt : Icons.info_outline, size: 18), label: const Text(nestlinkVersion)))),
-      const SizedBox(height: 12),
-    ];
+    final lower = compact
+        ? <Widget>[
+            IconButton(
+                tooltip: nestlinkEnglish ? '简体中文' : 'English',
+                onPressed: () =>
+                    setNestLinkLanguage(nestlinkEnglish ? 'zh-cn' : 'en'),
+                icon: const Icon(Icons.language_outlined)),
+            IconButton(
+                tooltip: nl('切换主题', 'Change theme'),
+                onPressed: () => MyTheme.changeDarkMode(
+                    Theme.of(context).brightness == Brightness.dark
+                        ? ThemeMode.light
+                        : ThemeMode.dark),
+                icon: Icon(Theme.of(context).brightness == Brightness.dark
+                    ? Icons.light_mode_outlined
+                    : Icons.dark_mode_outlined)),
+            const Divider(),
+            _item(context, 'account', nl('账号', 'Account'),
+                Icons.person_outline_rounded),
+            IconButton(
+                tooltip: nestlinkVersion,
+                onPressed: () => showNestLinkVersion(context),
+                icon: const Icon(Icons.info_outline)),
+            const SizedBox(height: 12),
+          ]
+        : <Widget>[
+            SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                    onPressed: () =>
+                        setNestLinkLanguage(nestlinkEnglish ? 'zh-cn' : 'en'),
+                    icon: const Icon(Icons.language_outlined, size: 18),
+                    label: Text(nestlinkEnglish ? '简体中文' : 'English'))),
+            const SizedBox(height: 8),
+            SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                    onPressed: () => MyTheme.changeDarkMode(
+                        Theme.of(context).brightness == Brightness.dark
+                            ? ThemeMode.light
+                            : ThemeMode.dark),
+                    icon: Icon(
+                        Theme.of(context).brightness == Brightness.dark
+                            ? Icons.light_mode_outlined
+                            : Icons.dark_mode_outlined,
+                        size: 18),
+                    label: Text(nl('切换主题', 'Change theme')))),
+            const SizedBox(height: 8),
+            Divider(color: t.border, height: 12),
+            _item(
+                context,
+                'account',
+                compact
+                    ? nl('账号', 'Account')
+                    : account?.signedIn == true
+                        ? account!.displayName
+                        : nl('登录账号', 'Sign in'),
+                Icons.person_outline_rounded),
+            ValueListenableBuilder<Map<String, dynamic>?>(
+                valueListenable: nestlinkRelease,
+                builder: (context, release, _) => SizedBox(
+                    width: double.infinity,
+                    child: TextButton.icon(
+                        onPressed: () => showNestLinkVersion(context),
+                        icon: Icon(
+                            release?['update_available'] == true
+                                ? Icons.system_update_alt
+                                : Icons.info_outline,
+                            size: 18),
+                        label: const Text(nestlinkVersion)))),
+            const SizedBox(height: 12),
+          ];
     return Container(
         width: compact ? 84 : 220,
         padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12),

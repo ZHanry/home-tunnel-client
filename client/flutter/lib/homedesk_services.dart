@@ -939,7 +939,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                           children: [
                             Center(child: SvgPicture.asset('assets/icon.svg', width: 52, height: 52)),
                             const SizedBox(height: 14),
-                            Text(nl('登录栖云桥', 'Sign in to NestLink'),
+                            Text(nl('登录NestLink', 'Sign in to NestLink'),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     fontSize: 18, fontWeight: FontWeight.w600)),

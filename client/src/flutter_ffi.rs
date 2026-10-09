@@ -52,6 +52,14 @@ pub fn main_nestlink_binding_proof() -> String {
 
 pub fn main_nestlink_account_ready() -> SyncReturn<bool> { SyncReturn(crate::nestlink_auth::ready()) }
 
+pub fn main_nestlink_browser_allow(id: String, grant: String, offer_sha256: String, answer_sha256: String) -> String {
+    crate::nestlink_browser::authorize(id, grant, offer_sha256, answer_sha256)
+}
+pub fn main_nestlink_browser_frame() -> String { crate::nestlink_browser::call("frame",String::new(),String::new()) }
+pub fn main_nestlink_browser_input(payload: String) -> String { crate::nestlink_browser::call("input",String::new(),payload) }
+pub fn main_nestlink_browser_stop() -> String { crate::nestlink_browser::call("stop",String::new(),String::new()) }
+pub fn main_nestlink_browser_check_password(password: String) -> SyncReturn<bool> { SyncReturn(crate::nestlink_browser::check_password(&password)) }
+
 pub fn main_nestlink_installation() -> String {
     use hbb_common::sha2::{Digest, Sha256};
     let mut install_id = LocalConfig::get_option("nestlink-install-id");

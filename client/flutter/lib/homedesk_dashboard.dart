@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:io';
 import 'homedesk_theme.dart';
 import 'homedesk_navigation.dart';
 import 'homedesk_family_devices.dart';
@@ -145,7 +146,10 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
         child: ColoredBox(
             color: t.background,
             child: LayoutBuilder(builder: (context, constraints) {
-              final compact = constraints.maxWidth < 820;
+              final mobile = Platform.isAndroid ||
+                  Platform.isIOS ||
+                  constraints.maxWidth < 620;
+              final compact = mobile || constraints.maxWidth < 1000;
               final pages = IndexedStack(index: index, children: [
                 TickerMode(
                     enabled: signedIn && index == 0,
@@ -153,6 +157,7 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                         account: account,
                         onConnect: widget.onConnect,
                         onLocal: _showLocal,
+                        onManageDevices: () => _navigate('devices'),
                         recent: widget.recentBuilder(context),
                         status: widget.statusBuilder(context))),
                 _servicesInitialized || !signedIn
@@ -170,10 +175,10 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                 Expanded(
                     child: Row(children: [
                   Offstage(
-                      offstage: !signedIn || compact,
+                      offstage: !signedIn || mobile,
                       child: HomeDeskNavigation(
-                          brand: nl('栖云桥', 'NestLink'),
-                          compact: false,
+                          brand: 'nestlink',
+                          compact: compact,
                           selected: _page.name,
                           onSelected: _navigate,
                           services: widget.servicesBuilder != null,
@@ -189,11 +194,12 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                               child: Row(children: [
                                 Expanded(
                                     child: Text(title, style: t.titleStyle)),
-                                IconButton(
-                                    tooltip: nl('本机共享', 'Share this device'),
-                                    onPressed: _showLocal,
-                                    icon: const Icon(
-                                        Icons.screen_share_outlined)),
+                                if (!Platform.isAndroid && !Platform.isIOS)
+                                  IconButton(
+                                      tooltip: nl('本机共享', 'Share this device'),
+                                      onPressed: _showLocal,
+                                      icon: const Icon(
+                                          Icons.screen_share_outlined)),
                                 if (compact)
                                   IconButton(
                                       tooltip: nl('版本', 'Version'),
@@ -209,7 +215,7 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                 child: pages)),
                       ])),
                 ])),
-                if (signedIn && compact)
+                if (signedIn && mobile)
                   NavigationBar(
                       selectedIndex: _page.index.clamp(0, 3),
                       onDestinationSelected: (i) =>

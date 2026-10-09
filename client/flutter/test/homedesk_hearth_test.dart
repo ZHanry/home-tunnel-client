@@ -195,7 +195,6 @@ Widget hearthHost(
                     recentBuilder: (_) => HomeDeskRecent(
                         recent: recentFixture(),
                         favorites: [recentFixture().first],
-                        discovered: const [],
                         menuBuilder: previewPeerMenu,
                         onConnect: (_) {}),
                     recentSummaryBuilder: (_) => HomeDeskRecent(
@@ -318,9 +317,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('儿童房电脑'), findsOneWidget);
         expect(find.text('客厅电脑'), findsNothing);
-        await tester.tap(find.byKey(const ValueKey('recent-filter-2')));
-        await tester.pumpAndSettle();
-        expect(find.text('暂未发现局域网设备，请确认设备发现已启用。'), findsOneWidget);
+        expect(find.byKey(const ValueKey('recent-filter-2')), findsNothing);
         final settingsAccount = HomeDeskAccount(),
             settingsApi = HearthApi()..signedIn = true;
         settingsAccount.publish(

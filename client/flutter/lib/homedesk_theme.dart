@@ -1,4 +1,4 @@
-// HOMEDESK: 栖云桥的颜色、字号、圆角和间距集中定义，沿用现有字体。
+// HOMEDESK: NestLink的颜色、字号、圆角和间距集中定义，沿用现有字体。
 import 'package:flutter/material.dart';
 import 'common.dart' show ColorThemeExtension;
 
