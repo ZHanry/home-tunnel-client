@@ -70,14 +70,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     super.build(context);
     final isIncomingOnly = bind.isIncomingOnly();
     // HOMEDESK: 双角色客户端以设备中心为首页；纯被控形态保留本机信息页。
-    return _buildBlock(child: isIncomingOnly ? buildLeftPane(context) : HomeDeskDashboard(
+    return _buildBlock(child: HomeDeskDashboard(
       key: _dashboardKey,
       brandName: appName,
       devicesBuilder: (_) => HomeDeskFamilyDevices(account: _account,
         onLogin: () => _dashboardKey.currentState?.showAccount(),
         onConnect: (id) => connect(context, id),
         readOption: (key) => bind.mainGetLocalOption(key: key), // HOMEDESK: 只读取公开状态和配置指纹。
-        lanBuilder: (_) => HomeDeskDevices(onManualConnect: () => _dashboardKey.currentState?.showManualConnection())), // HOMEDESK: 公网账号设备自动显示，内网目录保留受控入口。
+        lanBuilder: null), // HOMEDESK: 公网账号设备自动显示，内网目录保留受控入口。
       recentBuilder: (_) => const HomeDeskRecent(), // HOMEDESK: 读取上游最近、收藏和局域网数据。
       servicesBuilder: (_) => HomeDeskServices(account: _account, onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network)), // HOMEDESK: 登录状态共享，许可仍固定到当前配置。
       initializeAccount: true, // HOMEDESK: 只恢复已批准地址下明确保存的登录。
@@ -114,7 +114,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           onRefreshPassword: () => bind.mainUpdateTemporaryPassword(),
           onPasswordSettings: bind.isDisableSettings() ? null : () {
             Navigator.pop(dialogContext);
-            DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.safety);
+            HomeDeskDashboard.navigate('settings');
           },
           onInstall: !portable ? null : () async {
             Navigator.pop(dialogContext);

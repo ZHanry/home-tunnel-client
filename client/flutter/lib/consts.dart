@@ -39,7 +39,7 @@ const String kPeerPlatformMacOS = "Mac OS";
 const String kPeerPlatformAndroid = "Android";
 const String kPeerPlatformWebDesktop = "WebDesktop";
 
-const double kScrollbarThickness = 12.0;
+const double kScrollbarThickness = 0.0;
 
 /// [kAppTypeMain] used by 'Desktop Main Page' , 'Mobile (Client and Server)', "Install Page"
 const String kAppTypeMain = "main";

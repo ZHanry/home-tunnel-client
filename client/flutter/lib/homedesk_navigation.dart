@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'homedesk_account.dart';
 import 'homedesk_theme.dart';
+import 'nestlink_workspace.dart';
+import 'nestlink_locale.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'common.dart' show MyTheme;
 
 class HomeDeskNavigation extends StatelessWidget {
   final String brand, selected;
@@ -71,8 +75,7 @@ class HomeDeskNavigation extends StatelessWidget {
                         color: t.accent,
                         borderRadius:
                             BorderRadius.circular(HomeDeskTokens.blockRadius)),
-                    child:
-                        Icon(Icons.home_rounded, color: t.onAccent, size: 23)),
+                    child: SvgPicture.asset('assets/icon.svg', width: 36, height: 36)),
                 if (!compact) ...[
                   const SizedBox(width: 10),
                   Expanded(
@@ -83,32 +86,34 @@ class HomeDeskNavigation extends StatelessWidget {
                 ]
               ])),
       const SizedBox(height: 12),
-      _item(context, 'devices', '家庭设备', Icons.devices_rounded,
+      _item(context, 'remote', nl('远程控制', 'Remote control'), Icons.desktop_windows_outlined),
+      if (services) _item(context, 'services', nl('内网穿透', 'Tunnels'), Icons.hub_outlined,
+          count: account?.catalog?.services.length.toString()),
+      _item(context, 'devices', nl('设备', 'Devices'), Icons.devices_rounded,
           count: account?.catalog?.devices.length.toString()),
-      _item(context, 'recent', '最近连接', Icons.history_rounded),
-      if (services)
-        _item(context, 'services', '家庭服务', Icons.apps_rounded,
-            count: account?.catalog?.services.length.toString()),
+      _item(context, 'settings', nl('设置', 'Settings'), Icons.settings_outlined),
     ];
     final lower = <Widget>[
-      _item(context, 'local', '本机信息', Icons.computer_rounded),
-      _item(context, 'settings', '设置', Icons.settings_outlined),
+      SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () => setNestLinkLanguage(nestlinkEnglish ? 'zh-cn' : 'en'),
+        icon: const Icon(Icons.language_outlined, size: 18), label: Text(nestlinkEnglish ? '简体中文' : 'English'))), const SizedBox(height: 8),
+      SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: () => MyTheme.changeDarkMode(
+          Theme.of(context).brightness == Brightness.dark ? ThemeMode.light : ThemeMode.dark),
+          icon: Icon(Theme.of(context).brightness == Brightness.dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined, size: 18),
+          label: Text(nl('切换主题', 'Change theme')))),
       const SizedBox(height: 8),
       Divider(color: t.border, height: 12),
       _item(
           context,
           'account',
           compact
-              ? '家庭账号'
+              ? nl('账号', 'Account')
               : account?.signedIn == true
                   ? account!.displayName
-                  : '登录家庭账号',
+                  : nl('登录账号', 'Sign in'),
           Icons.person_outline_rounded),
-      if (!compact)
-        Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text(account?.signedIn == true ? '家庭账号已登录' : '登录后同步家庭设备',
-                style: t.auxiliaryStyle)),
+      ValueListenableBuilder<Map<String, dynamic>?>(valueListenable: nestlinkRelease, builder: (context, release, _) =>
+        SizedBox(width: double.infinity, child: TextButton.icon(onPressed: () => showNestLinkVersion(context),
+          icon: Icon(release?['update_available'] == true ? Icons.system_update_alt : Icons.info_outline, size: 18), label: const Text(nestlinkVersion)))),
       const SizedBox(height: 12),
     ];
     return Container(

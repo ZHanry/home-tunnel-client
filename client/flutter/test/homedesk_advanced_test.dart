@@ -73,51 +73,29 @@ void main() {
     expect(isHomeDeskPrivateWhitelistEntry('2001:db8::/64'), isFalse);
   });
 
-  testWidgets('切换模式加载独立组且保存ACK期间禁止重入', (tester) async {
-    const profiles = <String, String>{
-      'homedesk-net-mode': 'lan_only',
-      'homedesk-profile-lan_only-server': '192.168.50.10:21116',
-      'homedesk-profile-lan_only-relay': '192.168.50.10:21117',
-      'homedesk-profile-lan_only-key': key,
-      'homedesk-profile-lan_only-family-cidr': '192.168.50.0/24',
-      'homedesk-profile-lan_only-source-cidr': '',
-      'homedesk-profile-self_hosted-server': 'remote.example.com:21116',
-      'homedesk-profile-self_hosted-relay': 'relay.example.com:21117',
-      'homedesk-profile-self_hosted-key': key,
-      'homedesk-profile-self_hosted-family-cidr': '192.168.50.0/24',
-      'homedesk-profile-self_hosted-source-cidr': '203.0.113.0/24',
-    };
-    final ack = Completer<String>();
-    var saves = 0;
-    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) {
-      return TextButton(
-          onPressed: () => showHomeDeskNetworkSettings(context,
-              readOption: (name) => profiles[name] ?? '',
-              saveProfile: (mode, server, relay, savedKey, family, source) {
-                saves++;
-                expect(mode, 'self_hosted');
-                expect(server, 'remote.example.com:21116');
-                expect(relay, '');
-                return ack.future;
-              }),
-          child: const Text('打开'));
-    })));
+  testWidgets('连接配置由登录服务提供，旧内网配置没有可用入口', (tester) async {
+    var writes = 0;
+    await tester.pumpWidget(MaterialApp(
+        home: Builder(
+            builder: (context) => TextButton(
+                onPressed: () => showHomeDeskNetworkSettings(context,
+                    readOption: (key) => key == 'custom-rendezvous-server'
+                        ? 'signal.example.com:21116'
+                        : 'lan_only',
+                    saveProfile: (a, b, c, d, e, f) async {
+                      writes++;
+                      return '';
+                    }),
+                child: const Text('打开')))));
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('远控仅限内网').last);
+    expect(find.text('signal.example.com:21116'), findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('远控仅限内网'), findsNothing);
+    await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('自建公网').last);
-    await tester.pumpAndSettle();
-    expect(find.text('remote.example.com:21116'), findsWidgets);
-    expect(find.text('relay.example.com:21117'), findsNothing);
-    await tester.tap(find.text('保存并重启服务'));
-    await tester.pump();
-    expect(saves, 1);
-    expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
-        isNull);
-    ack.complete('后台拒绝保存');
-    await tester.pumpAndSettle();
-    expect(find.text('后台拒绝保存'), findsOneWidget);
-    expect(find.text('网络模式'), findsOneWidget);
+    expect(writes, 0);
+    expect(tester.takeException(), isNull);
   });
 }

@@ -1,4 +1,4 @@
-// HOMEDESK: 暖居的颜色、字号、圆角和间距集中定义，沿用现有字体。
+// HOMEDESK: 栖云桥的颜色、字号、圆角和间距集中定义，沿用现有字体。
 import 'package:flutter/material.dart';
 import 'common.dart' show ColorThemeExtension;
 
@@ -29,19 +29,19 @@ class HomeDeskTokens extends ThemeExtension<HomeDeskTokens> {
       required this.warningSoft,
       required this.dangerSoft});
   static const light = HomeDeskTokens(
-      background: Color(0xFFF6F4EF),
-      chrome: Color(0xFFEFEBE4),
+      background: Color(0xFFF3F6FC),
+      chrome: Color(0xFFFFFFFF),
       surface: Color(0xFFFFFFFF),
-      surface2: Color(0xFFFBFAF7),
-      sunken: Color(0xFFF3F0EA),
-      border: Color(0xFFE7E1D6),
-      strong: Color(0xFFD8D0C2),
-      text: Color(0xFF1F1B16),
-      secondary: Color(0xFF675F55),
-      muted: Color(0xFF71675B),
-      accent: Color(0xFFC2552D),
-      accentText: Color(0xFFA9461F),
-      accentSoft: Color(0xFFF8E8DE),
+      surface2: Color(0xFFF8FAFF),
+      sunken: Color(0xFFF0F4FB),
+      border: Color(0xFFE3E9F3),
+      strong: Color(0xFFCBD6E8),
+      text: Color(0xFF18243B),
+      secondary: Color(0xFF61718B),
+      muted: Color(0xFF72819A),
+      accent: Color(0xFF2D6AE8),
+      accentText: Color(0xFF235BC7),
+      accentSoft: Color(0xFFEAF1FF),
       onAccent: Color(0xFFFFFFFF),
       success: Color(0xFF276F46),
       warning: Color(0xFF85570E),
@@ -50,20 +50,20 @@ class HomeDeskTokens extends ThemeExtension<HomeDeskTokens> {
       warningSoft: Color(0xFFFAEFD7),
       dangerSoft: Color(0xFFFBE5E1));
   static const dark = HomeDeskTokens(
-      background: Color(0xFF171512),
-      chrome: Color(0xFF1D1A17),
-      surface: Color(0xFF24211D),
-      surface2: Color(0xFF2A2622),
-      sunken: Color(0xFF1E1B18),
-      border: Color(0xFF363129),
-      strong: Color(0xFF4A433A),
-      text: Color(0xFFF3EEE7),
-      secondary: Color(0xFFB9AFA2),
-      muted: Color(0xFFA59B8E),
-      accent: Color(0xFFE9794C),
-      accentText: Color(0xFFE9794C),
-      accentSoft: Color(0xFF3B261B),
-      onAccent: Color(0xFF1E110A),
+      background: Color(0xFF111B2C),
+      chrome: Color(0xFF152136),
+      surface: Color(0xFF19273D),
+      surface2: Color(0xFF20314C),
+      sunken: Color(0xFF152236),
+      border: Color(0xFF2B3E5B),
+      strong: Color(0xFF3D5372),
+      text: Color(0xFFEAF1FD),
+      secondary: Color(0xFFB5C5DC),
+      muted: Color(0xFF99ADC9),
+      accent: Color(0xFF78A7FF),
+      accentText: Color(0xFF78A7FF),
+      accentSoft: Color(0xFF233F68),
+      onAccent: Color(0xFF102441),
       success: Color(0xFF6DCB91),
       warning: Color(0xFFE6B566),
       danger: Color(0xFFF08B7D),
@@ -137,6 +137,7 @@ ThemeData homeDeskTheme(ThemeData base) {
       borderRadius: BorderRadius.circular(HomeDeskTokens.controlRadius),
       borderSide: BorderSide(color: t.border));
   return base.copyWith(
+    scrollbarTheme: const ScrollbarThemeData(thickness: MaterialStatePropertyAll(0), thumbVisibility: MaterialStatePropertyAll(false), trackVisibility: MaterialStatePropertyAll(false)),
     extensions: [
       ...base.extensions.values
           .where((e) => e is! HomeDeskTokens && e is! ColorThemeExtension),

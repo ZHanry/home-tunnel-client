@@ -148,160 +148,33 @@ typedef HomeDeskNetworkSaver = Future<String> Function(
     String familyCidr,
     String sourceCidr);
 
-// HOMEDESK: 双模式高级设置只提交完整原子组；Rust 再做同类校验并一次落盘。
+// Connection settings are issued by the authenticated self-hosted service.
 Future<void> showHomeDeskNetworkSettings(BuildContext context,
     {String Function(String)? readOption,
     HomeDeskNetworkSaver? saveProfile}) async {
   final read = readOption ?? (String key) => bind.mainGetOptionSync(key: key);
-  final save = saveProfile ??
-      (mode, server, relay, key, familyCidr, sourceCidr) =>
-          bind.mainSaveHomedeskNetworkProfile(
-              mode: mode,
-              server: server,
-              relay: relay,
-              key: key,
-              familyCidr: familyCidr,
-              sourceCidr: sourceCidr);
-  var mode = read('homedesk-net-mode');
-  if (mode != 'self_hosted') mode = 'lan_only';
-  late TextEditingController server;
-  late TextEditingController relay;
-  late TextEditingController key;
-  late TextEditingController familyCidr;
-  late TextEditingController sourceCidr;
-  final controllersToDispose = <TextEditingController>[];
-
-  void loadProfile(String value) {
-    String profile(String field) => read('homedesk-profile-$value-$field');
-    server = TextEditingController(text: profile('server'));
-    relay =
-        TextEditingController(); // HOMEDESK: Legacy relay settings are not reused.
-    key = TextEditingController(text: profile('key'));
-    familyCidr = TextEditingController(text: profile('family-cidr'));
-    sourceCidr = TextEditingController(text: profile('source-cidr'));
-    controllersToDispose.addAll([server, relay, key, familyCidr, sourceCidr]);
-  }
-
-  loadProfile(mode);
-  String error = '';
-  bool saving = false;
   await showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogContext) => StatefulBuilder(builder: (context, setState) {
-      Widget field(String label, TextEditingController controller,
-              {String? hint}) =>
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: HomeDeskFieldLabel(label,
-                child: TextField(
-                  controller: controller,
-                  enabled: !saving,
-                  decoration: InputDecoration(hintText: hint),
-                )),
-          );
-      return AlertDialog(
-        title: const Text('网络模式'), // HOMEDESK: 标题描述当前操作，品牌由外壳展示。
-        content: SizedBox(
-          width: 560,
-          child: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              HomeDeskFieldLabel('模式',
-                  child: DropdownButtonFormField<String>(
-                    value: mode,
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'lan_only', child: Text('远控仅限内网')),
-                      DropdownMenuItem(
-                          value: 'self_hosted', child: Text('自建公网')),
-                    ],
-                    onChanged: saving
-                        ? null
-                        : (value) {
-                            if (value == null || value == mode) return;
-                            setState(() {
-                              mode = value;
-                              loadProfile(value);
-                              error = '';
-                            });
-                          },
-                  )),
-              field('ID 服务器', server,
-                  hint: mode == 'lan_only'
-                      ? '192.168.50.10:21116'
-                      : 'remote.example.com:21116'),
-              const Text('远控策略：必须 P2P 直连；失败时停止，不使用中继。'),
-              field('服务器公钥', key),
-              field('家庭 CIDR', familyCidr, hint: '192.168.50.0/24'),
-              if (mode == 'self_hosted')
-                field('公网来源限制（可选）', sourceCidr, hint: '203.0.113.0/24'),
-              const Padding(
-                padding: EdgeInsets.only(top: 12),
-                child: Text(
-                    '请先断开现有远控会话。保存后重启远控连接服务；内网穿透继续独立运行。IPv6 和公共 STUN 尚未启用。'),
-              ),
-              if (error.isNotEmpty)
-                Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Text(error,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error))),
-              if (saving)
-                const Padding(
-                    padding: EdgeInsets.only(top: 12),
-                    child: LinearProgressIndicator()),
-            ]),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed:
-                  saving ? null : () => Navigator.of(dialogContext).pop(),
-              child: const Text('取消')),
-          FilledButton(
-            onPressed: saving
-                ? null
-                : () async {
-                    final localError = validateHomeDeskNetworkDraft(
-                      mode: mode,
-                      server: server.text.trim(),
-                      relay: relay.text.trim(),
-                      key: key.text.trim(),
-                      familyCidr: familyCidr.text.trim(),
-                      sourceCidr:
-                          mode == 'self_hosted' ? sourceCidr.text.trim() : '',
-                    );
-                    if (localError.isNotEmpty) {
-                      setState(() => error = localError);
-                      return;
-                    }
-                    setState(() {
-                      saving = true;
-                      error = '';
-                    });
-                    final result = await save(
-                        mode,
-                        server.text.trim(),
-                        relay.text.trim(),
-                        key.text.trim(),
-                        familyCidr.text.trim(),
-                        mode == 'self_hosted' ? sourceCidr.text.trim() : '');
-                    if (result.isEmpty) {
-                      Navigator.of(dialogContext).pop();
-                    } else {
-                      setState(() {
-                        saving = false;
-                        error = result;
-                      });
-                    }
-                  },
-            child: const Text('保存并重启服务'),
-          ),
-        ],
-      );
-    }),
-  );
-  for (final controller in controllersToDispose) {
-    controller.dispose();
-  }
+      context: context,
+      builder: (context) => AlertDialog(
+            title: const Text('自建服务连接'),
+            content: SizedBox(
+                width: 480,
+                child: SingleChildScrollView(
+                    child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      const Text('登录后自动获取远控服务配置。切换服务请先退出当前账号，再登录新的自建服务。'),
+                      const SizedBox(height: 20),
+                      const Text('信令服务器'),
+                      SelectableText(read('custom-rendezvous-server')),
+                      const SizedBox(height: 20),
+                      const Text('远控策略：加密 P2P 直连；直连失败时结束。'),
+                    ]))),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('关闭'))
+            ],
+          ));
 }

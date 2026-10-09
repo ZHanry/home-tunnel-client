@@ -15,6 +15,7 @@ import 'homedesk_local_agent.dart';
 import 'homedesk_service_editor.dart';
 import 'homedesk_tunnel_api.dart';
 import 'homedesk_tunnel_session.dart';
+import 'nestlink_native_session.dart';
 import 'models/platform_model.dart';
 
 typedef HomeTunnelApiBuilder = HomeTunnelApi Function(String origin,
@@ -74,7 +75,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         _publishedApi = api;
         final generation = _generation;
         widget.account!
-            .publish(api, _catalog, _localAgent?.deviceId ?? '', _editDevice,
+            .publish(api, _catalog, api.guiDeviceId.isNotEmpty ? api.guiDeviceId : (_localAgent?.deviceId ?? ''), _editDevice,
                 onCatalog: (value) {
           if (_current(api, generation)) {
             _changeState(() => _applyCatalog(value));
@@ -90,7 +91,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   final _origin = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
-  final _mfa = TextEditingController();
+  NestLinkNativeSession? _nativeSession;
   HomeTunnelApi? _api;
   HomeTunnelCatalog? _catalog;
   HomeDeskLocalAgent? _localAgent;
@@ -104,7 +105,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   bool _rememberLogin = false;
   bool _allowed = false;
   bool _busy = false;
-  bool _needsMfa = false;
   String _message = '';
   String _deviceId = '';
   int _serviceType = 0; // 仅影响当前目录的显示筛选。
@@ -133,8 +133,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
 
   void _clearSecrets() {
     _password.clear();
-    _mfa.clear();
-    _needsMfa = false;
   }
 
   void _revoke() {
@@ -358,7 +356,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       await api.login(
           username: _username.text.trim(),
           password: _password.text,
-          mfaCode: _mfa.text.trim().isEmpty ? null : _mfa.text.trim(),
           rememberLogin: _rememberLogin && _credentialStore.supported);
       if (!_current(api, generation)) return;
       _changeState(_clearSecrets);
@@ -371,10 +368,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       if (api != null && !_current(api, generation)) return;
       _changeState(() {
         _message = _errorMessage(error);
-        final code = error is HomeTunnelApiException ? error.code : '';
-        _needsMfa = code == 'MFA_REQUIRED' || code == 'MFA_INVALID';
-        _mfa.clear();
-        if (!_needsMfa) _password.clear();
+        _password.clear();
       });
     } finally {
       if (mounted && _generation == generation) {
@@ -390,12 +384,20 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           : '服务暂时无法连接，请检查地址、证书和网络后重试。';
 
   Future<void> _attachLocal(HomeTunnelApi api, int generation) async {
+    if (widget.apiBuilder == null && widget.readOption == null && _current(api, generation)) {
+      if (_nativeSession == null) {
+        final native = NestLinkNativeSession(api);
+        _nativeSession = native;
+        api.onSessionClosed = () { native.close(); if (identical(_nativeSession, native)) _nativeSession = null; };
+        try { await native.start(); } catch (_) { _message = '设备登记未完成，请稍后重试。'; }
+      }
+    }
     // 合成预览/组件注入保持无真实后台进程；生产仅在许可有效且身份已校验后接入。
     if (widget.apiBuilder != null ||
         widget.readOption != null ||
         !_current(api, generation) ||
         _catalog == null) return;
-    if (!Platform.isWindows) return;
+    if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux) return;
     _localAgent ??= HomeDeskLocalAgent(
         send: (value) => bind.mainSetLocalOption(
             key: 'homedesk-tunnel-agent-command', value: value),
@@ -743,7 +745,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-                title: const Text('删除家庭服务？'),
+                title: const Text('删除内网穿透？'),
                 content: Text('删除“${service.name}”后，其访问地址将停止工作。可以随后重新创建服务。'),
                 actions: [
                   TextButton(
@@ -901,7 +903,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     _timer?.cancel();
     _api?.close();
     _clearSecrets();
-    for (final controller in [_origin, _username, _password, _mfa]) {
+    for (final controller in [_origin, _username, _password]) {
       controller.dispose();
     }
     super.dispose();
@@ -943,7 +945,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                             const Text('登录后，本机会加入家庭设备，并显示同账号的电脑和服务。'),
                             const SizedBox(height: 20),
                             if (!_allowed) ...[
-                              const Text('请确认家庭服务的 HTTPS 地址和账号授权。穿透服务独立于 P2P 远控设置。'),
+                              const Text('请确认内网穿透的 HTTPS 地址和账号授权。穿透服务独立于 P2P 远控设置。'),
                               if (widget.onNetworkSettings != null)
                                 Align(
                                     alignment: Alignment.centerLeft,
@@ -984,27 +986,13 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                     onSubmitted: (_) => _login(),
                                     decoration:
                                         const InputDecoration(border: null))),
-                            if (_needsMfa) ...[
-                              const SizedBox(height: 14),
-                              HomeDeskFieldLabel('动态码或恢复码',
-                                  child: TextField(
-                                      key: const ValueKey('tunnel-mfa'),
-                                      controller: _mfa,
-                                      enabled: !_busy && _allowed,
-                                      obscureText: true,
-                                      enableSuggestions: false,
-                                      autocorrect: false,
-                                      onSubmitted: (_) => _login(),
-                                      decoration:
-                                          const InputDecoration(border: null))),
-                            ],
                             const SizedBox(height: 16),
                             CheckboxListTile(
                                 key: const ValueKey('tunnel-remember'),
                                 contentPadding: EdgeInsets.zero,
                                 title: const Text('记住登录'),
                                 subtitle: Text(_credentialStore.supported
-                                    ? '使用本机系统安全存储，下次进入家庭服务时恢复。'
+                                    ? '使用本机系统安全存储，下次启动时恢复。'
                                     : '当前平台未启用安全存储，本次登录仅保留在内存中。'),
                                 value: _rememberLogin,
                                 onChanged: !_busy &&
@@ -1545,7 +1533,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final t = HomeDeskTokens.of(context);
     final heading =
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('家庭服务', style: t.titleStyle),
+      Text('内网穿透', style: t.titleStyle),
       const SizedBox(height: 4),
       Text(
           '${catalog?.devices.length ?? 0} 台设备 · ${catalog?.services.length ?? 0} 项服务',
@@ -1651,7 +1639,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                       Padding(
                           padding: const EdgeInsets.only(top: 20),
                           child: Text(
-                              '当前账号尚无接入设备。登录后会自动接入本机；其他设备也可使用接入码登记。默认不发布服务。',
+                              '当前账号尚无接入设备。登录后会自动接入本机；其他设备使用自己的账号登录。默认不发布服务。',
                               style: t.auxiliaryStyle)),
                   ]))),
       SliverList(
@@ -1660,7 +1648,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
               childCount: groups.length)),
       SliverToBoxAdapter(
           child:
-              Text('家庭服务用于网页和端口转发。远程桌面请使用设备 ID 连接。', style: t.auxiliaryStyle)),
+              Text('内网穿透用于网页和端口转发。远程桌面请使用设备 ID 连接。', style: t.auxiliaryStyle)),
       const SliverToBoxAdapter(child: SizedBox(height: 24)),
     ]);
   }
@@ -1669,7 +1657,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(
             padding: const EdgeInsets.symmetric(vertical: 24),
-            child: Text('家庭服务', style: HomeDeskTokens.of(context).titleStyle)),
+            child: Text('内网穿透', style: HomeDeskTokens.of(context).titleStyle)),
         Expanded(child: _loginFormContent()),
       ]);
 

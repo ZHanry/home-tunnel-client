@@ -12,6 +12,8 @@ import '../../homedesk_services.dart';
 import '../../homedesk_family_devices.dart';
 import '../../homedesk_advanced.dart';
 import '../../homedesk_mobile_shell.dart';
+import '../../homedesk_dashboard.dart';
+import '../../homedesk_recent.dart';
 
 abstract class PageShape extends Widget {
   final String title = "";
@@ -107,6 +109,17 @@ class HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    return HomeDeskDashboard(brandName: '栖云桥', initializeAccount: true,
+      devicesBuilder: (_) => HomeDeskFamilyDevices(account: _account,
+          onLogin: () => HomeDeskDashboard.navigate('account'), onConnect: (id) => connect(context, id),
+          readOption: (key) => bind.mainGetLocalOption(key: key)),
+      recentBuilder: (_) => const HomeDeskRecent(summary: true),
+      servicesBuilder: (_) => HomeDeskServices(account: _account),
+      localBuilder: (_) => ServerPage(), statusBuilder: (_) => const SizedBox.shrink(),
+      onSettings: () => HomeDeskDashboard.navigate('settings'), onConnect: (id) => connect(context, id));
+  }
+
+  Widget buildLegacy(BuildContext context) {
     return WillPopScope(
         onWillPop: () async {
           if (_selectedIndex != 0) {

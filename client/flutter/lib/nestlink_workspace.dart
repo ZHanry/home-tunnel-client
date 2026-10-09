@@ -1,0 +1,405 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'common.dart' show MyTheme;
+import 'models/platform_model.dart';
+import 'homedesk_account.dart';
+import 'homedesk_theme.dart';
+import 'homedesk_tunnel_api.dart';
+import 'nestlink_locale.dart';
+
+const nestlinkVersion = '12.0.0-RC1';
+final nestlinkRelease = ValueNotifier<Map<String, dynamic>?>(null);
+
+Future<void> checkNestLinkVersion(HomeTunnelApi? api) async {
+  if (api == null || !api.isSignedIn) return;
+  try {
+    final update =
+        await api.releaseUpdate(Platform.isAndroid ? 'android' : 'client');
+    if (api.isSignedIn) nestlinkRelease.value = update;
+  } catch (_) {
+    /* The installed version remains usable when a check is unavailable. */
+  }
+}
+
+class NestLinkScrollBehavior extends MaterialScrollBehavior {
+  const NestLinkScrollBehavior();
+  @override
+  Widget buildScrollbar(
+          BuildContext context, Widget child, ScrollableDetails details) =>
+      child;
+}
+
+class NestLinkRemoteWorkspace extends StatefulWidget {
+  final HomeDeskAccount? account;
+  final ValueChanged<String> onConnect;
+  final VoidCallback onLocal;
+  final Widget recent, status;
+  const NestLinkRemoteWorkspace(
+      {super.key,
+      this.account,
+      required this.onConnect,
+      required this.onLocal,
+      required this.recent,
+      required this.status});
+  @override
+  State<NestLinkRemoteWorkspace> createState() =>
+      _NestLinkRemoteWorkspaceState();
+}
+
+class _NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
+  final _id = TextEditingController();
+  String _error = '';
+  void _connect() {
+    final id = _id.text.trim();
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,64}$').hasMatch(id)) {
+      setState(() => _error = nl('请输入有效的设备 ID', 'Enter a valid device ID'));
+      return;
+    }
+    if (widget.account != null && !widget.account!.signedIn) {
+      setState(() => _error = nl('请先登录自建服务', 'Sign in to your server first'));
+      return;
+    }
+    setState(() => _error = '');
+    widget.onConnect(id);
+  }
+
+  @override
+  void dispose() {
+    _id.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = HomeDeskTokens.of(context);
+    final connect = Card(
+        child: Padding(
+            padding: const EdgeInsets.all(24),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.desktop_windows_outlined, size: 34),
+              const SizedBox(height: 20),
+              Text(nl('连接一台设备', 'Connect to a device'), style: t.titleStyle),
+              const SizedBox(height: 8),
+              Text(
+                  nl('输入设备 ID。同一服务下，也可以协助其他账号的设备。',
+                      'Enter a device ID to connect or assist another account on this server.'),
+                  style: t.auxiliaryStyle),
+              const SizedBox(height: 24),
+              TextField(
+                  key: const ValueKey('remote-device-id'),
+                  controller: _id,
+                  onSubmitted: (_) => _connect(),
+                  decoration: InputDecoration(
+                      labelText: nl('设备 ID', 'Device ID'),
+                      hintText: nl('输入对方的设备 ID', 'Enter their device ID'),
+                      errorText: _error.isEmpty ? null : _error)),
+              const SizedBox(height: 16),
+              SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                      key: const ValueKey('remote-connect'),
+                      onPressed: _connect,
+                      icon: const Icon(Icons.link_rounded),
+                      label: Text(nl('发起连接', 'Connect')))),
+              const SizedBox(height: 16),
+              Text(
+                  nl('连接需要对方批准或验证远控密码。',
+                      'The host must approve or verify a remote password.'),
+                  style: t.auxiliaryStyle),
+            ])));
+    final local = Card(
+        child: Padding(
+            padding: const EdgeInsets.all(24),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SvgPicture.asset('assets/icon.svg', width: 42, height: 42),
+              const SizedBox(height: 20),
+              Text(nl('共享这台设备', 'Share this device'), style: t.titleStyle),
+              const SizedBox(height: 8),
+              Text(
+                  nl('查看本机设备 ID、共享状态和连接授权。',
+                      'View this device ID, sharing status and connection permissions.'),
+                  style: t.auxiliaryStyle),
+              const SizedBox(height: 24),
+              OutlinedButton.icon(
+                  onPressed: widget.onLocal,
+                  icon: const Icon(Icons.screen_share_outlined),
+                  label: Text(nl('查看本机共享', 'Manage sharing'))),
+              const SizedBox(height: 20),
+              Row(children: [
+                Icon(Icons.verified_user_outlined, color: t.success, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text(
+                        nl('远控使用加密 P2P 直连', 'Encrypted P2P remote control'),
+                        style: t.auxiliaryStyle))
+              ]),
+              const SizedBox(height: 8),
+              Text(
+                  nl('内网穿透独立运行，可以单独启动和停止。',
+                      'Tunnels run independently and can be started or stopped separately.'),
+                  style: t.auxiliaryStyle),
+              const SizedBox(height: 12),
+              widget.status,
+            ])));
+    return SingleChildScrollView(
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      LayoutBuilder(
+          builder: (context, constraints) => constraints.maxWidth >= 780
+              ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(flex: 6, child: connect),
+                  const SizedBox(width: 20),
+                  Expanded(flex: 5, child: local)
+                ])
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [connect, const SizedBox(height: 16), local])),
+      const SizedBox(height: 24),
+      Text(nl('最近连接', 'Recent connections'), style: t.sectionStyle),
+      const SizedBox(height: 12),
+      SizedBox(height: 340, child: widget.recent),
+      const SizedBox(height: 24),
+    ]));
+  }
+}
+
+Future<void> showNestLinkVersion(BuildContext context) => showDialog<void>(
+    context: context,
+    builder: (context) => ValueListenableBuilder<Map<String, dynamic>?>(
+        valueListenable: nestlinkRelease,
+        builder: (context, release, _) => AlertDialog(
+              title: Row(children: [
+                SvgPicture.asset('assets/icon.svg', width: 32, height: 32),
+                const SizedBox(width: 12),
+                const Expanded(child: Text('栖云桥 / NestLink'))
+              ]),
+              content: SizedBox(
+                  width: 420,
+                  child: SingleChildScrollView(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                        const SelectableText(nestlinkVersion),
+                        const SizedBox(height: 16),
+                        Text(nl('统一的设备工作台，支持内网穿透与加密 P2P 远控。',
+                            'Your device workspace for tunneling and encrypted P2P remote control.')),
+                        const SizedBox(height: 16),
+                        if (release != null) ...[
+                          Text(
+                              '${nl('可用版本', 'Available version')}: ${release['version']}'),
+                          const SizedBox(height: 12),
+                          SelectableText(release['notes'] as String)
+                        ] else
+                          Text(nl('暂时无法检查更新。可在发行页面查看版本说明。',
+                              'Updates are unavailable. View release notes on the release page.')),
+                      ]))),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(nl('关闭', 'Close'))),
+                FilledButton(
+                    onPressed: () => launchUrl(
+                        Uri.parse(release?['url'] as String? ??
+                            'https://github.com/ZHanry/${Platform.isAndroid ? 'home-tunnel-android' : 'home-tunnel-client'}/releases'),
+                        mode: LaunchMode.externalApplication),
+                    child: Text(nl('版本与下载', 'Release notes and download')))
+              ],
+            )));
+
+class NestLinkSettings extends StatefulWidget {
+  final HomeDeskAccount? account;
+  final VoidCallback onSharing;
+  final VoidCallback onAccount;
+  const NestLinkSettings(
+      {super.key,
+      this.account,
+      required this.onSharing,
+      required this.onAccount});
+  @override
+  State<NestLinkSettings> createState() => _NestLinkSettingsState();
+}
+
+class _NestLinkSettingsState extends State<NestLinkSettings> {
+  final _password = TextEditingController();
+  bool _busy = false;
+  String _message = '';
+  String _approval = 'click';
+  @override
+  void initState() {
+    super.initState();
+    if (widget.account?.signedIn == true) {
+      try {
+        final value = bind.mainGetOptionSync(key: 'approve-mode');
+        if (['click', 'password', 'both'].contains(value)) _approval = value;
+      } catch (_) {
+        /* The initial login may still be registering the native core. */
+      }
+    }
+  }
+
+  Future<void> _saveApproval(String? value) async {
+    if (value == null || _busy) return;
+    if (!bind.mainNestlinkAccountReady()) {
+      setState(() => _message =
+          nl('请等待远控服务就绪', 'Wait for remote authorization to be ready'));
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await bind.mainSetOption(key: 'approve-mode', value: value);
+      if (mounted)
+        setState(() {
+          _approval = value;
+          _message = '';
+        });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _savePassword() async {
+    if (_password.text.length < 6 || _password.text.length > 128) {
+      setState(() => _message = '远控密码需要 6 到 128 个字符');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final ok = await bind.mainSetPermanentPasswordWithResult(
+          password: _password.text);
+      if (!mounted) return;
+      setState(() => _message = ok ? '远控密码已保存' : '远控密码保存失败，请稍后重试');
+      _password.clear();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = HomeDeskTokens.of(context);
+    Widget section(String title, List<Widget> content) => Card(
+        child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(title, style: t.sectionStyle),
+                  const SizedBox(height: 16),
+                  ...content,
+                ])));
+    return ListView(children: [
+      section(nl('连接与共享', 'Connections and sharing'), [
+        Text(
+            nl('每次远控都需要账号登录、短期连接许可和被控端授权。',
+                'Every remote connection requires account login, a short-lived permit and host authorization.'),
+            style: t.auxiliaryStyle),
+        const SizedBox(height: 16),
+        Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+                onPressed: widget.onSharing,
+                icon: const Icon(Icons.screen_share_outlined),
+                label: Text(nl('本机共享与授权', 'Sharing and permissions')))),
+        const SizedBox(height: 20),
+        DropdownButtonFormField<String>(
+            value: _approval,
+            decoration:
+                InputDecoration(labelText: nl('被控端授权方式', 'Host authorization')),
+            items: [
+              DropdownMenuItem(
+                  value: 'click',
+                  child: Text(nl('每次由本机批准', 'Approve on this device'))),
+              DropdownMenuItem(
+                  value: 'password',
+                  child: Text(nl('验证远控密码', 'Verify remote password'))),
+              DropdownMenuItem(
+                  value: 'both',
+                  child: Text(nl('本机批准或验证密码', 'Approve or verify password')))
+            ],
+            onChanged: _busy ? null : _saveApproval),
+        const SizedBox(height: 20),
+        TextField(
+            controller: _password,
+            obscureText: true,
+            enableSuggestions: false,
+            autocorrect: false,
+            decoration: InputDecoration(
+                labelText: nl('设置远控密码', 'Set remote password'))),
+        const SizedBox(height: 16),
+        Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+                onPressed: _busy ? null : _savePassword,
+                child: Text(nl('保存远控密码', 'Save remote password')))),
+        if (_message.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.only(top: 12), child: Text(_message)),
+      ]),
+      const SizedBox(height: 20),
+      section(nl('外观', 'Appearance'), [
+        Wrap(spacing: 12, runSpacing: 12, children: [
+          OutlinedButton.icon(
+              onPressed: () => MyTheme.changeDarkMode(ThemeMode.light),
+              icon: const Icon(Icons.light_mode_outlined),
+              label: Text(nl('浅色', 'Light'))),
+          OutlinedButton.icon(
+              onPressed: () => MyTheme.changeDarkMode(ThemeMode.dark),
+              icon: const Icon(Icons.dark_mode_outlined),
+              label: Text(nl('深色', 'Dark'))),
+          OutlinedButton.icon(
+              onPressed: () => MyTheme.changeDarkMode(ThemeMode.system),
+              icon: const Icon(Icons.brightness_auto_outlined),
+              label: Text(nl('跟随系统', 'System'))),
+        ])
+      ]),
+      const SizedBox(height: 20),
+      section(nl('账号', 'Account'), [
+        Text(
+            widget.account?.displayName ?? nl('自建服务账号', 'Self-hosted account')),
+        const SizedBox(height: 8),
+        if (widget.account?.api != null)
+          SelectableText(widget.account!.api!.base.origin),
+        const SizedBox(height: 16),
+        Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+                onPressed: widget.onAccount,
+                child: Text(nl('密码、额度与会话', 'Password, quota and sessions')))),
+      ]),
+      const SizedBox(height: 20),
+      section(nl('语言', 'Language'), [
+        DropdownButtonFormField<String>(
+            value: nestlinkLanguage.value,
+            items: const [
+              DropdownMenuItem(value: 'zh-cn', child: Text('简体中文')),
+              DropdownMenuItem(value: 'en', child: Text('English'))
+            ],
+            onChanged: (value) {
+              if (value != null) setNestLinkLanguage(value);
+            })
+      ]),
+      const SizedBox(height: 20),
+      section(nl('版本', 'Version'), [
+        ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('栖云桥 / NestLink'),
+            subtitle: const Text(nestlinkVersion),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => showNestLinkVersion(context))
+      ]),
+      const SizedBox(height: 24),
+    ]);
+  }
+}

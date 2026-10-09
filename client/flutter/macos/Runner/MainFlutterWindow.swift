@@ -1,4 +1,6 @@
 import Cocoa
+import Security
+import CryptoKit
 import AVFoundation
 import FlutterMacOS
 import desktop_multi_window
@@ -18,6 +20,43 @@ import wakelock_plus
 import window_manager
 import window_size
 import texture_rgba_renderer
+
+@available(macOS 10.15, *)
+private enum NestLinkKeychain {
+    static func crypt(_ bytes: Data, entropy: Data, encrypt: Bool) throws -> Data {
+        let account = SHA256.hash(data: entropy).map { String(format: "%02x", $0) }.joined()
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "HomeDesk.Portal.Credentials", kSecAttrAccount as String: account]
+        var lookup = query
+        lookup[kSecReturnData as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(lookup as CFDictionary, &item)
+        let keyData: Data
+        if status == errSecSuccess, let data = item as? Data, data.count == 32 {
+            keyData = data
+        } else if status == errSecItemNotFound && encrypt {
+            var random = Data(count: 32)
+            let generated = random.withUnsafeMutableBytes { buffer in
+                SecRandomCopyBytes(kSecRandomDefault, 32, buffer.baseAddress!)
+            }
+            guard generated == errSecSuccess else { throw NSError(domain: "NestLinkKeychain", code: Int(generated)) }
+            var insert = query
+            insert[kSecValueData as String] = random
+            insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            let inserted = SecItemAdd(insert as CFDictionary, nil)
+            guard inserted == errSecSuccess else { throw NSError(domain: "NestLinkKeychain", code: Int(inserted)) }
+            keyData = random
+        } else { throw NSError(domain: "NestLinkKeychain", code: Int(status)) }
+        let key = SymmetricKey(data: keyData)
+        if encrypt {
+            guard let combined = try AES.GCM.seal(bytes, using: key, authenticating: entropy).combined
+            else { throw NSError(domain: "NestLinkKeychain", code: -1) }
+            return combined
+        }
+        return try AES.GCM.open(AES.GCM.SealedBox(combined: bytes), using: key, authenticating: entropy)
+    }
+}
 
 // Global state for relative mouse mode
 // All properties and methods must be accessed on the main thread since they
@@ -179,6 +218,23 @@ class MainFlutterWindow: NSWindow {
     }
 
     public func setMethodHandler(registrar: FlutterPluginRegistrar) {
+        let credentials = FlutterMethodChannel(name: "homedesk/credentials", binaryMessenger: registrar.messenger)
+        credentials.setMethodCallHandler { call, result in
+            guard #available(macOS 10.15, *),
+                  let arguments = call.arguments as? [String: Any],
+                  let bytes = arguments["bytes"] as? FlutterStandardTypedData,
+                  let entropy = arguments["entropy"] as? FlutterStandardTypedData,
+                  bytes.data.count <= 65536 else {
+                result(FlutterError(code: "STORAGE_UNAVAILABLE", message: "System credential storage is unavailable", details: nil))
+                return
+            }
+            do {
+                let value = try NestLinkKeychain.crypt(bytes.data, entropy: entropy.data, encrypt: call.method == "protect")
+                result(FlutterStandardTypedData(bytes: value))
+            } catch {
+                result(FlutterError(code: "KEYCHAIN_FAILED", message: "Unable to verify saved credentials", details: nil))
+            }
+        }
         let channel = FlutterMethodChannel(name: "org.rustdesk.rustdesk/host", binaryMessenger: registrar.messenger)
         channel.setMethodCallHandler({
             (call, result) -> Void in

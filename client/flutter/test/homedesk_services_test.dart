@@ -119,7 +119,7 @@ HomeTunnelCatalog sampleCatalog() => HomeTunnelCatalog(devices: const [
 class PortalFixtureApi extends HomeTunnelApi {
   bool signedIn = false;
   bool closed = false;
-  bool needsMfa;
+  bool rejectPassword;
   int logins = 0;
   int loads = 0;
   int logouts = 0;
@@ -142,7 +142,7 @@ class PortalFixtureApi extends HomeTunnelApi {
   Completer<HomeTunnelCatalog>? pendingCatalog;
   HomeTunnelCatalog result = sampleCatalog();
 
-  PortalFixtureApi({this.needsMfa = false})
+  PortalFixtureApi({this.rejectPassword = false})
       : super('https://console.example.com', isAllowed: () => true);
 
   @override
@@ -171,11 +171,10 @@ class PortalFixtureApi extends HomeTunnelApi {
   Future<void> login(
       {required String username,
       required String password,
-      String? mfaCode,
       bool rememberLogin = false}) async {
     logins++;
-    if (needsMfa && mfaCode == null) {
-      throw const HomeTunnelApiException('请输入动态码或恢复码。', 'MFA_REQUIRED');
+    if (rejectPassword) {
+      throw const HomeTunnelApiException('账号或密码错误。', 'INVALID_CREDENTIALS');
     }
     signedIn = true;
     rememberRequested = rememberLogin;
@@ -462,7 +461,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('MFA 必须由用户再次提交，不自动重发登录', (tester) async {
+  testWidgets('密码错误后不自动重发，修改密码后可手动重新登录', (tester) async {
     final apis = <PortalFixtureApi>[];
     await tester.pumpWidget(portalHost(
         page: HomeDeskServices(
@@ -470,7 +469,7 @@ void main() {
       saveOrigin: (_) async {},
       readOption: portalOption,
       apiBuilder: (origin, {required isAllowed, credentialStorage}) {
-        final api = PortalFixtureApi(needsMfa: true);
+        final api = PortalFixtureApi(rejectPassword: apis.isEmpty);
         apis.add(api);
         return api;
       },
@@ -479,9 +478,10 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     expect(apis.length, 1);
     expect(apis.first.logins, 1);
-    expect(find.byKey(const ValueKey('tunnel-mfa')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tunnel-mfa')), findsNothing);
+    expect(find.text('账号或密码错误。'), findsOneWidget);
     await tester.enterText(
-        find.byKey(const ValueKey('tunnel-mfa')), 'fixture-recovery');
+        find.byKey(const ValueKey('tunnel-password')), 'correct-password');
     await tester.ensureVisible(find.byKey(const ValueKey('tunnel-login')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('tunnel-login')));

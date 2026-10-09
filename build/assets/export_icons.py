@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 
-SIZES = (16, 32, 48, 64, 128, 256, 512)
+SIZES = (16, 32, 48, 64, 128, 256, 512, 1024)
 SVG_NS = "{http://www.w3.org/2000/svg}"
 
 
@@ -44,6 +44,8 @@ def render_svg(source: Path, size: int) -> Image.Image:
             continue
         fill = element.attrib.get("fill")
         stroke = element.attrib.get("stroke")
+        fill = None if fill in (None, "none") else fill
+        stroke = None if stroke in (None, "none") else stroke
         width = xy(_number(element.attrib.get("stroke-width"), 1))
         if tag == "rect":
             box = (
@@ -53,8 +55,20 @@ def render_svg(source: Path, size: int) -> Image.Image:
                 xy(_number(element.attrib.get("y")) + _number(element.attrib.get("height"))),
             )
             draw.rounded_rectangle(box, radius=xy(_number(element.attrib.get("rx"))), fill=fill, outline=stroke, width=width)
-        elif tag == "polyline":
+        elif tag == "circle":
+            cx, cy, radius = (_number(element.attrib.get(k)) for k in ("cx", "cy", "r"))
+            draw.ellipse((xy(cx-radius), xy(cy-radius), xy(cx+radius), xy(cy+radius)), fill=fill, outline=stroke, width=width)
+        elif tag == "polygon":
             points = [(xy(x), xy(y)) for x, y in _points(element.attrib["points"])]
+            draw.polygon(points, fill=fill)
+            if stroke:
+                draw.line(points + [points[0]], fill=stroke, width=width, joint="curve")
+        elif tag in ("polyline", "line"):
+            if tag == "line":
+                coords = [(_number(element.attrib["x1"]), _number(element.attrib["y1"])), (_number(element.attrib["x2"]), _number(element.attrib["y2"]))]
+            else:
+                coords = _points(element.attrib["points"])
+            points = [(xy(x), xy(y)) for x, y in coords]
             draw.line(points, fill=stroke, width=width, joint="curve")
             radius = width // 2
             for x, y in (points[0], points[-1]):
@@ -99,6 +113,15 @@ def apply_client(repo_root: Path, source: Path, output: Path, generated: dict[in
     for source_path, destination in copies:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, destination)
+    render_svg(source, 1024).save(client / 'flutter/macos/Runner/AppIcon.icns', format='ICNS')
+    # Tray silhouettes retain the same bridge/cloud geometry at small sizes.
+    tray = render_svg(source, 44)
+    pixels = tray.load()
+    for y in range(tray.height):
+        for x in range(tray.width):
+            r, g, b, a = pixels[x, y]
+            pixels[x, y] = (0, 0, 0, a if min(r, g, b) > 220 else 0)
+    tray.save(client / 'res/mac-tray-dark-x2.png', optimize=True)
     # HOMEDESK: Android launcher uses the same source, including adaptive icon safe padding.
     resources = client / "flutter/android/app/src/main/res"
     for density, pixels, foreground in (("mdpi", 48, 108), ("hdpi", 72, 162),

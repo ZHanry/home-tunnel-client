@@ -25,6 +25,8 @@ import 'package:window_manager/window_manager.dart';
 
 import 'common.dart';
 import 'homedesk_theme.dart'; // HOMEDESK: 所有桌面窗口与弹窗共用主页主题。
+import 'nestlink_workspace.dart';
+import 'nestlink_locale.dart';
 import 'consts.dart';
 import 'mobile/pages/home_page.dart';
 import 'mobile/pages/server_page.dart';
@@ -128,6 +130,7 @@ Future<void> initEnv(String appType) async {
   // for convenience, use global FFI on mobile platform
   // focus on multi-ffi on desktop first
   await initGlobalFFI();
+  loadNestLinkLanguage();
   // await Firebase.initializeApp();
   _registerEventHandler();
   // Update the system theme.
@@ -366,6 +369,7 @@ void _runApp(
     builder: (context) => GetMaterialApp(
       navigatorKey: globalKey,
       debugShowCheckedModeBanner: false,
+      scrollBehavior: const NestLinkScrollBehavior(),
       title: title,
       theme: homeDeskTheme(MyTheme.lightTheme), // HOMEDESK: 桌面统一主题。
       darkTheme: homeDeskTheme(MyTheme.darkTheme),
@@ -501,6 +505,7 @@ class _AppState extends State<App> with WidgetsBindingObserver {
         child: GetMaterialApp(
           navigatorKey: globalKey,
           debugShowCheckedModeBanner: false,
+          scrollBehavior: const NestLinkScrollBehavior(),
           title: isWeb
               ? '${bind.mainGetAppNameSync()} Web Client V2 (Preview)'
               : bind.mainGetAppNameSync(),

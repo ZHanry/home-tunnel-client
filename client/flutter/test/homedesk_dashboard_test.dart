@@ -125,62 +125,68 @@ Widget host(
 }
 
 void main() {
-  testWidgets('主页默认隐藏本机凭据，手动连接提交设备 ID', (tester) async {
-    tester.view.physicalSize = const Size(960, 720);
+  testWidgets('远控首页校验设备ID，凭据只在主动查看共享时展示', (tester) async {
+    tester.view.physicalSize = const Size(1080, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final key = GlobalKey<HomeDeskDashboardState>();
-    final api = PreviewConsole();
     String? connected;
-    await tester.pumpWidget(
-        host(api: api, dashboard: key, onConnect: (id) => connected = id));
+    await tester.pumpWidget(host(
+        api: PreviewConsole(),
+        dashboard: key,
+        onConnect: (id) => connected = id));
     await tester.pump();
     expect(find.text('测试凭据：默认不可见'), findsNothing);
-    expect(find.byTooltip('家庭服务'), findsNothing);
-    expect(find.text('书房电脑'), findsOneWidget);
-    await tester.tap(find.text('手动连接'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), '123456');
-    await tester.tap(find.descendant(
-        of: find.byType(AlertDialog), matching: find.text('连接设备')));
+    expect(find.text('家庭连接服务未就绪，请检查网络设置'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('remote-connect')));
+    await tester.pump();
+    expect(connected, isNull);
+    expect(find.text('请输入有效的设备 ID'), findsOneWidget);
+    await tester.enterText(
+        find.byKey(const ValueKey('remote-device-id')), '123456');
+    await tester.tap(find.byKey(const ValueKey('remote-connect')));
     await tester.pumpAndSettle();
     expect(connected, '123456');
-    await tester.tap(find.byTooltip('本机信息'));
+    await tester.ensureVisible(find.text('查看本机共享'));
+    await tester.tap(find.text('查看本机共享'));
     await tester.pumpAndSettle();
     expect(find.text('测试凭据：默认不可见'), findsOneWidget);
-    await tester.tap(find.byTooltip('关闭本机信息'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('最近连接'));
+    await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
     expect(find.text('最近连接内容'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('窄窗口和双倍字体可用，空状态保留连接入口', (tester) async {
-    tester.view.physicalSize = const Size(560, 720);
+  testWidgets('移动导航设备空状态居中且保留连接入口，双倍字体可用', (tester) async {
+    tester.view.physicalSize = const Size(560, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final key = GlobalKey<HomeDeskDashboardState>();
-    final api = PreviewConsole(empty: true);
-    await tester.pumpWidget(host(api: api, dashboard: key, scale: 2));
+    await tester.pumpWidget(host(
+        api: PreviewConsole(empty: true),
+        dashboard: GlobalKey<HomeDeskDashboardState>(),
+        scale: 2));
     await tester.pump();
+    await tester.tap(find.descendant(
+        of: find.byType(NavigationBar), matching: find.text('设备')));
+    await tester.pumpAndSettle();
     expect(find.text('从连接第一台电脑开始'), findsOneWidget);
     expect(find.text('手动连接'), findsWidgets);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('房间筛选只显示对应设备', (tester) async {
-    tester.view.physicalSize = const Size(960, 720);
+  testWidgets('设备目录按房间筛选', (tester) async {
+    tester.view.physicalSize = const Size(1080, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final key = GlobalKey<HomeDeskDashboardState>();
-    final api = PreviewConsole();
-    await tester.pumpWidget(host(api: api, dashboard: key));
+    await tester.pumpWidget(host(
+        api: PreviewConsole(), dashboard: GlobalKey<HomeDeskDashboardState>()));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('nav-devices')));
     await tester.pump();
     await tester.tap(find.widgetWithText(ChoiceChip, '书房'));
     await tester.pump();
@@ -190,41 +196,39 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('服务页按需初始化，导航切换保留会话和设备筛选', (tester) async {
-    tester.view.physicalSize = const Size(960, 720);
+  testWidgets('穿透页按需初始化，导航切换保留会话和设备筛选', (tester) async {
+    tester.view.physicalSize = const Size(1080, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final key = GlobalKey<HomeDeskDashboardState>();
     var initialized = 0;
     var disposed = 0;
     await tester.pumpWidget(host(
         api: PreviewConsole(),
-        dashboard: key,
+        dashboard: GlobalKey<HomeDeskDashboardState>(),
         servicesBuilder: (_) => _ServiceProbe(
             onInitialized: () => initialized++, onDisposed: () => disposed++)));
     await tester.pump();
     expect(initialized, 0);
+    await tester.tap(find.byKey(const ValueKey('nav-devices')));
+    await tester.pump();
     final deviceState = tester.state(find.byType(HomeDeskDevices));
     await tester.tap(find.widgetWithText(ChoiceChip, '书房'));
     await tester.pump();
-    await tester.tap(find.byTooltip('家庭服务'));
+    await tester.tap(find.byKey(const ValueKey('nav-services')));
     await tester.pumpAndSettle();
     expect(initialized, 1);
-    expect(find.text('查看设备上的服务，打开你的访问地址'), findsOneWidget);
-    expect(find.text('手动连接'), findsNothing);
     expect(find.text('家庭连接服务未就绪，请检查网络设置'), findsNothing);
     await tester.enterText(find.byType(TextField), '测试会话保留');
-    await tester.tap(find.byTooltip('家庭设备'));
+    await tester.tap(find.byKey(const ValueKey('nav-devices')));
     await tester.pumpAndSettle();
     expect(tester.state(find.byType(HomeDeskDevices)), same(deviceState));
     expect(find.text('书房电脑'), findsOneWidget);
     expect(find.text('客厅电脑'), findsNothing);
-    await tester.tap(find.byTooltip('最近连接'));
+    await tester.tap(find.byKey(const ValueKey('nav-remote')));
     await tester.pumpAndSettle();
     expect(find.text('最近连接内容'), findsOneWidget);
-    expect(find.text('手动连接'), findsOneWidget);
-    await tester.tap(find.byTooltip('家庭服务'));
+    await tester.tap(find.byKey(const ValueKey('nav-services')));
     await tester.pumpAndSettle();
     expect(find.text('测试会话保留'), findsOneWidget);
     expect(initialized, 1);
@@ -234,8 +238,8 @@ void main() {
     expect(disposed, 1);
   });
 
-  testWidgets('服务页窄窗口双倍字体不溢出', (tester) async {
-    tester.view.physicalSize = const Size(560, 720);
+  testWidgets('穿透页窄窗口双倍字体可用', (tester) async {
+    tester.view.physicalSize = const Size(560, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -243,12 +247,13 @@ void main() {
         api: PreviewConsole(empty: true),
         dashboard: GlobalKey<HomeDeskDashboardState>(),
         scale: 2,
-        servicesBuilder: (_) => const Center(child: Text('合成家庭服务'))));
+        servicesBuilder: (_) => const Center(child: Text('合成穿透服务'))));
     await tester.pump();
-    await tester.tap(find.byTooltip('家庭服务'));
+    await tester.tap(find.descendant(
+        of: find.byType(NavigationBar), matching: find.text('穿透')));
     await tester.pumpAndSettle();
-    expect(find.text('合成家庭服务'), findsOneWidget);
-    expect(find.text('手动连接'), findsNothing);
+    expect(find.text('合成穿透服务'), findsOneWidget);
+    expect(find.byKey(const ValueKey('remote-device-id')), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -265,7 +270,7 @@ void main() {
       await loader.load();
       final icons = FontLoader('MaterialIcons');
       icons.addFont(Future.value(ByteData.sublistView(File(
-              '../target/toolchains/flutter/bin/cache/artifacts/material_fonts/materialicons-regular.otf')
+              'R:/toolchains/flutter/bin/cache/artifacts/material_fonts/materialicons-regular.otf')
           .readAsBytesSync())));
       await icons.load();
       for (final sample in ['light', 'dark', 'empty']) {
