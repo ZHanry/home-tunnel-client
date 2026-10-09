@@ -11,9 +11,10 @@ class Account extends HomeTunnelApi {
   bool registered = false;
   Account() : super('https://control.example.invalid', isAllowed: () => true);
   @override String get userId => '22222222-2222-4222-8222-222222222222';
-  @override Future<String> createEnrollmentCode(String name) async {
+  @override Future<Map<String, dynamic>> registerBackgroundDevice(String name, String installId, String fingerprint) async {
     enrollments++;
-    return 'synthetic-single-use-enrollment-code';
+    check(installId == localId && fingerprint == 'a' * 64, '安装身份保持一致');
+    return {'device_id':localId, 'device_credential':'synthetic-device-credential', 'config_version':1};
   }
   @override Future<HomeTunnelCatalog> catalog() async => HomeTunnelCatalog(
     devices: registered ? [const HomeTunnelDevice(id:localId,name:'本机',platform:'windows',online:true)] : [],
@@ -33,10 +34,11 @@ Future<void> main() async {
     actions.add(command['action'] as String);
     view = {'owner':command['owner'],'device_id':api.registered ? localId : '', 'agent_state':'Starting'};
     switch (command['action']) {
-      case 'inspect': view['phase'] = forceUnknown ? 'error' : api.registered ? 'registered' : 'needs_enrollment';
+      case 'inspect': view['phase'] = forceUnknown ? 'error' : api.registered ? 'registered' : 'needs_registration';
+        view.addAll({'install_id':localId, 'fingerprint_hash':'a' * 64});
         if (forceUnknown) view['code'] = 'ENROLLMENT_RESULT_UNKNOWN';
         break;
-      case 'enroll': api.registered = true; view.addAll({'phase':'registered','device_id':localId}); break;
+      case 'register': api.registered = true; view.addAll({'phase':'registered','device_id':localId}); break;
       case 'run': runs++; view['phase']='running'; break;
       case 'stop': view['phase']='stopped'; break;
     }
@@ -46,7 +48,7 @@ Future<void> main() async {
   final first = controller();
   final catalog = await first.attach(api, await api.catalog());
   check(catalog.devices.length==1 && catalog.services.isEmpty, '登记一台设备且不创建服务');
-  check(api.enrollments==1 && runs==1, '一次接入码和一次运行');
+  check(api.enrollments==1 && runs==1, '一次设备登记和一次运行');
   await first.attach(api, catalog);
   check(api.enrollments==1 && runs==1, '相同实例不重复接入');
   await first.stop();
@@ -65,7 +67,7 @@ Future<void> main() async {
     await uncertain.attach(api, await api.catalog());
     throw StateError('不应重放未知登记');
   } on HomeDeskAgentException catch (error) { check(error.code=='ENROLLMENT_RESULT_UNKNOWN','未知结果停止'); }
-  check(api.enrollments==1, '未知结果没有新接入码');
+  check(api.enrollments==1, '未知结果没有重新登记');
   allowed=false; stamp='2';
   final revoked = controller();
   try {

@@ -207,6 +207,10 @@ impl Client {
         (i32, String),
     )> {
         debug_assert!(peer == interface.get_id());
+        crate::nestlink_auth::ensure_current().await?;
+        let connection_id = interface.get_lch().read().unwrap().session_id;
+        let prepared = crate::nestlink_auth::prepare(peer, connection_id).await?;
+        interface.get_lch().write().unwrap().nestlink_permit = Some(prepared);
         interface.update_direct(None);
         interface.homedesk_connection_path("unknown"); // HOMEDESK: 新连接清除上一轮展示状态。
         interface.update_received(false);
@@ -220,6 +224,11 @@ impl Client {
                 }
             }
             Ok(x) => {
+                let expected = interface.get_lch().read().unwrap().nestlink_permit.as_ref()
+                    .map(|permit| permit.claims.host_key.clone()).unwrap_or_default();
+                if x.0 .2.as_ref().map(|key| crate::encode64(key)).as_deref() != Some(expected.as_str()) {
+                    bail!("P2P 对方身份与服务签发的远控许可不一致");
+                }
                 if !crate::homedesk_net::direct_session_allowed(x.0 .1, x.0 .0.is_secured(), x.0 .2.is_some()) {
                     bail!("远控仅允许已认证、端到端加密的 P2P 直连会话");
                 } // HOMEDESK: Final success guard covers every returned path.
@@ -1760,6 +1769,7 @@ struct ConnToken {
 /// Login config handler for [`Client`].
 #[derive(Default)]
 pub struct LoginConfigHandler {
+    pub nestlink_permit: Option<crate::nestlink_auth::PreparedPermit>,
     id: String,
     pub conn_type: ConnType,
     pub is_terminal_admin: bool,
@@ -2788,6 +2798,10 @@ impl LoginConfigHandler {
             _ => {}
         }
 
+        if let Some(prepared) = self.nestlink_permit.as_ref() {
+            lr.my_id = prepared.claims.controller_id.clone();
+            crate::nestlink_auth::attach(&mut lr, &prepared.envelope);
+        }
         let mut msg_out = Message::new();
         msg_out.set_login_request(lr);
         msg_out

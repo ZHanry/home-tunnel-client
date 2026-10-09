@@ -113,6 +113,7 @@ class MainService : Service() {
     @Keep
     fun rustSetByName(name: String, arg1: String, arg2: String) {
         when (name) {
+            "account_revoked" -> Handler(Looper.getMainLooper()).post { destroy() }
             "add_connection" -> {
                 try {
                     val jsonObject = JSONObject(arg1)
@@ -327,6 +328,10 @@ class MainService : Service() {
         Log.d("whichService", "this service: ${Thread.currentThread()}")
         super.onStartCommand(intent, flags, startId)
         if (intent?.action == ACT_INIT_MEDIA_PROJECTION_AND_SERVICE) {
+            if (!FFI.accountReady()) {
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
             if (Build.VERSION.SDK_INT >= 34 &&
                 intent.getParcelableExtra<Intent>(EXT_MEDIA_PROJECTION_RES_INTENT) == null) {
                 // Android 14+ requires fresh, visible capture consent before foreground promotion.
@@ -423,6 +428,10 @@ class MainService : Service() {
     }
 
     fun startCapture(): Boolean {
+        if (!FFI.accountReady()) {
+            if (isStart) stopCapture()
+            return false
+        }
         if (isStart) {
             return true
         }

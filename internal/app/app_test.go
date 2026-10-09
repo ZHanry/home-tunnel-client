@@ -27,12 +27,12 @@ func TestEnrollPersistsDeviceCredentialWithoutPassword(t *testing.T) {
 				"frps_host":       "frps.example.com",
 				"frps_port":       7000,
 			})
-		case "/api/v1/auth/login":
+		case "/api/v2/auth/login":
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"access_token": "access-token", "refresh_token": "refresh-token",
 				"access_expires_at": time.Now().Add(time.Hour), "password_change_required": false,
 			})
-		case "/api/v1/devices/register":
+		case "/api/v2/auth/devices":
 			if request.Header.Get("Authorization") != "Bearer access-token" {
 				http.Error(response, `{"error_code":"AUTH_INVALID","message":"missing token"}`, http.StatusUnauthorized)
 				return
@@ -104,19 +104,19 @@ func TestSyncCapabilityUpgradeForcesAndRecordsFullSync(t *testing.T) {
 	}
 }
 
-func TestEnrollKeepsTheDeviceBoundSessionAndReportsThePasswordLogin(t *testing.T) {
+func TestLoginClosesItsTemporarySessionAndReportsTheAccount(t *testing.T) {
 	var server *httptest.Server
 	closed := 0
 	server = httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/public/config":
 			_ = json.NewEncoder(response).Encode(map[string]any{"public_base_url": server.URL, "tunnel_domain": "tunnel.example.com", "frps_host": "frps.example.com", "frps_port": 7000})
-		case "/api/v1/auth/login":
+		case "/api/v2/auth/login":
 			_ = json.NewEncoder(response).Encode(map[string]any{"access_token": "access-token", "refresh_token": "refresh-token", "access_expires_at": time.Now().Add(time.Hour)})
-		case "/api/v1/devices/register":
+		case "/api/v2/auth/devices":
 			response.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(response).Encode(map[string]any{"device_id": "11111111-2222-4333-8444-555555555555", "device_credential": "credential", "config_version": 1})
-		case "/api/v1/auth/session/close", "/api/v1/auth/logout":
+		case "/api/v2/auth/session/close", "/api/v2/auth/logout":
 			closed++
 			response.WriteHeader(http.StatusNoContent)
 		default:
@@ -126,22 +126,20 @@ func TestEnrollKeepsTheDeviceBoundSessionAndReportsThePasswordLogin(t *testing.T
 	defer server.Close()
 	var calls []string
 	options := EnrollOptions{Server: server.URL, Username: "user", Password: "account-password", DeviceName: "test", HTTPClient: server.Client(),
-		PasswordLogin: func(username, password string, mfaUsed bool) {
-			calls = append(calls, fmt.Sprintf("%s/%t/%t", username, password == "account-password", mfaUsed))
+		PasswordLogin: func(username, password string) {
+			calls = append(calls, fmt.Sprintf("%s/%t", username, password == "account-password"))
 		}}
-	for _, code := range []string{"", "123456"} {
-		options.MFACode = code
+	for attempt := 0; attempt < 2; attempt++ {
 		options.StatePath = filepath.Join(t.TempDir(), "state.json")
 		if err := Enroll(context.Background(), options); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Registration binds the login session to the device; closing it would end
-	// the device's own session, so enrollment must leave it alone.
-	if closed != 0 {
-		t.Fatalf("device-bound session closed %d times", closed)
+	// Device credentials outlive the temporary account session used to register them.
+	if closed != 2 {
+		t.Fatalf("temporary account session closed %d times", closed)
 	}
-	if strings.Join(calls, ",") != "user/true/false,user/true/true" {
+	if strings.Join(calls, ",") != "user/true,user/true" {
 		t.Fatalf("password login callbacks = %v", calls)
 	}
 }

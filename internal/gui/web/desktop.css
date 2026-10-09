@@ -56,7 +56,7 @@ h2 { font-size: 22px; letter-spacing: -.03em; }
 .app-header .brand svg { display: none; }
 .app-header .brand::before { content: ""; width: 36px; height: 36px; background: url('/HomeTunnel.svg') center / contain no-repeat; }
 .login-layout { width: 100%; max-width: 1200px; gap: clamp(32px, 5vw, 72px); grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); min-height: calc(100vh - 160px); align-items: center; }
-/* Let short windows scroll rather than shrinking fields or clipping MFA and password recovery. */
+/* Let short windows scroll rather than shrinking fields or clipping sign-in and password changes. */
 html:has(#login:not(.hidden)), body:has(#login:not(.hidden)) { min-height: 100%; overflow-x: hidden; overflow-y: auto; }
 body:has(#login:not(.hidden)) main { width: 100%; padding-block: 32px 48px; }
 #login.login-layout { width: 100%; }
@@ -189,8 +189,6 @@ body.workspace-active .app-header { display: none; }
 .remote-security-card { margin-top: 20px; }
 .remote-security-card > p { font-size: 12px; }
 .remote-security-card { padding-bottom: 20px; }
-#rd-host-mfa-feedback { margin: 4px 0 0; font-size: 12px; }
-#rd-host-mfa-feedback.error { color: var(--danger); }
 .remote-access-card { margin-top: 20px; }
 .remote-access-card .remote-fixed-password { border-top: 0; padding-top: 12px; }
 .remote-access-card p.error { color: var(--danger); }
@@ -309,3 +307,7 @@ body.workspace-active .app-header { display: none; }
   .filter-bar > div:first-child { flex-basis: 100%; }
   .remote-manual-row { grid-template-columns: 1fr; }
 }
+
+/* Preserve wheel, keyboard and touch scrolling without visible rails. */
+* { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }

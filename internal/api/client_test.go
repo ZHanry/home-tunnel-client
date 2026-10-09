@@ -79,7 +79,7 @@ func TestLinuxLoginAndRefreshPayloads(t *testing.T) {
 	var protectedCalls atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
-		case "/api/v1/auth/login":
+		case "/api/v2/auth/login":
 			var body map[string]any
 			_ = json.NewDecoder(request.Body).Decode(&body)
 			loginType, _ = body["client_type"].(string)
@@ -87,7 +87,7 @@ func TestLinuxLoginAndRefreshPayloads(t *testing.T) {
 				"access_token": "old-access", "refresh_token": "old-refresh",
 				"access_expires_at": time.Now().Add(-time.Minute),
 			})
-		case "/api/v1/auth/refresh":
+		case "/api/v2/auth/refresh":
 			var body map[string]any
 			_ = json.NewDecoder(request.Body).Decode(&body)
 			refreshType, _ = body["client_type"].(string)

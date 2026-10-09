@@ -198,6 +198,13 @@ class _Operation {
 }
 
 class HomeTunnelApi {
+  String _guiDeviceId = '';
+  String? _guiAccess;
+  String? _guiRefresh;
+  DateTime? _guiAccessExpires;
+  Future<void>? _guiRefreshing;
+  void Function()? onSessionClosed;
+  String get guiDeviceId => _guiDeviceId;
   final Uri base;
   final bool Function() _isAllowed;
   final HttpClient _http;
@@ -323,6 +330,12 @@ class HomeTunnelApi {
   }
 
   void _clearSession() {
+    onSessionClosed?.call();
+    _guiDeviceId = '';
+    _guiAccess = null;
+    _guiRefresh = null;
+    _guiAccessExpires = null;
+    _guiRefreshing = null;
     _accessToken = null;
     _refreshToken = null;
     _displayName = '';
@@ -359,7 +372,8 @@ class HomeTunnelApi {
       throw const HomeTunnelApiException(
           'HomeTunnel 请求内容过大。', 'REQUEST_TOO_LARGE');
     }
-    final uri = base.replace(path: '/api/v1$path', queryParameters: query);
+    final namespace = path.startsWith('/auth/') || path.startsWith('/remote/') || path.startsWith('/homedesk/') || path.startsWith('/public/updates/') ? 'v2' : 'v1';
+    final uri = base.replace(path: '/api/$namespace$path', queryParameters: query);
     final operation = _Operation();
     _operations.add(operation);
     try {
@@ -460,8 +474,6 @@ class HomeTunnelApi {
     final candidate =
         reply.value is Map ? (reply.value as Map)['error_code'] : null;
     const messages = {
-      'MFA_REQUIRED': '请输入 HomeTunnel 的动态验证码或恢复码。',
-      'MFA_INVALID': '验证码无效、已使用或已过期。',
       'AUTH_INVALID': 'HomeTunnel 用户名或密码不正确。',
       'AUTH_REQUIRED': '请先登录 HomeTunnel。',
       'SESSION_REVOKED': 'HomeTunnel 登录已过期，请重新登录。',
@@ -555,7 +567,9 @@ class HomeTunnelApi {
         'HomeTunnel 返回的数据格式无效。', 'RESPONSE_INVALID');
   }
 
-  String get _clientType => Platform.isWindows
+  String get _clientType => Platform.isAndroid
+      ? 'android'
+      : Platform.isWindows
       ? 'windows'
       : Platform.isMacOS
           ? 'macos'
@@ -690,7 +704,6 @@ class HomeTunnelApi {
   Future<void> login(
       {required String username,
       required String password,
-      String? mfaCode,
       bool rememberLogin = false}) async {
     _ensureAllowed();
     if (_loginBusy) {
@@ -700,10 +713,9 @@ class HomeTunnelApi {
     if (username.trim().isEmpty ||
         username.length > 128 ||
         password.isEmpty ||
-        password.length > 256 ||
-        (mfaCode?.length ?? 0) > 128) {
+        password.length > 256) {
       throw const HomeTunnelApiException(
-          '请输入有效的 HomeTunnel 账号、密码和验证码。', 'INPUT_INVALID');
+          '请输入有效的栖云桥账号和密码。', 'INPUT_INVALID');
     }
     _loginBusy = true;
     _clearSession();
@@ -717,7 +729,6 @@ class HomeTunnelApi {
         'username': username.trim(),
         'password': password,
         'client_type': _clientType,
-        if (mfaCode != null && mfaCode.isNotEmpty) 'mfa_code': mfaCode,
       }));
       final user = _object(session['user']);
       if (session['password_change_required'] == true ||
@@ -1048,27 +1059,120 @@ class HomeTunnelApi {
     return List.unmodifiable(bindings);
   }
 
-  // HOMEDESK: 本机接入只创建短期一次性代码，不绑定管理会话或创建服务。
-  Future<String> createEnrollmentCode(String name) async {
-    if (name.trim().isEmpty ||
-        name.length > 120 ||
-        RegExp(r'[\x00-\x1f\x7f]').hasMatch(name)) throw _invalidInput();
-    return _mutate('local-device-enrollment', (generation) async {
-      final reply = await _authenticated('POST', '/client/enrollment-codes',
-          generation: generation, body: {'name': name.trim()}, mutation: true);
-      final result = _success(reply);
-      final code = result['code'];
-      if (code is! String ||
-          code.length < 16 ||
-          code.length > 256 ||
-          RegExp(r'[\s\x00-\x1f\x7f]').hasMatch(code)) {
-        throw const HomeTunnelApiException(
-            '接入码响应无效，请刷新核对后再接入。', 'MUTATION_RESULT_UNKNOWN');
-      }
-      _expiry(result['expires_at']);
-      return code;
-    });
+  Future<void> registerGuiDevice({required String installId, required String fingerprint, required String name}) async {
+    if (_guiDeviceId.isNotEmpty) return;
+    final generation = _generation;
+    final value = _success(await _authenticated('POST', '/auth/devices', generation: generation, body: {
+      'name': name, 'install_id': installId, 'fingerprint_hash': fingerprint,
+      'client_version': '12.0.0-RC1', 'client_type': _clientType, 'credential_purpose': 'gui',
+    }, mutation: true));
+    _checkGeneration(generation);
+    _guiDeviceId = _id(value['device_id']);
+    _setGuiSession(value);
+    // The permanent GUI credential is discarded. Restoring requires the protected account login.
   }
+
+  void _setGuiSession(Map<String, dynamic> value) {
+    _guiAccess = _token(value['access_token']);
+    _guiRefresh = _token(value['refresh_token']);
+    _guiAccessExpires = _expiry(value['access_expires_at']);
+  }
+
+  Future<Map<String, String>> nativeAuthorization() async {
+    if (!isSignedIn || _guiAccess == null) throw const HomeTunnelApiException('请先登录自建服务。', 'LOGIN_REQUIRED');
+    final generation = _generation;
+    if (_guiAccessExpires == null || _guiAccessExpires!.isBefore(DateTime.now().toUtc().add(const Duration(seconds: 30)))) {
+      if (_guiRefreshing == null) {
+        final refresh = _guiRefresh;
+        _guiRefresh = null;
+        _guiRefreshing = () async {
+          try {
+            if (refresh == null) throw const HomeTunnelApiException('设备登录已失效。', 'SESSION_REVOKED');
+            final value = _success(await _request('POST', '/auth/refresh', generation: generation,
+                body: {'refresh_token': refresh, 'client_type': _clientType}));
+            _checkGeneration(generation);
+            _setGuiSession(value);
+          } catch (_) {
+            await revoke();
+            rethrow;
+          }
+        }();
+      }
+      try { await _guiRefreshing; } finally { _guiRefreshing = null; }
+    }
+    _checkGeneration(generation);
+    return {'origin': base.origin, 'device_id': _guiDeviceId, 'access_token': _guiAccess!};
+  }
+
+  Future<void> publishNativeBinding(Map<String, dynamic> binding) async {
+    final authorization = await nativeAuthorization();
+    final value = {...binding, 'platform': _clientType};
+    _success(await _request('PUT', '/homedesk/devices/current', generation: _generation,
+        token: authorization['access_token'], body: value));
+  }
+
+  Future<Map<String, dynamic>> accountSummary() => _get('/auth/me', _generation, {});
+
+  Future<List<Map<String, dynamic>>> managementSessions() async {
+    final value = await _get('/auth/sessions', _generation, {});
+    final items = value['items'];
+    if (items is! List || items.length > 100) {
+      throw const HomeTunnelApiException('管理会话响应无效。', 'RESPONSE_INVALID');
+    }
+    return items.map((item) {
+      final session = _object(item);
+      return {'id': _id(session['id']), 'client_type': _text(session['client_type'], maxLength: 32),
+        'created_at': _text(session['created_at'], maxLength: 40), 'current': _boolean(session['current'])};
+    }).toList(growable: false);
+  }
+
+  Future<void> revokeManagementSession(String sessionId) => _mutate('session:${_id(sessionId)}', (generation) async {
+    final reply = await _authenticated('DELETE', '/auth/sessions/$sessionId', generation: generation, mutation: true);
+    if (reply.status != 204) throw _failure(reply);
+  });
+
+  Future<void> changeAccountPassword(String currentPassword, String newPassword) async {
+    await _mutate('account-password', (generation) async {
+      final reply = await _authenticated('POST', '/auth/password/change', generation: generation, mutation: true,
+          body: {'current_password': currentPassword, 'new_password': newPassword});
+      if (reply.status != 204) throw _failure(reply);
+    });
+    await revoke();
+  }
+
+  Future<Map<String, dynamic>> releaseUpdate(String component) async {
+    if (!['client', 'android'].contains(component)) {
+      throw const HomeTunnelApiException('未知更新组件。', 'RESPONSE_INVALID');
+    }
+    final value = _success(await _request('GET', '/public/updates/$component', generation: _generation));
+    final latest = _object(value['latest']);
+    final url = Uri.tryParse(_text(latest['url'], maxLength: 512));
+    final repository = component == 'android' ? 'home-tunnel-android' : 'home-tunnel-client';
+    if (url == null || url.scheme != 'https' || url.host != 'github.com' || url.hasPort ||
+        url.userInfo.isNotEmpty || !url.path.startsWith('/ZHanry/$repository/releases/tag/')) {
+      throw const HomeTunnelApiException('更新地址无效。', 'RESPONSE_INVALID');
+    }
+    return {'update_available': _boolean(value['update_available']), 'version': _text(latest['version'], maxLength: 64),
+      'notes': latest['notes'] is String ? (latest['notes'] as String).substring(0, (latest['notes'] as String).length.clamp(0, 24000)) : '',
+      'url': url.toString()};
+  }
+
+  Future<WebSocket> realtime() async {
+    final authorization = await nativeAuthorization();
+    final socket = await WebSocket.connect(base.replace(scheme: 'wss', path: '/api/v2/ws').toString(),
+        headers: {'Authorization': 'Bearer ${authorization['access_token']}'}).timeout(_requestTimeout);
+    if (!isSignedIn) { await socket.close(); throw const HomeTunnelApiException('登录已失效。', 'SESSION_REVOKED'); }
+    return socket;
+  }
+
+  Future<Map<String, dynamic>> registerBackgroundDevice(String name, String installId, String fingerprint) =>
+      _mutate('local-background-device', (generation) async {
+        final result = _success(await _authenticated('POST', '/auth/devices', generation: generation, mutation: true, body: {
+          'name': name, 'install_id': installId, 'fingerprint_hash': fingerprint, 'client_version': '12.0.0-RC1',
+          'client_type': _clientType, 'credential_purpose': 'background',
+        }));
+        return {'device_id': _id(result['device_id']), 'device_credential': _token(result['device_credential']), 'config_version': 1};
+      });
 
   int _version(Object? value) {
     if (value == null) return 1;

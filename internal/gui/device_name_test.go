@@ -60,7 +60,7 @@ func TestLocalDeviceRenamePersistsAndHandlesFailureOrAccountChange(t *testing.T)
 						server.beginAccountChange(nil)
 					}
 					_, _ = w.Write([]byte(`{"device_id":"device-one","device_name":"Office PC"}`))
-				case "/api/v1/auth/session/close":
+				case "/api/v2/auth/session/close":
 					w.WriteHeader(http.StatusNoContent)
 				default:
 					t.Errorf("unexpected request: %s", r.URL.Path)

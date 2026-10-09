@@ -52,10 +52,6 @@ func publicCommandError(err error) string {
 		switch remote.Code {
 		case "AUTH_INVALID":
 			return "authentication failed; verify the account and password"
-		case "MFA_REQUIRED", "MFA_INVALID":
-			return "provide a fresh authenticator code or one-use recovery code with --mfa-code-file"
-		case "ENROLLMENT_INVALID":
-			return "the enrollment code is expired, revoked or already used; create a new code in your account page"
 		case "PASSWORD_CHANGE_REQUIRED":
 			return "a password change is required; provide --new-password-file"
 		case "RATE_LIMITED":
@@ -77,7 +73,7 @@ func execute(arguments []string) error {
 	case "version", "--version", "-version":
 		fmt.Printf("%s %s (Agent %s)\n", productName(), version, agentVersion)
 		return nil
-	case "enroll":
+	case "login", "enroll":
 		return enroll(arguments[1:])
 	case "run":
 		return run(arguments[1:])
@@ -106,19 +102,14 @@ func enroll(arguments []string) error {
 	deviceName := flags.String("device-name", app.DefaultDeviceName(), "device name shown in the control center")
 	passwordFile := flags.String("password-file", "", "file containing the current password, or - for stdin")
 	newPasswordFile := flags.String("new-password-file", "", "file containing a required replacement password")
-	mfaFile := flags.String("mfa-code-file", "", "file containing a one-time authenticator or recovery code")
-	enrollmentFile := flags.String("enrollment-code-file", "", "file containing a single-use device enrollment code")
 	if err := flags.Parse(arguments); err != nil || flags.NArg() != 0 {
 		return errors.New("invalid enroll arguments; run home-tunnel-client help")
 	}
-	if strings.TrimSpace(*server) == "" || strings.TrimSpace(*deviceName) == "" || (*enrollmentFile == "" && (strings.TrimSpace(*username) == "" || *passwordFile == "")) {
-		return errors.New("enroll requires --server and either --enrollment-code-file or --username with --password-file")
-	}
-	if *enrollmentFile != "" && (*passwordFile != "" || *mfaFile != "" || *newPasswordFile != "") {
-		return errors.New("choose enrollment code or account credentials")
+	if strings.TrimSpace(*server) == "" || strings.TrimSpace(*deviceName) == "" || (strings.TrimSpace(*username) == "" || *passwordFile == "") {
+		return errors.New("login requires --server, --username and --password-file")
 	}
 	stdinCount := 0
-	for _, path := range []string{*passwordFile, *newPasswordFile, *mfaFile, *enrollmentFile} {
+	for _, path := range []string{*passwordFile, *newPasswordFile} {
 		if path == "-" {
 			stdinCount++
 		}
@@ -126,12 +117,12 @@ func enroll(arguments []string) error {
 	if stdinCount > 1 {
 		return errors.New("only one secret can use stdin")
 	}
-	var password, mfaCode, enrollmentCode string
+	var password string
 	var err error
 	for _, secret := range []struct {
 		path   string
 		target *string
-	}{{*passwordFile, &password}, {*mfaFile, &mfaCode}, {*enrollmentFile, &enrollmentCode}} {
+	}{{*passwordFile, &password}} {
 		path, target := secret.path, secret.target
 		if path == "" {
 			continue
@@ -156,7 +147,6 @@ func enroll(arguments []string) error {
 	if err := app.Enroll(ctx, app.EnrollOptions{
 		StatePath: *statePath, Server: *server, Username: *username,
 		Password: password, NewPassword: nextPassword, DeviceName: *deviceName,
-		MFACode: mfaCode, EnrollmentCode: enrollmentCode,
 	}); err != nil {
 		return err
 	}
@@ -472,8 +462,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, productName())
 	fmt.Fprintln(writer, "")
 	fmt.Fprintln(writer, "Commands:")
-	fmt.Fprintln(writer, "  enroll      Discover a server and register this device")
-	fmt.Fprintln(writer, "              --server URL --enrollment-code-file FILE, or --username USER --password-file FILE [--mfa-code-file FILE]")
+	fmt.Fprintln(writer, "  login       Sign in to a self-hosted service and register this background device")
 	fmt.Fprintln(writer, "  run         Run the synchronization and Agent supervisor loop")
 	fmt.Fprintln(writer, "  status      Show local service state without printing credentials")
 	fmt.Fprintln(writer, "  doctor      Check DNS, HTTPS, FRPS, credentials, Agent integrity and local targets [--json]")

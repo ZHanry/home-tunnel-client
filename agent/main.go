@@ -32,7 +32,7 @@ import (
 )
 
 var (
-	agentVersion = "10.1.0"
+	agentVersion = "12.0.0-RC1"
 	frpVersion   = "0.70.1"
 	frpCommit    = "unknown"
 )
@@ -62,14 +62,14 @@ type trustProfile struct {
 
 func main() {
 	if err := execute(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "Home Tunnel Agent:", err)
+		fmt.Fprintln(os.Stderr, "NestLink Agent:", err)
 		os.Exit(1)
 	}
 }
 
 func execute(args []string) error {
 	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
-		fmt.Printf("Home Tunnel Agent %s (FRP %s, %s)\n", agentVersion, frpVersion, frpCommit)
+		fmt.Printf("NestLink Agent %s (FRP %s, %s)\n", agentVersion, frpVersion, frpCommit)
 		return nil
 	}
 	if len(args) == 0 || (args[0] != "verify" && args[0] != "run") {

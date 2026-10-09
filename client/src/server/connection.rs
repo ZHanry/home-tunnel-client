@@ -306,6 +306,7 @@ impl TerminalUserToken {
     }
 }
 pub struct Connection {
+    nestlink_permit: Option<Arc<crate::nestlink_auth::SessionGuard>>,
     homedesk_relay: bool, // HOMEDESK: 从本地创建连接的入口继承类型。
     homedesk_session: Option<crate::homedesk_console::SessionGuard>, // HOMEDESK: 仅认证成功后记录会话，释放时自动结束。
     inner: ConnInner,
@@ -323,7 +324,6 @@ pub struct Connection {
     port_forward_address: String,
     tx_to_cm: mpsc::UnboundedSender<ipc::Data>,
     authorized: bool,
-    require_2fa: Option<totp_rs::TOTP>,
     keyboard: bool,
     clipboard: bool,
     audio: bool,
@@ -505,6 +505,7 @@ impl Connection {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let tx_cloned = tx.clone();
         let mut conn = Self {
+            nestlink_permit: None,
             homedesk_relay, // HOMEDESK: 在认证成功后用于上报。
             homedesk_session: None, // HOMEDESK: 握手失败不产生会话记录。
             inner: ConnInner {
@@ -512,7 +513,6 @@ impl Connection {
                 tx: Some(tx),
                 tx_video: Some(tx_video),
             },
-            require_2fa: crate::auth_2fa::get_2fa(None),
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
             stream,
             server,
@@ -678,14 +678,24 @@ impl Connection {
         }
 
         loop {
+            let permit = conn.nestlink_permit.clone();
             tokio::select! {
+                _ = async {
+                    match permit {
+                        Some(permit) => permit.revoked().await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    conn.send_close_reason_no_retry("账号登录或远控许可已结束").await;
+                    conn.on_close("NestLink account revoked", true).await;
+                    break;
+                }
                 // biased; // video has higher priority // causing test_delay_timer failed while transferring big file
 
                 Some(data) = rx_from_cm.recv() => {
                     match data {
                         ipc::Data::Authorize => {
                             conn.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::Click);
-                            conn.require_2fa.take();
                             if !conn.send_logon_response_and_keep_alive().await {
                                 break;
                             }
@@ -1624,39 +1634,11 @@ impl Connection {
     // Returns whether this connection should be kept alive.
     // `true` does not necessarily mean authorization succeeded (e.g. REQUIRE_2FA case).
     async fn send_logon_response_and_keep_alive(&mut self) -> bool {
-        if self.authorized {
-            return true;
+        if !crate::nestlink_auth::ready() || self.nestlink_permit.is_none() {
+            self.send_login_error("请先登录自建服务并获取远控许可").await;
+            return false;
         }
-        if self.require_2fa.is_some() && !self.is_recent_session(true) && !self.from_switch {
-            self.require_2fa.as_ref().map(|totp| {
-                let bot = crate::auth_2fa::TelegramBot::get();
-                let bot = match bot {
-                    Ok(Some(bot)) => bot,
-                    Err(err) => {
-                        log::error!("Failed to get telegram bot: {}", err);
-                        return;
-                    }
-                    _ => return,
-                };
-                let code = totp.generate_current();
-                if let Ok(code) = code {
-                    let text = format!(
-                        "2FA code: {}\n\nA new connection has been established to your device with ID {}. The source IP address is {}.",
-                        code,
-                        Config::get_id(),
-                        self.ip,
-                    );
-                    tokio::spawn(async move {
-                        if let Err(err) =
-                            crate::auth_2fa::send_2fa_code_to_telegram(&text, bot).await
-                        {
-                            log::error!("Failed to send 2fa code to telegram bot: {}", err);
-                        }
-                    });
-                }
-            });
-            self.send_login_error(crate::client::REQUIRE_2FA).await;
-            // Keep the connection alive so the client can continue with 2FA.
+        if self.authorized {
             return true;
         }
         if let Some(keep_alive) = self.prepare_terminal_login_for_authorization().await {
@@ -2466,20 +2448,6 @@ impl Connection {
         if let Some(o) = lr.option.as_ref() {
             self.options_in_login = Some(o.clone());
         }
-        if self.require_2fa.is_some() && !lr.hwid.is_empty() && Self::enable_trusted_devices() {
-            let devices = Config::get_trusted_devices();
-            if let Some(device) = devices.iter().find(|d| d.hwid == lr.hwid) {
-                if !device.outdate()
-                    && device.id == lr.my_id
-                    && device.name == lr.my_name
-                    && device.platform == lr.my_platform
-                {
-                    log::info!("2FA bypassed by trusted devices");
-                    self.set_conn_audit_two_factor(ConnAuditTwoFactor::TrustedDevice);
-                    self.require_2fa = None;
-                }
-            }
-        }
         self.video_ack_required = lr.video_ack_required;
     }
 
@@ -2537,6 +2505,15 @@ impl Connection {
         }
         // After handling CloseReason messages, proceed to process other message types
         if let Some(message::Union::LoginRequest(lr)) = msg.union {
+            if self.nestlink_permit.is_none() {
+                match crate::nestlink_auth::accept(&lr).await {
+                    Ok(permit) => self.nestlink_permit = Some(permit),
+                    Err(error) => {
+                        self.send_login_error(&error.to_string()).await;
+                        return false;
+                    }
+                }
+            }
             self.handle_login_request_without_validation(&lr).await;
             if self.authorized {
                 return true;
@@ -2765,42 +2742,6 @@ impl Connection {
                     }
                 }
             }
-        } else if let Some(message::Union::Auth2fa(tfa)) = msg.union {
-            let (failure, res) = self.check_failure(1).await;
-            if !res {
-                return true;
-            }
-            if let Some(totp) = self.require_2fa.as_ref() {
-                if let Ok(res) = totp.check_current(&tfa.code) {
-                    if res {
-                        self.update_failure(failure, true, 1);
-                        self.require_2fa.take();
-                        self.set_conn_audit_two_factor(ConnAuditTwoFactor::Totp);
-                        raii::AuthedConnID::set_session_2fa(self.session_key());
-                        if !self.send_logon_response_and_keep_alive().await {
-                            return false;
-                        }
-                        self.try_start_cm(
-                            self.lr.my_id.to_owned(),
-                            self.lr.my_name.to_owned(),
-                            self.authorized,
-                        );
-                        if !tfa.hwid.is_empty() && Self::enable_trusted_devices() {
-                            Config::add_trusted_device(TrustedDevice {
-                                hwid: tfa.hwid,
-                                time: hbb_common::get_time(),
-                                id: self.lr.my_id.clone(),
-                                name: self.lr.my_name.clone(),
-                                platform: self.lr.my_platform.clone(),
-                            });
-                        }
-                    } else {
-                        self.update_failure(failure, false, 1);
-                        self.send_login_error(crate::client::LOGIN_MSG_2FA_WRONG)
-                            .await;
-                    }
-                }
-            }
         } else if let Some(message::Union::TestDelay(t)) = msg.union {
             if t.from_client {
                 let mut msg_out = Message::new();
@@ -2817,35 +2758,9 @@ impl Connection {
                     self.network_delay = new_delay;
                 }
             }
-        } else if let Some(message::Union::SwitchSidesResponse(_s)) = msg.union {
-            #[cfg(feature = "flutter")]
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-            if let Some(lr) = _s.lr.clone().take() {
-                self.handle_login_request_without_validation(&lr).await;
-                SWITCH_SIDES_UUID
-                    .lock()
-                    .unwrap()
-                    .retain(|_, v| v.0.elapsed() < Duration::from_secs(10));
-                let uuid_old = SWITCH_SIDES_UUID.lock().unwrap().remove(&lr.my_id);
-                if let Ok(uuid) = uuid::Uuid::from_slice(_s.uuid.to_vec().as_ref()) {
-                    if let Some((_instant, uuid_old)) = uuid_old {
-                        if uuid == uuid_old {
-                            self.from_switch = true;
-                            self.set_conn_audit_primary_auth(ConnAuditPrimaryAuth::SwitchSides);
-                            if !self.send_logon_response_and_keep_alive().await {
-                                return false;
-                            }
-                            self.try_start_cm(
-                                lr.my_id.clone(),
-                                lr.my_name.clone(),
-                                self.authorized,
-                            );
-                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            self.try_start_cm_ipc();
-                        }
-                    }
-                }
-            }
+        } else if let Some(message::Union::SwitchSidesResponse(_)) = msg.union {
+            self.send_login_error("切换控制方需要重新取得远控许可").await;
+            return false;
         } else if self.authorized {
             if self.port_forward_socket.is_some() {
                 return true;

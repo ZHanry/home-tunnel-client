@@ -33,6 +33,35 @@ use std::{
 
 pub type SessionID = uuid::Uuid;
 
+pub fn main_nestlink_account_install(origin: String, device_id: String, access_token: String) -> String {
+    flutter::async_tasks::nestlink_account("install", Some(crate::nestlink_auth::AuthRequest { origin, device_id, access_token }))
+        .err().unwrap_or_default()
+}
+
+pub fn main_nestlink_account_clear() -> String {
+    crate::nestlink_auth::clear();
+    flutter::async_tasks::nestlink_account("clear", None).err().unwrap_or_default()
+}
+
+pub fn main_nestlink_binding_proof() -> String {
+    match flutter::async_tasks::nestlink_account("binding", None) {
+        Ok(value) => value,
+        Err(error) => serde_json::json!({ "error": error }).to_string(),
+    }
+}
+
+pub fn main_nestlink_account_ready() -> SyncReturn<bool> { SyncReturn(crate::nestlink_auth::ready()) }
+
+pub fn main_nestlink_installation() -> String {
+    use hbb_common::sha2::{Digest, Sha256};
+    let mut install_id = LocalConfig::get_option("nestlink-install-id");
+    if install_id.is_empty() {
+        install_id = uuid::Uuid::new_v4().to_string();
+        LocalConfig::set_option("nestlink-install-id".to_owned(), install_id.clone());
+    }
+    serde_json::json!({ "install_id": install_id, "fingerprint_hash": format!("{:x}", Sha256::digest(install_id.as_bytes())) }).to_string()
+}
+
 lazy_static::lazy_static! {
     static ref TEXTURE_RENDER_KEY: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
 }
@@ -241,11 +270,7 @@ pub fn session_login(
     }
 }
 
-pub fn session_send2fa(session_id: SessionID, code: String, trust_this_device: bool) {
-    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
-        session.send2fa(code, trust_this_device);
-    }
-}
+
 
 pub fn session_get_enable_trusted_devices(session_id: SessionID) -> SyncReturn<bool> {
     let v = if let Some(session) = sessions::get_session_by_session_id(&session_id) {
@@ -2772,25 +2797,15 @@ pub fn main_supported_input_source() -> SyncReturn<String> {
     }
 }
 
-pub fn main_generate2fa() -> String {
-    generate2fa()
-}
 
-pub fn main_verify2fa(code: String) -> bool {
-    verify2fa(code)
-}
 
-pub fn main_has_valid_2fa_sync() -> SyncReturn<bool> {
-    SyncReturn(has_valid_2fa())
-}
 
-pub fn main_verify_bot(token: String) -> String {
-    verify_bot(token)
-}
 
-pub fn main_has_valid_bot_sync() -> SyncReturn<bool> {
-    SyncReturn(has_valid_bot())
-}
+
+
+
+
+
 
 pub fn main_get_hard_option(key: String) -> SyncReturn<String> {
     SyncReturn(get_hard_option(key))
@@ -3134,10 +3149,16 @@ pub mod server_side {
 
     #[no_mangle]
     pub unsafe extern "system" fn Java_ffi_FFI_startService(_env: JNIEnv, _class: JClass) {
+        if !crate::nestlink_auth::ready() { return; }
         log::debug!("startService from jvm");
         config::Config::set_option("stop-service".into(), "".into());
         crate::rendezvous_mediator::reset_needs_deploy_notification();
         crate::rendezvous_mediator::RendezvousMediator::restart();
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_accountReady(_env: JNIEnv, _class: JClass) -> jboolean {
+        if crate::nestlink_auth::ready() { 1 } else { 0 }
     }
 
     #[no_mangle]

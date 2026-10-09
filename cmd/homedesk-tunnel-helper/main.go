@@ -14,17 +14,16 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/ZHanry/home-tunnel-client/internal/api"
 	"github.com/ZHanry/home-tunnel-client/internal/app"
 	"github.com/ZHanry/home-tunnel-client/internal/model"
 	statepkg "github.com/ZHanry/home-tunnel-client/internal/state"
-	"golang.org/x/sys/windows"
 )
 
 var parentExecutable string
@@ -45,53 +44,12 @@ func readLine(reader *bufio.Reader) (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-func checkParent(parentID uint32) error {
-	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(snapshot)
-	var entry windows.ProcessEntry32
-	entry.Size = uint32(unsafe.Sizeof(entry))
-	err = windows.Process32First(snapshot, &entry)
-	matched := false
-	for err == nil {
-		if entry.ProcessID == uint32(os.Getpid()) {
-			matched = entry.ParentProcessID == parentID
-			break
-		}
-		err = windows.Process32Next(snapshot, &entry)
-	}
-	if !matched {
-		return errors.New("parent mismatch")
-	}
-	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, parentID)
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(process)
-	buffer := make([]uint16, 32768)
-	size := uint32(len(buffer))
-	if err = windows.QueryFullProcessImageName(process, 0, &buffer[0], &size); err != nil {
-		return err
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	expected := filepath.Join(filepath.Dir(filepath.Dir(executable)), parentExecutable)
-	if !strings.EqualFold(filepath.Clean(windows.UTF16ToString(buffer[:size])), filepath.Clean(expected)) {
-		return errors.New("parent image mismatch")
-	}
-	return nil
-}
-
 // 控制请求只发往本机已批准的 HTTPS origin；公开配置不能授予其他服务器地址。
 type guardedTransport struct {
-	origin           *url.URL
-	transport        *http.Transport
-	enrollmentPosted atomic.Bool
-	directory        *directoryPublisher
+	origin             *url.URL
+	transport          *http.Transport
+	registrationPosted atomic.Bool
+	directory          *directoryPublisher
 }
 
 func validateProfile(profile model.Profile, origin *url.URL) error {
@@ -100,7 +58,7 @@ func validateProfile(profile model.Profile, origin *url.URL) error {
 	if err != nil || base.Scheme != "https" || base.User != nil ||
 		base.RawQuery != "" || base.Fragment != "" || (base.Path != "" && base.Path != "/") ||
 		!strings.EqualFold(base.Host, origin.Host) ||
-		!strings.EqualFold(profile.FRPSHost, origin.Hostname()) || profile.FRPSPort < 1 ||
+		profile.FRPSPort < 1 ||
 		profile.FRPSPort > 65535 || profile.FRPSTLSCertificatePEM == "" {
 		return errors.New("configuration boundary")
 	}
@@ -111,8 +69,8 @@ func (guard *guardedTransport) RoundTrip(request *http.Request) (*http.Response,
 	if request.URL.Scheme != "https" || !strings.EqualFold(request.URL.Host, guard.origin.Host) {
 		return nil, errors.New("origin mismatch")
 	}
-	if request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/enroll" {
-		guard.enrollmentPosted.Store(true)
+	if request.Method == http.MethodPost && request.URL.Path == "/api/v2/auth/devices" {
+		guard.registrationPosted.Store(true)
 	}
 	response, err := guard.transport.RoundTrip(request)
 	if err == nil && response.StatusCode >= 200 && response.StatusCode < 300 &&
@@ -136,23 +94,6 @@ func (guard *guardedTransport) RoundTrip(request *http.Request) (*http.Response,
 	}
 	response.Body = io.NopCloser(bytes.NewReader(payload))
 	return response, nil
-}
-
-func protectDirectory(path string) error {
-	if err := os.MkdirAll(path, 0700); err != nil {
-		return err
-	}
-	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;OW)")
-	if err != nil {
-		return err
-	}
-	dacl, _, err := descriptor.DACL()
-	if err != nil {
-		return err
-	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil)
 }
 
 func execute() int {
@@ -212,7 +153,11 @@ func execute() int {
 				emit("error", "STATE_PROTECTION_FAILED", "", "")
 				return 1
 			}
-			emit("needs_enrollment", "", "", "")
+			fingerprint, err := statepkg.Fingerprint(state.InstallID)
+			if err != nil {
+				return 1
+			}
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"phase": "needs_registration", "install_id": state.InstallID, "fingerprint_hash": fingerprint})
 		}
 		return 0
 	}
@@ -221,13 +166,13 @@ func execute() int {
 	guard := &guardedTransport{origin: root, transport: transport}
 	client := &http.Client{Timeout: 12 * time.Second, Transport: guard,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	if command == "enroll" {
+	if command == "register" {
 		if state.Enrolled() || pending == nil {
 			emit("error", "ENROLLMENT_RESULT_UNKNOWN", "", "")
 			return 1
 		}
-		code, readErr := readLine(reader)
-		if readErr != nil || code == "" {
+		bundle, readErr := readLine(reader)
+		if readErr != nil || bundle == "" {
 			return 2
 		}
 		file, markerErr := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -238,11 +183,14 @@ func execute() int {
 		file.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		err = app.Enroll(ctx, app.EnrollOptions{StatePath: *statePath, Server: *origin,
-			DeviceName: *name, EnrollmentCode: code, HTTPClient: client})
+		var registration model.DeviceRegistration
+		if json.Unmarshal([]byte(bundle), &registration) != nil {
+			return 2
+		}
+		err = app.AdoptRegistration(ctx, *statePath, *origin, *name, registration, client)
 		if err != nil {
 			var rejection *api.Error
-			if !guard.enrollmentPosted.Load() {
+			if errors.As(err, &rejection) && rejection.StatusCode >= 400 && rejection.StatusCode < 500 {
 				_ = os.Remove(marker)
 				emit("error", "DISCOVERY_FAILED", "", "")
 			} else if errors.As(err, &rejection) && rejection.StatusCode >= 400 && rejection.StatusCode < 500 {
@@ -270,12 +218,16 @@ func execute() int {
 	if err != nil {
 		return 1
 	}
-	guard.directory = newDirectoryPublisher(root, transport, state.DeviceID, *remoteID, *remoteServer, *remoteKey)
+	_, _, _ = remoteID, remoteServer, remoteKey
 	emit("running", "", state.DeviceID, "Starting")
 	// 进程及其 FRP 子进程由父进程 Job Object 管理；标准日志不带出服务端原始错误。
 	log.SetOutput(io.Discard)
+	agentName := "home-tunnel-agent"
+	if runtime.GOOS == "windows" {
+		agentName += ".exe"
+	}
 	err = app.Run(context.Background(), app.RunOptions{StatePath: *statePath,
-		AgentPath:         filepath.Join(filepath.Dir(executable), "home-tunnel-agent.exe"),
+		AgentPath:         filepath.Join(filepath.Dir(executable), agentName),
 		ExpectedAgentHash: expectedAgentSHA256, AgentVersion: model.Version, HTTPClient: client})
 	if errors.Is(err, app.ErrRevoked) {
 		emit("error", "DEVICE_REVOKED", state.DeviceID, "Revoked")

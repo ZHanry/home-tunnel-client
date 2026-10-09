@@ -340,10 +340,10 @@ class Harness {
 
   Future<void> standard(HttpRequest request, Map<String, dynamic> body) async {
     switch (request.uri.path) {
-      case '/api/v1/auth/login':
+      case '/api/v2/auth/login':
         await jsonResponse(request, loginReply());
         break;
-      case '/api/v1/auth/me':
+      case '/api/v2/auth/me':
         await jsonResponse(request, {
           'id': uuid(99999),
           'username': 'demo',
@@ -369,10 +369,10 @@ class Harness {
           'suggestions': <String>[]
         });
         break;
-      case '/api/v1/auth/refresh':
+      case '/api/v2/auth/refresh':
         await jsonResponse(request, refreshReply());
         break;
-      case '/api/v1/auth/session/close':
+      case '/api/v2/auth/session/close':
         request.response.statusCode = 204;
         await request.response.close();
         break;
@@ -476,73 +476,62 @@ Future<void> main() async {
     await api.logout();
     expect(!api.isSignedIn && api.displayName.isEmpty, '退出后必须清除会话');
     expect(
-        h.seen.last['path'] == '/api/v1/auth/session/close', '退出不能旋转 FRP 设备凭据');
+        h.seen.last['path'] == '/api/v2/auth/session/close', '退出不能旋转 FRP 设备凭据');
   });
 
-  await test('本机接入码使用未绑定管理会话，不登记设备或发布服务', (h) async {
+  await test('后台设备凭据与管理会话分开，不发布默认服务', (h) async {
     final api = h.api();
     await api.login(username: 'demo', password: 'fixture-password');
-    const code = 'fixture-single-use-enrollment-code';
-    h.overrides['/api/v1/client/enrollment-codes'] = (request, body) async {
-      expect(
-          request.method == 'POST' && body.length == 1 && body['name'] == '本机',
-          '只提交接入码名称');
-      await jsonResponse(
-          request,
-          {
-            'id': uuid(17),
-            'name': '本机',
-            'code': code,
-            'expires_at': DateTime.now()
-                .toUtc()
-                .add(const Duration(minutes: 10))
-                .toIso8601String()
-          },
-          status: 201);
+    const credential = 'fixture-background-device-credential';
+    h.overrides['/api/v2/auth/devices'] = (request, body) async {
+      expect(request.method == 'POST' && body['name'] == '本机' &&
+          body['credential_purpose'] == 'background' &&
+          body['install_id'] == uuid(17) && body['fingerprint_hash'] == 'a' * 64,
+          '登记携带账号下的安装身份与后台用途');
+      await jsonResponse(request, {
+        'device_id': uuid(17), 'device_credential': credential,
+        'access_token': oldAccess, 'refresh_token': oldRefresh,
+        'access_expires_at': '2030-01-01T00:00:00Z',
+        'refresh_expires_at': '2030-02-01T00:00:00Z'
+      }, status: 201);
     };
-    expect(await api.createEnrollmentCode('本机') == code, '返回一次性代码');
-    expect(api.userId == uuid(99999), '绑定所属账号 UUID');
-    expect(
-        !h.seen.any((r) =>
-            r['path'] == '/api/v1/devices/register' ||
-            (r['path'] == '/api/v1/client/connections' &&
-                r['method'] == 'POST')),
-        '管理会话不变成设备会话，也不发布默认服务');
+    final device = await api.registerBackgroundDevice('本机', uuid(17), 'a' * 64);
+    expect(device['device_credential'] == credential && device['device_id'] == uuid(17),
+        '返回独立后台凭据');
+    expect(api.userId == uuid(99999), '管理会话保持所属账号');
+    expect(!h.seen.any((r) => (r['path'] as String).contains('enrollment') ||
+        (r['path'] == '/api/v1/client/connections' && r['method'] == 'POST')),
+        '没有接入码和默认服务请求');
   });
 
-  await test('MFA 仅由用户手动提交，不自动重试', (h) async {
+  await test('密码失败不自动重试，用户可重新提交', (h) async {
     var attempts = 0;
-    h.overrides['/api/v1/auth/login'] = (request, body) async {
+    h.overrides['/api/v2/auth/login'] = (request, body) async {
       attempts++;
-      if (body['mfa_code'] == null) {
-        await jsonResponse(
-            request, {'error_code': 'MFA_REQUIRED', 'message': 'server-secret'},
-            status: 401);
+      expect(!body.containsKey('mfa_code'), '账号密码登录没有 MFA 字段');
+      if (attempts == 1) {
+        await jsonResponse(request, {'error_code': 'AUTH_INVALID', 'message': 'server-secret'}, status: 401);
       } else {
-        expect(body['mfa_code'] == '123456', '应发送用户明确输入的验证码');
         await jsonResponse(request, loginReply());
       }
     };
     final api = h.api();
-    await rejects(
-        () => api.login(username: 'demo', password: 'fixture-password'),
-        'MFA_REQUIRED');
-    expect(attempts == 1 && !api.isSignedIn, 'MFA 不能自动重放');
-    await api.login(
-        username: 'demo', password: 'fixture-password', mfaCode: '123456');
-    expect(attempts == 2 && api.isSignedIn, '用户可手动重新提交 MFA');
+    await rejects(() => api.login(username: 'demo', password: 'fixture-password'), 'AUTH_INVALID');
+    expect(attempts == 1 && !api.isSignedIn, '失败登录不能自动重放');
+    await api.login(username: 'demo', password: 'corrected-password');
+    expect(attempts == 2 && api.isSignedIn, '用户可重新提交密码');
   });
 
   await test('首次改密与设备绑定会话显式拒绝', (h) async {
     final api = h.api();
-    h.overrides['/api/v1/auth/login'] =
+    h.overrides['/api/v2/auth/login'] =
         (request, _) => jsonResponse(request, loginReply(mustChange: true));
     await rejects(
         () => api.login(username: 'demo', password: 'fixture-password'),
         'PASSWORD_CHANGE_REQUIRED');
     expect(!api.isSignedIn && h.seen.length == 1, '改密前不能读取目录');
-    h.overrides.remove('/api/v1/auth/login');
-    h.overrides['/api/v1/auth/me'] = (request, _) => jsonResponse(request, {
+    h.overrides.remove('/api/v2/auth/login');
+    h.overrides['/api/v2/auth/me'] = (request, _) => jsonResponse(request, {
           'display_name': '设备会话',
           'device_id': uuid(1),
           'password_state': 'normal',
@@ -592,7 +581,7 @@ Future<void> main() async {
     var refreshes = 0;
     final refreshStarted = Completer<void>();
     final allowRefresh = Completer<void>();
-    h.overrides['/api/v1/auth/refresh'] = (request, body) async {
+    h.overrides['/api/v2/auth/refresh'] = (request, body) async {
       refreshes++;
       expect(body['refresh_token'] == oldRefresh, '只消费原始刷新令牌一次');
       refreshStarted.complete();
@@ -630,7 +619,7 @@ Future<void> main() async {
         '并发 401 必须合并为同一次刷新');
     expect(
         h.seen
-                .where((r) => r['path'] == '/api/v1/auth/refresh')
+                .where((r) => r['path'] == '/api/v2/auth/refresh')
                 .single['token'] ==
             '',
         '刷新不发送过期 access token');
@@ -647,7 +636,7 @@ Future<void> main() async {
     h.overrides['/api/v1/client/connections'] = (request, _) => jsonResponse(
         request, {'error_code': 'SESSION_REVOKED', 'message': 'server-secret'},
         status: 401);
-    h.overrides['/api/v1/auth/refresh'] = (request, _) async {
+    h.overrides['/api/v2/auth/refresh'] = (request, _) async {
       refreshes++;
       await jsonResponse(request, {
         'access_token': nextAccess,
@@ -670,7 +659,7 @@ Future<void> main() async {
     h.overrides['/api/v1/client/devices'] = (request, _) => jsonResponse(
         request, {'error_code': 'SESSION_REVOKED', 'message': 'server-secret'},
         status: 401);
-    h.overrides['/api/v1/auth/refresh'] = (request, _) async {
+    h.overrides['/api/v2/auth/refresh'] = (request, _) async {
       refreshes++;
       await Future<void>.delayed(const Duration(milliseconds: 400));
       await jsonResponse(request, {
@@ -689,7 +678,7 @@ Future<void> main() async {
   });
 
   await test('重定向、分块超限和慢响应被拒绝', (h) async {
-    h.overrides['/api/v1/auth/login'] = (request, _) async {
+    h.overrides['/api/v2/auth/login'] = (request, _) async {
       request.response.statusCode = 302;
       request.response.headers.set('location', 'https://other.example.invalid');
       await request.response.close();
@@ -699,7 +688,7 @@ Future<void> main() async {
         () => api.login(username: 'demo', password: 'fixture-password'),
         'REDIRECT_BLOCKED');
     expect(h.seen.length == 1, '不得访问重定向目标');
-    h.overrides.remove('/api/v1/auth/login');
+    h.overrides.remove('/api/v2/auth/login');
     final bounded = h.api(maxBytes: 1024);
     await bounded.login(username: 'demo', password: 'fixture-password');
     h.overrides['/api/v1/client/devices'] = (request, _) async {
@@ -709,7 +698,7 @@ Future<void> main() async {
       await request.response.close();
     };
     await rejects(() async => bounded.catalog(), 'RESPONSE_TOO_LARGE');
-    h.overrides['/api/v1/auth/login'] = (request, _) async {
+    h.overrides['/api/v2/auth/login'] = (request, _) async {
       request.response.write(' ');
       await request.response.flush();
       await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -892,7 +881,7 @@ Future<void> main() async {
             favorite: true,
             expectedMetadataVersion: 1),
         'INPUT_INVALID');
-    expect(!h.seen.any((r) => r['path'] == '/api/v1/auth/refresh'),
+    expect(!h.seen.any((r) => r['path'] == '/api/v2/auth/refresh'),
         '403/409 不能触发刷新');
   });
 
@@ -918,7 +907,7 @@ Future<void> main() async {
     await api.updateService(id, {'name': '明确重发'}, expectedVersion: 3);
     expect(
         patches == 2 &&
-            h.seen.where((r) => r['path'] == '/api/v1/auth/refresh').length ==
+            h.seen.where((r) => r['path'] == '/api/v2/auth/refresh').length ==
                 1,
         '认证拒绝可单次刷新重发');
     var creates = 0;
@@ -995,7 +984,7 @@ Future<void> main() async {
     api.close();
     expect(store.record != null, '普通关闭必须保留未消费记录');
     final restored = h.api(storage: store);
-    h.overrides['/api/v1/auth/refresh'] = (request, body) async {
+    h.overrides['/api/v2/auth/refresh'] = (request, body) async {
       expect(store.record == null && body['refresh_token'] == oldRefresh,
           '联网前旧记录必须被原子销毁');
       await jsonResponse(request, refreshReply());
@@ -1095,7 +1084,7 @@ Future<void> main() async {
     var refreshes = 0;
     h.overrides['/api/v1/client/devices'] = (request, _) =>
         jsonResponse(request, {'error_code': 'SESSION_REVOKED'}, status: 401);
-    h.overrides['/api/v1/auth/refresh'] = (request, body) async {
+    h.overrides['/api/v2/auth/refresh'] = (request, body) async {
       refreshes++;
       expect(store.record == null && body['refresh_token'] == oldRefresh,
           '旧记录必须在单次native刷新前消费');
@@ -1124,7 +1113,7 @@ Future<void> main() async {
     final old = h.api(storage: store);
     final oldRestore = old.restore();
     await paused.future;
-    h.overrides['/api/v1/auth/login'] = (request, _) => jsonResponse(
+    h.overrides['/api/v2/auth/login'] = (request, _) => jsonResponse(
         request,
         loginReply()
           ..['access_token'] = 'fixture-new-instance-access'
@@ -1230,7 +1219,7 @@ Future<void> main() async {
     store.failDiscard = true;
     await rejects(() => api.logout(), 'SECURE_STORE_ERROR');
     expect(
-        !api.isSignedIn && h.seen.last['path'] == '/api/v1/auth/session/close',
+        !api.isSignedIn && h.seen.last['path'] == '/api/v2/auth/session/close',
         '本机清理失败时也要尽力使服务端刷新令牌失效');
   });
 
@@ -1259,7 +1248,7 @@ Future<void> main() async {
           mode == 2 ? 'FORBIDDEN' : 'VERSION_CONFLICT');
     }
     expect(
-        writes == 3 && !h.seen.any((r) => r['path'] == '/api/v1/auth/refresh'),
+        writes == 3 && !h.seen.any((r) => r['path'] == '/api/v2/auth/refresh'),
         '409/403只提示刷新或权限，不自动重试写操作');
   });
 
@@ -1267,7 +1256,7 @@ Future<void> main() async {
     final api = h.api();
     await api.login(username: 'demo', password: 'fixture-password');
     var mode = 0;
-    h.overrides['/api/v1/homedesk/devices'] = (request, body) async {
+    h.overrides['/api/v2/homedesk/devices'] = (request, body) async {
       expect(request.headers.value('authorization') == 'Bearer $oldAccess',
           '目录必须使用当前账号身份');
       final item = {

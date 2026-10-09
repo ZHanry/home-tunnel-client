@@ -63,6 +63,7 @@ fn validate_key(value: &str) -> bool {
 }
 
 fn validate_profile(profile: &NetworkProfile) -> Result<(), String> {
+    if profile.mode != NetworkMode::SelfHosted { return Err("请登录自建服务".to_owned()); }
     if !is_valid_server(&profile.server, profile.mode) { return Err("ID 服务器不符合当前网络模式".to_owned()); }
     if !profile.relay.is_empty() { return Err("远程控制固定 P2P，不能配置中继服务器".to_owned()); }
     if !validate_key(&profile.key) { return Err("服务器公钥必须是 32 字节 hbbs Base64 公钥".to_owned()); }
@@ -121,6 +122,11 @@ pub fn save_network_profile(profile: NetworkProfile) -> Result<(), String> {
 
 pub fn apply() {
     // HOMEDESK: 在注入新默认值前读取旧配置；合法旧高级设置只迁入 lan_only 一次。
+    let mut old_options = Config::get_options();
+    old_options.remove("2fa");
+    old_options.remove("telegram-bot");
+    Config::set_options(old_options);
+    Config::clear_trusted_devices();
     let stored_options = Config2::get().options;
     let had_legacy_options = !stored_options.is_empty();
     let existing_mode = stored_options.get(MODE_KEY).cloned().unwrap_or_default();
@@ -213,10 +219,10 @@ pub fn apply() {
 }
 
 pub fn public_services_disabled() -> bool { true }
-pub fn pure_lan_enabled() -> bool { active_mode() == NetworkMode::LanOnly }
+pub fn pure_lan_enabled() -> bool { false }
 pub fn requires_secure_session() -> bool { true }
 pub fn require_direct() -> bool { true }
-pub fn remote_profile_ready() -> bool { validate_profile(&active_profile()).is_ok() }
+pub fn remote_profile_ready() -> bool { crate::nestlink_auth::ready() && validate_profile(&active_profile()).is_ok() }
 pub fn public_stun_allowed() -> bool { false }
 // HOMEDESK: HTTPS portal approval/account credentials authorize tunneling independently.
 pub fn home_tunnel_allowed() -> bool {

@@ -58,11 +58,11 @@ class HomeDeskLocalAgent {
     } catch (_) { }
   }
 
-  Future<Map<String, dynamic>> _command(String action, {String code = ''}) async {
+  Future<Map<String, dynamic>> _command(String action, {String registration = ''}) async {
     if (!_valid()) throw const HomeDeskAgentException('PERMISSION_CHANGED');
     await send(jsonEncode({'action':action, 'owner':_owner, 'origin':_origin,
-      'user_id':_userId, 'permission':_permission, 'name':name, 'code':code}));
-    final deadline = DateTime.now().add(Duration(seconds: action == 'enroll' ? 55 : 15));
+      'user_id':_userId, 'permission':_permission, 'name':name, 'registration':registration}));
+    final deadline = DateTime.now().add(Duration(seconds: action == 'register' ? 55 : 15));
     while (DateTime.now().isBefore(deadline)) {
       if (!_valid()) throw const HomeDeskAgentException('PERMISSION_CHANGED');
       poll();
@@ -72,7 +72,7 @@ class HomeDeskLocalAgent {
       }
       await Future<void>.delayed(const Duration(milliseconds: 150));
     }
-    throw HomeDeskAgentException(action == 'enroll' ? 'ENROLLMENT_RESULT_UNKNOWN' : 'RUNTIME_FAILED');
+    throw HomeDeskAgentException(action == 'register' ? 'ENROLLMENT_RESULT_UNKNOWN' : 'RUNTIME_FAILED');
   }
 
   Future<HomeTunnelCatalog> attach(HomeTunnelApi api, HomeTunnelCatalog catalog) async {
@@ -90,9 +90,9 @@ class HomeDeskLocalAgent {
         if (!catalog.devices.any((device) => device.id == deviceId)) {
           throw const HomeDeskAgentException('DEVICE_OUTSIDE_ACCOUNT');
         }
-      } else if (inspected['phase'] == 'needs_enrollment') {
-        final code = await api.createEnrollmentCode(name);
-        await _command('enroll', code: code);
+      } else if (inspected['phase'] == 'needs_registration') {
+        final registration = await api.registerBackgroundDevice(name, inspected['install_id'] as String, inspected['fingerprint_hash'] as String);
+        await _command('register', registration: jsonEncode(registration));
         catalog = await api.catalog();
         if (!catalog.devices.any((device) => device.id == deviceId)) {
           throw const HomeDeskAgentException('DEVICE_OUTSIDE_ACCOUNT');

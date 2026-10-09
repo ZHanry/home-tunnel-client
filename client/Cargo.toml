@@ -1,6 +1,6 @@
 [package]
 name = "rustdesk"
-version = "11.0.0-rc.2"
+version = "12.0.0-RC1"
 authors = ["rustdesk <info@rustdesk.com>"]
 edition = "2021"
 build= "build.rs"
@@ -76,7 +76,6 @@ cidr-utils = "0.5"
 fon = "0.6"
 zip = "0.6"
 shutdown_hooks = "0.1"
-totp-rs = { version = "5.4", default-features = false, features = ["gen_secret", "otpauth"] }
 stunclient = "0.4"
 kcp-sys= { git = "https://github.com/rustdesk-org/kcp-sys"}
 reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip"], default-features=false }

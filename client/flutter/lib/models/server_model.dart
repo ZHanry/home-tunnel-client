@@ -448,6 +448,7 @@ class ServerModel with ChangeNotifier {
 
   /// Start the screen sharing service.
   Future<void> startService() async {
+    if (!bind.mainNestlinkAccountReady()) return;
     _isStart = true;
     notifyListeners();
     parent.target?.ffiModel.updateEventListener(parent.target!.sessionId, "");
@@ -693,6 +694,7 @@ class ServerModel with ChangeNotifier {
   }
 
   void sendLoginResponse(Client client, bool res) async {
+    if (res && !bind.mainNestlinkAccountReady()) res = false;
     if (res) {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {

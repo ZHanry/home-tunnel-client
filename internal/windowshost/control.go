@@ -33,7 +33,6 @@ type RemoteAction struct {
 	Action               string   `json:"action"`
 	Username             string   `json:"username"`
 	Password             string   `json:"password"`
-	MFACode              string   `json:"mfa_code"`
 	TrustPin             string   `json:"trust_pin"`
 	ID                   string   `json:"id"`
 	Kind                 string   `json:"kind"`

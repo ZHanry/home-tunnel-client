@@ -274,7 +274,6 @@ type Enrollment struct {
 	Name           string
 	Platform       string
 	Password       string
-	MFACode        string
 }
 
 func (s *Service) Enroll(ctx context.Context, options Enrollment) error {
@@ -289,9 +288,6 @@ func (s *Service) Enroll(ctx context.Context, options Enrollment) error {
 		return ErrLocalApproval
 	}
 	reauth := map[string]any{"password": options.Password}
-	if options.MFACode != "" {
-		reauth["mfa_code"] = options.MFACode
-	}
 	var raw json.RawMessage
 	if e = s.request(ctx, "GET", "/server-keys", nil, "", &raw); e != nil {
 		return e

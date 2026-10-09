@@ -22,23 +22,20 @@ import (
 var ErrRevoked = errors.New("account or device was revoked")
 
 type EnrollOptions struct {
-	StatePath      string
-	Server         string
-	Username       string
-	Password       string
-	NewPassword    string
-	MFACode        string
-	EnrollmentCode string
-	DeviceName     string
-	HTTPClient     *http.Client
+	StatePath   string
+	Server      string
+	Username    string
+	Password    string
+	NewPassword string
+	DeviceName  string
+	HTTPClient  *http.Client
 	// CommitState lets the desktop atomically reject a superseded login before
 	// credentials are saved. Headless enrollment uses the normal store directly.
 	CommitState func(model.State) error
 	// PasswordLogin runs after a password login is committed. Registering the
 	// device binds the login session to it, so account-level follow-ups (remote
-	// host enrollment) need their own session; mfaUsed says whether the code
-	// was already spent and a fresh login cannot be made silently.
-	PasswordLogin func(username, password string, mfaUsed bool)
+	// host enrollment) need their own temporary account session.
+	PasswordLogin func(username, password string)
 }
 
 type RunOptions struct {
@@ -75,40 +72,33 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 	var registration model.DeviceRegistration
 	passwordLogin := false
 	accountPassword := options.Password
-	if options.EnrollmentCode != "" {
-		registration, err = client.EnrollWithCode(ctx, options.EnrollmentCode, options.DeviceName, state.InstallID, fingerprint)
-		if err != nil {
-			return fmt.Errorf("enroll with one-time code: %w", err)
+	session, err := client.Login(ctx, options.Username, options.Password)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := client.CloseSession(cleanup); err != nil {
+			log.Print("Temporary account session cleanup failed")
 		}
-	} else {
-		session, err := client.Login(ctx, options.Username, options.Password, options.MFACode)
-		if err != nil {
+	}()
+	passwordLogin = true
+	if session.PasswordChangeRequired {
+		if strings.TrimSpace(options.NewPassword) == "" {
+			return errors.New("the account requires a password change; provide --new-password-file")
+		}
+		if err := client.ChangePassword(ctx, options.Password, options.NewPassword); err != nil {
+			return fmt.Errorf("change initial password: %w", err)
+		}
+		accountPassword = options.NewPassword
+		if _, err := client.Login(ctx, options.Username, options.NewPassword); err != nil {
 			return err
 		}
-		passwordLogin = true
-		if session.PasswordChangeRequired {
-			if options.MFACode != "" {
-				return errors.New("complete the required password change in the web console, then enroll with a fresh MFA code or an enrollment code")
-			}
-			if strings.TrimSpace(options.NewPassword) == "" {
-				return errors.New("the account requires a password change; provide --new-password-file")
-			}
-			if err := client.ChangePassword(ctx, options.Password, options.NewPassword, options.MFACode); err != nil {
-				return fmt.Errorf("change initial password: %w", err)
-			}
-			accountPassword = options.NewPassword
-			session, err = client.Login(ctx, options.Username, options.NewPassword)
-			if err != nil {
-				return fmt.Errorf("sign in after password change: %w", err)
-			}
-			if session.PasswordChangeRequired {
-				return errors.New("server still requires a password change after updating it")
-			}
-		}
-		registration, err = client.RegisterDevice(ctx, options.DeviceName, state.InstallID, fingerprint)
-		if err != nil {
-			return fmt.Errorf("register device: %w", err)
-		}
+	}
+	registration, err = client.RegisterDevice(ctx, options.DeviceName, state.InstallID, fingerprint)
+	if err != nil {
+		return fmt.Errorf("register background device: %w", err)
 	}
 	state.Profile = profile
 	state.DeviceID = registration.DeviceID
@@ -132,7 +122,7 @@ func Enroll(ctx context.Context, options EnrollOptions) error {
 		return fmt.Errorf("save enrolled device credential: %w", err)
 	}
 	if passwordLogin && options.PasswordLogin != nil {
-		options.PasswordLogin(options.Username, accountPassword, options.MFACode != "")
+		options.PasswordLogin(options.Username, accountPassword)
 	}
 	return nil
 }

@@ -1690,36 +1690,15 @@ pub fn support_remove_wallpaper() -> bool {
     return false;
 }
 
-pub fn has_valid_2fa() -> bool {
-    let raw = get_option("2fa");
-    crate::auth_2fa::get_2fa(Some(raw)).is_some()
-}
 
-pub fn generate2fa() -> String {
-    crate::auth_2fa::generate2fa()
-}
 
-pub fn verify2fa(code: String) -> bool {
-    let res = crate::auth_2fa::verify2fa(code);
-    if res {
-        refresh_options();
-    }
-    res
-}
 
-pub fn has_valid_bot() -> bool {
-    crate::auth_2fa::TelegramBot::get().map_or(false, |bot| bot.is_some())
-}
 
-pub fn verify_bot(token: String) -> String {
-    match crate::auth_2fa::get_chatid_telegram(&token) {
-        Err(err) => err.to_string(),
-        Ok(None) => {
-            "To activate the bot, simply send a message beginning with a forward slash (\"/\") like \"/hello\" to its chat.".to_owned()
-        }
-        _ => "".to_owned(),
-    }
-}
+
+
+
+
+
 
 pub fn check_hwcodec() {
     #[cfg(feature = "hwcodec")]

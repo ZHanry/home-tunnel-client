@@ -56,7 +56,7 @@ Future<void> main() async {
       response.headers.contentType = ContentType.json;
       final auth = request.headers.value(HttpHeaders.authorizationHeader);
       Object? payload;
-      if (request.uri.path == '/api/v1/auth/login') {
+      if (request.uri.path == '/api/v2/auth/login') {
         final login =
             jsonDecode(await utf8.decoder.bind(request).join()) as Map;
         assert(login['username'] == 'fixture-user');
@@ -83,7 +83,7 @@ Future<void> main() async {
         };
       } else {
         assert(auth == 'Bearer $_access');
-        if (request.uri.path == '/api/v1/auth/me') {
+        if (request.uri.path == '/api/v2/auth/me') {
           payload = {
             'id': _user,
             'username': 'fixture-user',
@@ -134,7 +134,7 @@ Future<void> main() async {
               },
             ]
           };
-        } else if (request.uri.path == '/api/v1/auth/session/close') {
+        } else if (request.uri.path == '/api/v2/auth/session/close') {
           response.statusCode = HttpStatus.noContent;
           await response.close();
           return;

@@ -236,9 +236,21 @@ impl<T: InvokeUiSession> Remote<T> {
 
                 let _keep_it = client::hc_connection(feedback, rendezvous_server, token).await;
                 let mut last_recv_time = Instant::now();
+                let permit = self.handler.get_lch().read().unwrap().nestlink_permit.as_ref()
+                    .map(|prepared| prepared.guard.clone());
+                let Some(permit) = permit else {
+                    self.send_close_reason(&mut peer, "请先登录自建服务").await;
+                    self.handle_disconnected(round);
+                    return;
+                };
 
                 loop {
                     tokio::select! {
+                        _ = permit.revoked() => {
+                            self.send_close_reason(&mut peer, "账号登录或远控许可已结束").await;
+                            self.handler.on_establish_connection_error("账号登录或远控许可已结束".to_owned());
+                            break;
+                        }
                         res = peer.next() => {
                             if let Some(res) = res {
                                 match res {
@@ -369,6 +381,9 @@ impl<T: InvokeUiSession> Remote<T> {
             .lock()
             .unwrap()
             .set_disconnected(round);
+        if _set_disconnected_ok {
+            self.handler.get_lch().write().unwrap().nestlink_permit = None;
+        }
 
         #[cfg(not(target_os = "ios"))]
         if self.handler.is_default() && _set_disconnected_ok {

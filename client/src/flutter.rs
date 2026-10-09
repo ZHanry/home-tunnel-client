@@ -2341,12 +2341,17 @@ pub(super) mod async_tasks {
         response: SyncSender<Result<(String, HashMap<String, String>), String>>,
     }
     enum FlutterAsyncTask {
+        NestLinkAccount {
+            action: String,
+            auth: Option<crate::nestlink_auth::AuthRequest>,
+            response: SyncSender<Result<String, String>>,
+        },
         QueryOnlines(Vec<String>),
         // HOMEDESK: 请求携带截止时间和放弃标记，过期排队任务绝不迟到落盘。
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         SaveNetworkProfile(SaveNetworkRequest),
     }
-    type TxFlutterAsyncTask = SyncSender<FlutterAsyncTask>;
+    type TxFlutterAsyncTask = tokio::sync::mpsc::Sender<FlutterAsyncTask>;
     lazy_static::lazy_static! {
         static ref TX_FLUTTER_ASYNC_TASK: Arc<Mutex<Option<TxFlutterAsyncTask>>> = Default::default();
     }
@@ -2364,17 +2369,39 @@ pub(super) mod async_tasks {
     #[tokio::main(flavor = "current_thread")]
     async fn start_flutter_async_runner_() {
         // Only one task is allowed to run at the same time.
-        let (tx, rx) = sync_channel::<FlutterAsyncTask>(1);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<FlutterAsyncTask>(4);
         TX_FLUTTER_ASYNC_TASK.lock().unwrap().replace(tx);
 
         loop {
-            match rx.recv() {
-                Ok(FlutterAsyncTask::QueryOnlines(ids)) => {
+            match rx.recv().await {
+                Some(FlutterAsyncTask::NestLinkAccount { action, auth, response }) => {
+                    let result = async {
+                        match action.as_str() {
+                            "install" => {
+                                let auth = auth.ok_or_else(|| hbb_common::anyhow::anyhow!("缺少账号授权"))?;
+                                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                                crate::ipc::nestlink_auth_update(Some(auth.clone())).await?;
+                                crate::nestlink_auth::install(auth).await?;
+                                Ok(String::new())
+                            }
+                            "clear" => {
+                                crate::nestlink_auth::clear();
+                                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                                crate::ipc::nestlink_auth_update(None).await?;
+                                Ok(String::new())
+                            }
+                            "binding" => crate::nestlink_auth::binding_proof().await,
+                            _ => hbb_common::bail!("账号授权操作无效"),
+                        }
+                    }.await.map_err(|error: hbb_common::anyhow::Error| error.to_string());
+                    let _ = response.send(result);
+                }
+                Some(FlutterAsyncTask::QueryOnlines(ids)) => {
                     crate::client::peer_online::query_online_states(ids, handle_query_onlines).await
                 }
                 // HOMEDESK: 执行前再次检查截止时间；IPC 发出后的未知结果通过只读同步收敛。
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                Ok(FlutterAsyncTask::SaveNetworkProfile(request)) => {
+                Some(FlutterAsyncTask::SaveNetworkProfile(request)) => {
                     if !crate::homedesk_async::save_request_may_execute(
                         request.abandoned.load(Ordering::SeqCst),
                         Instant::now(),
@@ -2422,6 +2449,16 @@ pub(super) mod async_tasks {
         Ok(())
     }
 
+    pub fn nestlink_account(action: &str, auth: Option<crate::nestlink_auth::AuthRequest>) -> Result<String, String> {
+        let (response, receiver) = sync_channel(1);
+        let tx = TX_FLUTTER_ASYNC_TASK.lock().unwrap().as_ref().cloned()
+            .ok_or_else(|| "原生服务尚未就绪".to_owned())?;
+        tx.try_send(FlutterAsyncTask::NestLinkAccount { action: action.to_owned(), auth, response })
+            .map_err(|_| "原生服务正忙，请稍后重试".to_owned())?;
+        receiver.recv_timeout(Duration::from_secs(15))
+            .map_err(|_| "原生账号授权确认超时".to_owned())?
+    }
+
     // HOMEDESK: FRB 普通返回值在 Dart 侧是 Future；这里只等待既有异步线程回执，不运行 Tokio。
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn save_network_profile(values: NetworkValues) -> Result<(String, HashMap<String, String>), String> {
@@ -2438,10 +2475,8 @@ pub(super) mod async_tasks {
             state: state.clone(),
             response,
         };
-        crate::homedesk_async::try_enqueue(&tx, FlutterAsyncTask::SaveNetworkProfile(request)).map_err(|error| match error {
-            crate::homedesk_async::EnqueueError::Busy => "HomeDesk 异步任务队列正忙，请稍后重试；配置尚未发送".to_owned(),
-            crate::homedesk_async::EnqueueError::Stopped => "HomeDesk 异步任务服务已停止".to_owned(),
-        })?;
+        tx.try_send(FlutterAsyncTask::SaveNetworkProfile(request))
+            .map_err(|_| "原生异步任务队列正忙或已停止；配置尚未发送".to_owned())?;
         match receiver.recv_timeout(Duration::from_secs(8)) {
             Ok(result) => result,
             Err(_) => {

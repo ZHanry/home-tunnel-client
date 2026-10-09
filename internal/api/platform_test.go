@@ -19,8 +19,8 @@ func TestEnrollmentInstallsDeviceScopedSessionAndBatchKeepsVersions(t *testing.T
 			return
 		}
 		switch r.URL.Path {
-		case "/api/v1/auth/enroll":
-			if body["code"] != strings.Repeat("x", 32) || body["client_type"] != clientType() || body["install_id"] != "install-identity" || body["fingerprint_hash"] != strings.Repeat("a", 64) {
+		case "/api/v2/auth/devices":
+			if body["credential_purpose"] != "background" || body["client_type"] != "cli" || body["install_id"] != "install-identity" || body["fingerprint_hash"] != strings.Repeat("a", 64) {
 				t.Error("incorrect enrollment payload")
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -43,8 +43,9 @@ func TestEnrollmentInstallsDeviceScopedSessionAndBatchKeepsVersions(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	registration, err := client.EnrollWithCode(context.Background(), strings.Repeat("x", 32), "Home NAS", "install-identity", strings.Repeat("a", 64))
-	if err != nil || registration.DeviceID != "device-local" || client.deviceID != "device-local" {
+	client.setSession("test-session-value", "", time.Now().Add(time.Hour))
+	registration, err := client.RegisterDevice(context.Background(), "Home NAS", "install-identity", strings.Repeat("a", 64))
+	if err != nil || registration.DeviceID != "device-local" || client.deviceID != "" {
 		t.Fatalf("enrollment failed: %v", err)
 	}
 	results, err := client.BatchConnections(context.Background(), []BatchItem{{ID: "c", ExpectedVersion: 7}}, false)

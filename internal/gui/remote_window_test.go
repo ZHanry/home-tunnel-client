@@ -98,7 +98,7 @@ func TestNativeRemoteWindowSessionLifecycle(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": token, "refresh_token": "refresh", "access_expires_at": time.Now().Add(time.Hour)})
 		case "/api/v1/client/remote-devices":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{"id": targetID, "status": "active", "online": currentMode != "offline"}}})
-		case "/api/v1/auth/native-remote-handoff":
+		case "/api/v2/auth/native-remote-handoff":
 			if currentMode == "unsupported" {
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = w.Write([]byte(`{"error_code":"NOT_FOUND"}`))
@@ -108,7 +108,7 @@ func TestNativeRemoteWindowSessionLifecycle(t *testing.T) {
 				server.beginAccountChange(nil)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": strings.Repeat("S", 43), "window_id": localID, "expires_at": time.Now().Add(30 * time.Second)})
-		case "/api/v1/auth/session/close":
+		case "/api/v2/auth/session/close":
 			lock.Lock()
 			closed[r.Header.Get("Authorization")] = true
 			lock.Unlock()
@@ -194,7 +194,7 @@ func TestRemoteOpenCannotStartDuringFailedLogout(t *testing.T) {
 		case "/api/v1/auth/device":
 			logins.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "logout-access", "refresh_token": "refresh", "access_expires_at": time.Now().Add(time.Hour)})
-		case "/api/v1/auth/logout":
+		case "/api/v2/auth/logout":
 			close(logoutStarted)
 			<-releaseLogout
 			w.WriteHeader(http.StatusServiceUnavailable)

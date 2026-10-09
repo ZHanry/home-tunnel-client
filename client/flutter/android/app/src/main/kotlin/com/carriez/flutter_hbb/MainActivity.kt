@@ -84,6 +84,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun requestMediaProjection() {
+        if (!FFI.accountReady()) return
         val intent = Intent(this, PermissionRequestTransparentActivity::class.java).apply {
             action = ACT_REQUEST_MEDIA_PROJECTION
         }
@@ -131,6 +132,10 @@ class MainActivity : FlutterActivity() {
             // make sure result will be invoked, otherwise flutter will await forever
             when (call.method) {
                 "init_service" -> {
+                    if (!FFI.accountReady()) {
+                        result.error("AUTH_REQUIRED", "Sign in to your server first", null)
+                        return@setMethodCallHandler
+                    }
                     Intent(activity, MainService::class.java).also {
                         bindService(it, serviceConnection, Context.BIND_AUTO_CREATE)
                     }

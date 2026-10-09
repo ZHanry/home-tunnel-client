@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const Version = "11.0.0-rc.2"
+const Version = "12.0.0-RC1"
 const CurrentSyncCapabilityVersion = 1
 
 type Profile struct {

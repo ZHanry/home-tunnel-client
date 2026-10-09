@@ -340,6 +340,11 @@ pub enum Data {
         request: Option<(String, String, String, String, String, String)>,
         response: Option<(String, HashMap<String, String>)>,
     },
+    NestLinkAuth {
+        action: String,
+        auth: Option<crate::nestlink_auth::AuthRequest>,
+        error: Option<String>,
+    },
     NatType(Option<i32>),
     ConfirmedKey(Option<(Vec<u8>, Vec<u8>)>),
     RawMessage(Vec<u8>),
@@ -936,6 +941,39 @@ async fn handle(data: Data, stream: &mut Connection) {
                 allow_err!(stream.send(&Data::Options(None)).await);
             }
         },
+        Data::NestLinkAuth { action, auth, error: _ } => {
+            if action == "watch" {
+                let mut updates = crate::nestlink_auth::subscribe();
+                loop {
+                    updates.borrow_and_update();
+                    if let Err(error) = stream.send(&Data::NestLinkAuth {
+                        action: "watch".to_owned(), auth: crate::nestlink_auth::current_request(), error: Some(String::new()),
+                    }).await {
+                        log::debug!("NestLink account subscriber ended: {error}");
+                        break;
+                    }
+                    tokio::select! {
+                        result = updates.changed() => if result.is_err() { break; },
+                        _ = stream.next() => break,
+                    }
+                }
+                return;
+            }
+            let result = match action.as_str() {
+                "install" => match auth {
+                    Some(auth) => crate::nestlink_auth::install(auth).await,
+                    None => Err(hbb_common::anyhow::anyhow!("缺少账号授权")),
+                },
+                "clear" => { crate::nestlink_auth::clear(); Ok(()) },
+                "get" => Ok(()),
+                _ => Err(hbb_common::anyhow::anyhow!("账号授权操作无效")),
+            };
+            allow_err!(stream.send(&Data::NestLinkAuth {
+                auth: if action == "get" { crate::nestlink_auth::current_request() } else { None },
+                action,
+                error: Some(result.err().map(|error| error.to_string()).unwrap_or_default()),
+            }).await);
+        }
         Data::HomeDeskNetworkProfile { request, response: _ } => {
             let mut result = "缺少 HomeDesk 网络配置".to_owned();
             if let Some((mode, server_host, relay, key, family_cidr, source_cidr)) = request {
@@ -1541,7 +1579,7 @@ pub async fn get_config(name: &str) -> ResultType<Option<String>> {
     get_config_async(name, 1_000).await
 }
 
-async fn get_config_async(name: &str, ms_timeout: u64) -> ResultType<Option<String>> {
+pub(crate) async fn get_config_async(name: &str, ms_timeout: u64) -> ResultType<Option<String>> {
     let mut c = connect(ms_timeout, "").await?;
     c.send(&Data::Config((name.to_owned(), None))).await?;
     if let Some(Data::Config((name2, value))) = c.next_timeout(ms_timeout).await? {
@@ -1891,6 +1929,26 @@ pub async fn get_options_confirmed_async() -> ResultType<HashMap<String, String>
     match connection.next_timeout(2_500).await? {
         Some(Data::Options(Some(value))) => Ok(value),
         _ => bail!("后台未返回有效 Options 快照"),
+    }
+}
+
+pub async fn nestlink_auth_update(auth: Option<crate::nestlink_auth::AuthRequest>) -> ResultType<()> {
+    let action = if auth.is_some() { "install" } else { "clear" };
+    let mut connection = connect(1500, "").await?;
+    connection.send(&Data::NestLinkAuth { action: action.to_owned(), auth, error: None }).await?;
+    match connection.next_timeout(6500).await? {
+        Some(Data::NestLinkAuth { error: Some(error), .. }) if error.is_empty() => Ok(()),
+        Some(Data::NestLinkAuth { error: Some(error), .. }) => bail!(error),
+        _ => bail!("后台服务未确认账号授权"),
+    }
+}
+
+pub async fn nestlink_auth_request() -> ResultType<Option<crate::nestlink_auth::AuthRequest>> {
+    let mut connection = connect(1500, "").await?;
+    connection.send(&Data::NestLinkAuth { action: "get".to_owned(), auth: None, error: None }).await?;
+    match connection.next_timeout(2500).await? {
+        Some(Data::NestLinkAuth { auth, error: Some(error), .. }) if error.is_empty() => Ok(auth),
+        _ => bail!("后台账号授权状态不可用"),
     }
 }
 

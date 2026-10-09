@@ -1,11 +1,11 @@
 {
   "component": "client",
   "stage": "internal-testing",
-  "api_major": 1,
-  "contract_ref": "api-v1.6.0",
-  "support_policy": "11.0.0-rc.2 fixes Windows upgrade preflight. Governed tunnels retain API v1; HomeDesk remote control is authenticated encrypted direct P2P only, with hbbs signaling and no relay. Full cross-network/media/physical-device acceptance pending.",
-  "version": "11.0.0-rc.2",
-  "minimum_server": "7.0.0",
+  "api_major": 2,
+  "contract_ref": "api-v2.0.0",
+  "support_policy": "NestLink self-hosted account authentication and signed native P2P permits use API v2. Existing tunnel sync and independent background credentials retain API v1 compatibility. Release notes distinguish verified and unverified coverage.",
+  "version": "12.0.0-RC1",
+  "minimum_server": "12.0.0-RC1",
   "tested_combination": {
     "server": "10.0.0",
     "client": "10.0.0",
@@ -13,13 +13,14 @@
     "agent": "10.0.0"
   },
   "contract_status": "frozen",
-  "frozen_tag": "api-v1.6.0",
-  "previous_immutable_tag": "api-v1.4.0",
-  "tested_combination_scope": "Historical 10.0.0 record retained; not an acceptance claim for HomeDesk 11.x.",
+  "frozen_tag": "api-v2.0.0",
+  "previous_immutable_tag": "api-v1.6.0",
+  "tested_combination_scope": "Historical baseline retained. The 12.0.0-RC1 target requires its own build and integration evidence.",
   "target_combination": {
-    "server": "11.0.0-rc.2",
-    "client": "11.0.0-rc.2",
-    "android": "11.0.0-rc.1",
-    "agent": "10.1.0"
-  }
+    "server": "12.0.0-RC1",
+    "client": "12.0.0-RC1",
+    "android": "12.0.0-RC1",
+    "agent": "12.0.0-RC1"
+  },
+  "published_contract_ref": "api-v2.0.0"
 }

@@ -1,6 +1,5 @@
     const strings = {
-      "zh-CN": { close: "关闭", renamePending: "正在保存，关闭窗口不会取消保存。", renameDevice: "重命名本机", renameDeviceHelp: "新名称会同步到你的设备列表，并在下次启动时保留。", selfConnection: "不能远程连接本机，请选择其他设备。", deviceRenamed: "设备名称已更新", select: "选择", batchPause: "暂停所选", batchResume: "恢复所选", tags: "设备标签（逗号分隔，最多 12 个）", favorite: "收藏此设备", metadata: "设备标记", saveMetadata: "保存标记", loginMethod: "接入方式", accountLogin: "账号密码", codeLogin: "一次性接入码", enrollmentCode: "接入码（在控制台的我的账号页面生成）", mfaCode: "动态码或恢复码（已启用双重验证时填写）",
-        connectionType: "连接类型",
+      "zh-CN": { close: "关闭", renamePending: "正在保存，关闭窗口不会取消保存。", renameDevice: "重命名本机", renameDeviceHelp: "新名称会同步到你的设备列表，并在下次启动时保留。", selfConnection: "不能远程连接本机，请选择其他设备。", deviceRenamed: "设备名称已更新", select: "选择", batchPause: "暂停所选", batchResume: "恢复所选", tags: "设备标签（逗号分隔，最多 12 个）", favorite: "收藏此设备", metadata: "设备标记", saveMetadata: "保存标记", connectionType: "连接类型",
         typeWeb: "Web · HTTP / HTTPS",
         typeRtsp: "RTSP 摄像头 · TCP",
         typeSsh: "SSH · TCP",
@@ -63,8 +62,7 @@
         updatePrefix: "有新版本 ", updateCurrent: "（当前 ", updateSuffix: "）。",
         download: "下载到「下载」文件夹并校验", openRelease: "打开 Release", downloading: "正在下载…"
       },
-      en: { close: "Close", renamePending: "Saving. Closing this window will not cancel the save.", renameDevice: "Rename this device", renameDeviceHelp: "The new name syncs to your device list and stays after restarting.", selfConnection: "You cannot connect remotely to this computer. Choose another device.", deviceRenamed: "Device name updated", select: "Select", batchPause: "Pause selected", batchResume: "Resume selected", tags: "Device tags (comma separated, up to 12)", favorite: "Favorite this device", metadata: "Device organization", saveMetadata: "Save tags", loginMethod: "Sign-in method", accountLogin: "Account and password", codeLogin: "One-time enrollment code", enrollmentCode: "Enrollment code (create in your console account page)", mfaCode: "Authenticator or recovery code (if MFA is enabled)",
-        connectionType: "Connection type",
+      en: { close: "Close", renamePending: "Saving. Closing this window will not cancel the save.", renameDevice: "Rename this device", renameDeviceHelp: "The new name syncs to your device list and stays after restarting.", selfConnection: "You cannot connect remotely to this computer. Choose another device.", deviceRenamed: "Device name updated", select: "Select", batchPause: "Pause selected", batchResume: "Resume selected", tags: "Device tags (comma separated, up to 12)", favorite: "Favorite this device", metadata: "Device organization", saveMetadata: "Save tags", connectionType: "Connection type",
         typeWeb: "Web · HTTP / HTTPS",
         typeRtsp: "RTSP camera · TCP",
         typeSsh: "SSH · TCP",
@@ -228,36 +226,6 @@
     hostEnroll.classList.add("remote-host-enroll");
     hostCard.querySelector(".row").before(hostEnroll);
     hostCard.append($("rd-host-error"));
-    const hostMfaField = hostEnroll.querySelector("#rd-host-mfa");
-    const hostMfaLabel = hostEnroll.querySelector('label[for="rd-host-mfa"]');
-    const hostMfaFeedback = document.createElement("p");
-    hostMfaFeedback.id = "rd-host-mfa-feedback";
-    hostMfaFeedback.className = "muted hidden";
-    hostMfaFeedback.setAttribute("role", "status");
-    hostMfaField.setAttribute("aria-describedby", hostMfaFeedback.id);
-    hostMfaField.after(hostMfaFeedback);
-    function renderHostMfaFeedback() {
-      const code = hostMfaFeedback.dataset.code;
-      const invalid = code === "RD_MFA_INVALID";
-      hostMfaFeedback.classList.toggle("hidden", !code);
-      hostMfaFeedback.classList.toggle("error", invalid);
-      hostMfaFeedback.setAttribute("role", invalid ? "alert" : "status");
-      hostMfaField.setAttribute("aria-invalid", String(invalid));
-      hostMfaFeedback.textContent = !code ? "" : msg(invalid ? "动态码或恢复码无效，请重试。" : "请输入动态码或恢复码。");
-    }
-    hostMfaField.classList.add("hidden");
-    hostMfaLabel.classList.add("hidden");
-    hostEnroll.querySelector("#rd-host-user").addEventListener("input", () => {
-      hostMfaField.value = "";
-      hostMfaField.classList.add("hidden");
-      hostMfaLabel.classList.add("hidden");
-      delete hostMfaFeedback.dataset.code;
-      renderHostMfaFeedback();
-    });
-    hostMfaField.addEventListener("input", () => {
-      if (hostMfaFeedback.dataset.code) hostMfaFeedback.dataset.code = "RD_MFA_REQUIRED";
-      renderHostMfaFeedback();
-    });
     remoteOverview.prepend(hostCard);
     remoteOverview.append(remoteAssistCard);
     remoteQuick.append(remoteOverview, remoteSecurity);
@@ -329,9 +297,6 @@
       "切换至深色主题": ["切换至深色主题","Switch to dark theme"],
       "刷新状态": ["刷新状态","Refresh status"],
       "刷新设备": ["刷新设备","Refresh devices"],
-      "动态码或恢复码 / MFA code": ["动态码或恢复码","MFA code"],
-      "请输入动态码或恢复码。": ["请输入动态码或恢复码。","Enter your authenticator or recovery code."],
-      "动态码或恢复码无效，请重试。": ["动态码或恢复码无效，请重试。","The authenticator or recovery code is invalid. Try again."],
       "单次授权 · ": ["单次授权 · ","Session grant · "],
       "发现正式版后可下载并校验 SHA-256。安装前请退出正在进行的远控会话。": ["发现正式版后可下载并校验 SHA-256。安装前请退出正在进行的远控会话。","Download published updates with SHA-256 verification. End active remote sessions before installing."],
       "发送 / Send": ["发送","Send"],
@@ -463,7 +428,7 @@
       "配对请求 / Pairing request": ["配对请求","Pairing request"],
       "键盘 / Keyboard": ["键盘","Keyboard"],
       "首次启用需核对服务器身份；进行中的会话可在这里立即撤销。": ["首次启用需核对服务器身份；进行中的会话可在这里立即撤销。","Verify the server identity before first use. Revoke active sessions here at any time."],
-      "首次启用需要本设备所属账号验证。密码和动态码仅用于本次登记。": ["首次启用需要本设备所属账号验证。密码和动态码仅用于本次登记。","Verify the account that owns this device before first use. The password and MFA code are used only for this enrollment."],
+      "首次启用需要本设备所属账号验证。密码仅用于本次登记。": ["首次启用需要本设备所属账号验证。密码仅用于本次登记。","Verify the account that owns this device before first use. The password is used only for this enrollment."],
       "首次登录请设置新密码后继续。": ["首次登录请设置新密码后继续。","Set a new password before continuing."],
       "麦克风回传 / Microphone": ["麦克风回传","Microphone"],
       "鼠标 / Pointer": ["鼠标","Pointer"],
@@ -537,7 +502,6 @@
     $("locale-toggle").onclick = () => {
       locale = locale === "en" ? "zh-CN" : "en";
       applyLocale(); applyTheme(document.documentElement.dataset.themePreference); renderServices(); renderAccountDevices();
-      renderHostMfaFeedback();
       void refreshRemoteHost();
       if (!$("settings").classList.contains("hidden")) void checkUpdates();
       if (!$("editor").classList.contains("hidden")) { applyProtocol(); if (wizardActive) renderWizard(false); }
@@ -1124,27 +1088,6 @@
         selectedConnections.clear(); await showHome();
       });
     }
-    $("login-method").onchange = () => {
-      const code = $("login-method").value === "code";
-      $("account-fields").classList.toggle("hidden", code);
-      $("code-fields").classList.toggle("hidden", !code);
-      $("username").required = $("password").required = !code;
-      $("enrollment-code").required = code;
-      $("new-password").required = $("confirm-password").required = false;
-      $("new-password").value = $("confirm-password").value = "";
-      $("password").value = $("mfa-code").value = $("enrollment-code").value = "";
-      $("mfa-step").classList.add("hidden");
-      $("mfa-code").required = false;
-      $("new-password").value = $("confirm-password").value = "";
-      $("password-change").classList.add("hidden");
-    };
-    for (const field of ["server", "username", "password"]) {
-      $(field).addEventListener("input", () => {
-        $("mfa-code").value = "";
-        $("mfa-code").required = false;
-        $("mfa-step").classList.add("hidden");
-      });
-    }
     $("login-form").onsubmit = async (event) => {
       event.preventDefault();
       if (!$("login-form").reportValidity()) return;
@@ -1155,16 +1098,11 @@
       try {
         localStorage.setItem("ht_server", $("server").value);
         localStorage.setItem("ht_username", $("username").value);
-        await api("/local/login", { method: "POST", body: JSON.stringify({ server: $("server").value, username: $("username").value, password: $("password").value, new_password: $("new-password").value, mfa_code: $("mfa-code").value, enrollment_code: $("enrollment-code").value }) });
-        $("password").value = $("new-password").value = $("confirm-password").value = $("mfa-code").value = $("enrollment-code").value = "";
-        $("mfa-step").classList.add("hidden");
-        $("mfa-code").required = false;
+        await api("/local/login", { method: "POST", body: JSON.stringify({ server: $("server").value, username: $("username").value, password: $("password").value, new_password: $("new-password").value }) });
+        $("password").value = $("new-password").value = $("confirm-password").value = "";
         await showRemote();
       } catch (error) {
-        if (error.code === "MFA_REQUIRED" || error.code === "MFA_INVALID") {
-          $("mfa-step").classList.remove("hidden"); $("mfa-code").required = true; $("mfa-code").focus();
-          $("login-error").textContent = error.message;
-        } else if (/requires a password change|PASSWORD_CHANGE_REQUIRED/.test(error.message)) {
+        if (/requires a password change|PASSWORD_CHANGE_REQUIRED/.test(error.message)) {
           $("password-change").classList.remove("hidden"); $("new-password").required = true; $("confirm-password").required = true; $("new-password").focus();
           $("login-error").textContent = locale === "en" ? "Set a new password to continue." : msg("首次登录请设置新密码后继续。");
         } else $("login-error").textContent = error.message;
@@ -1276,9 +1214,7 @@
       assistSecret = null; lastAssistInvites = [];
       $("rd-assist-secret").replaceChildren(); $("rd-assist-list").replaceChildren(); $("rd-assist-error").textContent = "";
       $("rd-assist-create").disabled = true;
-      $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
-      hostMfaField.classList.add("hidden"); hostMfaLabel.classList.add("hidden");
-      delete hostMfaFeedback.dataset.code; renderHostMfaFeedback();
+      $("rd-host-password").value = "";
       $("rd-host-pending").replaceChildren(); $("rd-host-grants").replaceChildren();
       $("rd-host-files").replaceChildren();
       $("rd-access-error").textContent = "";
@@ -1444,9 +1380,7 @@
         $("rd-host-enroll").classList.toggle("hidden", !ready || state.enrolled || settingUp);
         if (!$("rd-host-user").value) $("rd-host-user").value = localStorage.getItem("ht_username") || "";
         if (state.enrolled || !ready) {
-          $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
-          hostMfaField.classList.add("hidden"); hostMfaLabel.classList.add("hidden");
-          delete hostMfaFeedback.dataset.code; renderHostMfaFeedback();
+          $("rd-host-password").value = "";
         }
         renderRemoteApprovals(state);
         renderAssistInvites(state.invites);
@@ -1480,21 +1414,10 @@
       event.preventDefault();
       return runAction($("rd-host-enroll-submit"), async () => {
         $("rd-host-error").textContent = "";
-        const body = {username:$("rd-host-user").value,password:$("rd-host-password").value,mfa_code:$("rd-host-mfa").value,trust_pin:""};
-        $("rd-host-password").value = ""; $("rd-host-mfa").value = "";
+        const body = {username:$("rd-host-user").value,password:$("rd-host-password").value,trust_pin:""};
+        $("rd-host-password").value = "";
         try { await remoteHostAction("enroll", body); }
-        catch (error) {
-          if (error.code === "RD_MFA_REQUIRED" || error.code === "RD_MFA_INVALID") {
-            hostMfaField.classList.remove("hidden");
-            hostMfaLabel.classList.remove("hidden");
-            hostMfaFeedback.dataset.code = error.code;
-            renderHostMfaFeedback();
-            hostMfaField.focus();
-            return;
-          }
-          throw error;
-        }
-        finally { body.password = ""; body.mfa_code = ""; }
+        finally { body.password = ""; }
       }, "rd-host-error");
     };
     setInterval(() => { if (!document.hidden) void refreshRemoteHost(); }, 3000);

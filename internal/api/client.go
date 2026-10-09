@@ -185,16 +185,12 @@ func userAgent() string {
 	}
 }
 
-func (client *Client) Login(ctx context.Context, username, password string, factor ...string) (model.Session, error) {
+func (client *Client) Login(ctx context.Context, username, password string) (model.Session, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	var session model.Session
-	var code string
-	if len(factor) > 0 {
-		code = factor[0]
-	}
 	err := client.publicJSON(ctx, http.MethodPost, "auth/login", map[string]any{
-		"username": username, "password": password, "client_type": clientType(), "mfa_code": code,
+		"username": username, "password": password, "client_type": clientType(),
 	}, &session)
 	if err == nil {
 		client.deviceID = ""
@@ -239,15 +235,11 @@ func (client *Client) CloseSession(ctx context.Context) error {
 	return err
 }
 
-func (client *Client) ChangePassword(ctx context.Context, current, next string, factor ...string) error {
+func (client *Client) ChangePassword(ctx context.Context, current, next string) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	var code string
-	if len(factor) > 0 {
-		code = factor[0]
-	}
 	err := client.authJSON(ctx, http.MethodPost, "auth/password/change", map[string]any{
-		"current_password": current, "new_password": next, "mfa_code": code,
+		"current_password": current, "new_password": next,
 	}, nil)
 	if err == nil {
 		client.setSession("", "", time.Time{})
@@ -259,29 +251,11 @@ func (client *Client) RegisterDevice(ctx context.Context, name, installID, finge
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	var registration model.DeviceRegistration
-	err := client.authJSON(ctx, http.MethodPost, "devices/register", map[string]any{
+	err := client.authJSON(ctx, http.MethodPost, "/api/v2/auth/devices", map[string]any{
 		"name": name, "install_id": installID, "fingerprint_hash": fingerprint, "client_version": model.Version,
+		"client_type": "cli", "credential_purpose": "background",
 	}, &registration)
 	return registration, err
-}
-
-func (client *Client) EnrollWithCode(ctx context.Context, code, name, installID, fingerprint string) (model.DeviceRegistration, error) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	var payload struct {
-		model.DeviceRegistration
-		AccessToken     string    `json:"access_token"`
-		RefreshToken    string    `json:"refresh_token"`
-		AccessExpiresAt time.Time `json:"access_expires_at"`
-	}
-	err := client.publicJSON(ctx, http.MethodPost, "auth/enroll", map[string]any{
-		"code": code, "name": name, "install_id": installID, "fingerprint_hash": fingerprint, "client_version": model.Version, "client_type": clientType(),
-	}, &payload)
-	if err == nil {
-		client.deviceID = payload.DeviceID
-		client.setSession(payload.AccessToken, payload.RefreshToken, payload.AccessExpiresAt)
-	}
-	return payload.DeviceRegistration, err
 }
 
 func (client *Client) Sync(ctx context.Context, deviceID string, lastVersion int64, leaseExpiry *time.Time) (model.SyncResponse, error) {
@@ -520,12 +494,15 @@ func (client *Client) sendJSON(ctx context.Context, method, path string, body, t
 		}
 		payload = bytes.NewReader(data)
 	}
+	if strings.HasPrefix(path, "auth/") && path != "auth/device" {
+		path = "/api/v2/" + path
+	}
 	reference, err := url.Parse(path)
 	if err != nil || reference.IsAbs() || reference.Host != "" || reference.User != nil || reference.Fragment != "" {
 		return 0, errors.New("API request path must remain relative to the selected server")
 	}
 	endpoint := client.baseURL.ResolveReference(reference)
-	if !sameOrigin(client.baseURL, endpoint) || !strings.HasPrefix(pathpkg.Clean(endpoint.Path), "/api/v1/") {
+	if !sameOrigin(client.baseURL, endpoint) || !(strings.HasPrefix(pathpkg.Clean(endpoint.Path), "/api/v1/") || strings.HasPrefix(pathpkg.Clean(endpoint.Path), "/api/v2/")) {
 		return 0, errors.New("API request escaped the selected server API path")
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), payload)

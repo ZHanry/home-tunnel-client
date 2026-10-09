@@ -11,7 +11,7 @@ pub struct Request {
     #[serde(default)] pub user_id: String,
     #[serde(default)] pub permission: String,
     #[serde(default)] pub name: String,
-    #[serde(default)] pub code: String,
+    #[serde(default)] pub registration: String,
     #[serde(skip)] serial: u64,
 }
 
@@ -22,22 +22,24 @@ struct View {
     code: String,
     device_id: String,
     agent_state: String,
+    install_id: String,
+    fingerprint_hash: String,
 }
 
 struct Controller {
     view: View,
     serial: u64,
     stopped_owners: std::collections::HashSet<String>,
-    #[cfg(windows)] job: Option<std::sync::Arc<platform::Job>>,
-    #[cfg(windows)] state_path: Option<std::path::PathBuf>,
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] job: Option<std::sync::Arc<platform::Job>>,
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] state_path: Option<std::path::PathBuf>,
 }
 lazy_static::lazy_static! {
     static ref CONTROLLER: Mutex<Controller> = Mutex::new(Controller {
         view: View { phase: "stopped".into(), ..View::default() },
         serial: 0,
         stopped_owners: std::collections::HashSet::new(),
-        #[cfg(windows)] job: None,
-        #[cfg(windows)] state_path: None,
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] job: None,
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] state_path: None,
     });
 }
 
@@ -45,7 +47,7 @@ pub fn stop_all() {
     let mut controller = CONTROLLER.lock().unwrap();
     let owner = controller.view.owner.clone();
     if !owner.is_empty() { controller.stopped_owners.insert(owner); }
-    #[cfg(windows)] if let Some(job) = controller.job.take() { job.terminate(); }
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] if let Some(job) = controller.job.take() { job.terminate(); }
     controller.view.phase = "stopped".into();
     controller.serial = controller.serial.wrapping_add(1);
     controller.view.owner.clear();
@@ -75,26 +77,26 @@ pub fn command(value: &str) {
         let mut controller = CONTROLLER.lock().unwrap();
         controller.stopped_owners.insert(request.owner.clone());
         if controller.view.owner == request.owner {
-            #[cfg(windows)] if let Some(job) = controller.job.take() { job.terminate(); }
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] if let Some(job) = controller.job.take() { job.terminate(); }
             controller.view.phase = "stopped".into();
             controller.serial = controller.serial.wrapping_add(1);
             controller.view.owner.clear();
         }
         return;
     }
-    if !matches!(request.action.as_str(), "inspect" | "enroll" | "run") || !allowed(&request)
+    if !matches!(request.action.as_str(), "inspect" | "register" | "run") || !allowed(&request)
         || request.name.chars().count() > 120 || request.name.chars().any(char::is_control)
-        || (request.action == "enroll" && (request.code.len() < 16 || request.code.len() > 256
-            || request.code.chars().any(|c| c.is_control() || c.is_whitespace()))) { return; }
+        || (request.action == "register" && (request.registration.len() < 32 || request.registration.len() > 4096
+            || request.registration.chars().any(char::is_control))) { return; }
     {
         let mut controller = CONTROLLER.lock().unwrap();
         if controller.stopped_owners.contains(&request.owner) { return; }
-        #[cfg(windows)] if let Some(job) = controller.job.take() { job.terminate(); }
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] if let Some(job) = controller.job.take() { job.terminate(); }
         controller.view = View { owner: request.owner.clone(), phase: "working".into(), ..View::default() };
         controller.serial = controller.serial.wrapping_add(1);
         request.serial = controller.serial;
     }
-    #[cfg(windows)] std::thread::spawn(move || {
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] std::thread::spawn(move || {
         if let Err(code) = platform::execute(&request) {
             {
                 let mut controller = CONTROLLER.lock().unwrap();
@@ -105,7 +107,7 @@ pub fn command(value: &str) {
             update(&request, "error", code, "", "");
         }
     });
-    #[cfg(not(windows))] update(&request, "error", "PLATFORM_UNSUPPORTED", "", "");
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))] update(&request, "error", "PLATFORM_UNSUPPORTED", "", "");
 }
 
 fn update(request: &Request, phase: &str, code: &str, device: &str, state: &str) {
@@ -121,7 +123,7 @@ fn update(request: &Request, phase: &str, code: &str, device: &str, state: &str)
 pub fn status() -> String {
     let controller = CONTROLLER.lock().unwrap();
     let mut view = controller.view.clone();
-    #[cfg(windows)] if view.phase == "running" {
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))] if view.phase == "running" {
         if let Some(path) = &controller.state_path {
             if platform::regular(path).is_ok() {
                 if let Ok(bytes) = std::fs::read(path) {
@@ -152,17 +154,23 @@ pub fn network_identity() -> String {
         "key_sha256": format!("{:x}", Sha256::digest(profile.key.trim().as_bytes()))}).to_string()
 }
 
-#[cfg(windows)]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod platform {
     use super::*;
     use sha2::{Digest, Sha256};
     use std::{fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, sync::Arc};
+    #[cfg(windows)]
     use std::os::windows::{fs::MetadataExt, io::AsRawHandle, process::CommandExt};
+    #[cfg(windows)]
     use winapi::um::{jobapi2::{AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject, TerminateJobObject},
         handleapi::CloseHandle, winnt::{JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE}};
 
+    #[cfg(windows)]
     pub struct Job(usize);
+    #[cfg(unix)]
+    pub struct Job(i32, std::sync::atomic::AtomicBool);
     impl Job {
+        #[cfg(windows)]
         fn new(child: &std::process::Child) -> Result<Arc<Self>, &'static str> {
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
@@ -175,13 +183,33 @@ mod platform {
                 Ok(job)
             }
         }
+        #[cfg(windows)]
         pub fn terminate(&self) { unsafe { TerminateJobObject(self.0 as _, 1); } }
+        #[cfg(unix)]
+        fn new(child: &std::process::Child) -> Result<Arc<Self>, &'static str> {
+            Ok(Arc::new(Self(child.id() as i32, std::sync::atomic::AtomicBool::new(true))))
+        }
+        #[cfg(unix)]
+        pub fn terminate(&self) {
+            if self.1.swap(false, std::sync::atomic::Ordering::SeqCst) { unsafe { hbb_common::libc::kill(-self.0, hbb_common::libc::SIGKILL); } }
+        }
+        fn completed(&self) {
+            #[cfg(unix)] self.1.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
     }
+    #[cfg(windows)]
     impl Drop for Job { fn drop(&mut self) { unsafe { CloseHandle(self.0 as _); } } }
+    #[cfg(unix)]
+    impl Drop for Job { fn drop(&mut self) { self.terminate(); } }
+
+    fn unsafe_metadata(metadata: &fs::Metadata) -> bool {
+        #[cfg(windows)] { metadata.file_attributes() & 0x400 != 0 }
+        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; metadata.permissions().mode() & 0o022 != 0 }
+    }
 
     pub fn regular(path: &Path) -> Result<(), &'static str> {
         let metadata = fs::symlink_metadata(path).map_err(|_| "RUNTIME_MISSING")?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0 { return Err("UNSAFE_PATH"); }
+        if !metadata.is_file() || metadata.file_type().is_symlink() || unsafe_metadata(&metadata) { return Err("UNSAFE_PATH"); }
         Ok(())
     }
     fn verify(path: &Path, expected: &str) -> Result<(), &'static str> {
@@ -197,14 +225,14 @@ mod platform {
         let app = executable.parent().ok_or("UNSAFE_PATH")?;
         let runtime = app.join("tunnel-runtime");
         let metadata = fs::symlink_metadata(&runtime).map_err(|_| "RUNTIME_MISSING")?;
-        if !metadata.is_dir() || metadata.file_attributes() & 0x400 != 0 { return Err("UNSAFE_PATH"); }
+        if !metadata.is_dir() || unsafe_metadata(&metadata) { return Err("UNSAFE_PATH"); }
         let manifest_path = runtime.join("runtime.json");
         regular(&manifest_path)?;
         let manifest: serde_json::Value = serde_json::from_slice(&fs::read(manifest_path).map_err(|_| "INTEGRITY_FAILED")?).map_err(|_| "INTEGRITY_FAILED")?;
-        if manifest["version"] != "10.1.0" || manifest["parent_executable"].as_str() != executable.file_name().and_then(|v| v.to_str()) { return Err("INTEGRITY_FAILED"); }
-        let helper = runtime.join("homedesk-tunnel-helper.exe");
+        if manifest["version"] != env!("CARGO_PKG_VERSION") || manifest["parent_executable"].as_str() != executable.file_name().and_then(|v| v.to_str()) { return Err("INTEGRITY_FAILED"); }
+        let helper = runtime.join(if cfg!(windows) { "homedesk-tunnel-helper.exe" } else { "homedesk-tunnel-helper" });
         verify(&helper, manifest["helper_sha256"].as_str().ok_or("INTEGRITY_FAILED")?)?;
-        verify(&runtime.join("home-tunnel-agent.exe"), "0be9d77918aad26539692fa80b0c2b0a8e7ab0bb8ed85de63f5e0456a2fcaef0")?;
+        verify(&runtime.join(if cfg!(windows) { "home-tunnel-agent.exe" } else { "home-tunnel-agent" }), manifest["agent_sha256"].as_str().ok_or("INTEGRITY_FAILED")?)?;
         let config = hbb_common::config::Config::file();
         let root = config.parent().ok_or("UNSAFE_PATH")?.join("tunnel-local");
         let scope = format!("{:x}", Sha256::digest(format!("{}\0{}", request.origin, request.user_id).as_bytes()));
@@ -212,7 +240,7 @@ mod platform {
         fs::create_dir_all(&directory).map_err(|_| "STATE_PROTECTION_FAILED")?;
         for parent in [&root, &directory] {
             let meta = fs::symlink_metadata(parent).map_err(|_| "UNSAFE_PATH")?;
-            if !meta.is_dir() || meta.file_attributes() & 0x400 != 0 { return Err("UNSAFE_PATH"); }
+            if !meta.is_dir() || unsafe_metadata(&meta) { return Err("UNSAFE_PATH"); }
         }
         Ok((helper, directory.join("state.json")))
     }
@@ -222,15 +250,17 @@ mod platform {
         let mut command = Command::new(helper);
         command.args([request.action.as_str(), "--state"]).arg(&state_path)
             .args(["--origin", request.origin.as_str(), "--parent", &std::process::id().to_string(), "--name", request.name.as_str()])
-            .creation_flags(0x08000000).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).env_clear();
-        // HOMEDESK: 目录地址来自本机已确认配置，远控 ID 来自现有后台；不接受界面自报身份。
-        if request.action == "run" {
-            let profile = crate::homedesk_config::active_profile();
-            let key_hash = format!("{:x}", Sha256::digest(profile.key.trim().as_bytes()));
-            command.args(["--remote-id", crate::ipc::get_id().trim(),
-                "--remote-server", profile.server.as_str(), "--remote-key-sha256", key_hash.as_str()]);
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).env_clear();
+        #[cfg(windows)] command.creation_flags(0x08000000);
+        #[cfg(unix)] {
+            use std::os::unix::process::CommandExt;
+            unsafe { command.pre_exec(|| {
+                if hbb_common::libc::setpgid(0, 0) != 0 { return Err(std::io::Error::last_os_error()); }
+                Ok(())
+            }); }
         }
-        for key in ["SystemRoot", "WINDIR", "TEMP", "TMP", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "USERNAME", "USERDOMAIN"] {
+        // HOMEDESK: 目录地址来自本机已确认配置，远控 ID 来自现有后台；不接受界面自报身份。
+        for key in ["SystemRoot", "WINDIR", "TEMP", "TMP", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "USERNAME", "USERDOMAIN", "HOME", "PATH", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
             if let Some(value) = std::env::var_os(key) { command.env(key, value); }
         }
         let mut child = command.spawn().map_err(|_| "START_FAILED")?;
@@ -246,8 +276,8 @@ mod platform {
         if !allowed(request) { job.terminate(); return Ok(()); }
         if let Some(mut input) = child.stdin.take() {
             input.write_all(b"HOMEDESK_AGENT_ALLOWED\n").map_err(|_| "START_FAILED")?;
-            if request.action == "enroll" {
-                input.write_all(request.code.as_bytes()).map_err(|_| "START_FAILED")?;
+            if request.action == "register" {
+                input.write_all(request.registration.as_bytes()).map_err(|_| "START_FAILED")?;
                 input.write_all(b"\n").map_err(|_| "START_FAILED")?;
             }
         }
@@ -257,12 +287,20 @@ mod platform {
                 if line.len() > 8192 { job.terminate(); return Err("RUNTIME_FAILED"); }
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else { continue; };
                 let phase = value["phase"].as_str().unwrap_or("error");
-                if !matches!(phase, "registered" | "needs_enrollment" | "running" | "error") { continue; }
+                if !matches!(phase, "registered" | "needs_registration" | "running" | "error") { continue; }
+                if phase == "needs_registration" {
+                    let mut controller = CONTROLLER.lock().unwrap();
+                    if controller.view.owner == request.owner && controller.serial == request.serial {
+                        controller.view.install_id = value["install_id"].as_str().unwrap_or_default().to_owned();
+                        controller.view.fingerprint_hash = value["fingerprint_hash"].as_str().unwrap_or_default().to_owned();
+                    }
+                }
                 update(request, phase, value["code"].as_str().unwrap_or("RUNTIME_FAILED"),
                     value["device_id"].as_str().unwrap_or(""), value["agent_state"].as_str().unwrap_or(""));
             }
         }
         let result = child.wait().map_err(|_| "RUNTIME_FAILED")?;
+        job.completed();
         if !allowed(request) { return Ok(()); }
         let mut controller = CONTROLLER.lock().unwrap();
         if controller.view.owner == request.owner && controller.serial == request.serial {

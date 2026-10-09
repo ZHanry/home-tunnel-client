@@ -920,8 +920,7 @@ class FfiModel with ChangeNotifier {
 
     if (type == 're-input-password') {
       wrongPasswordDialog(sessionId, dialogManager, type, title, text);
-    } else if (type == 'input-2fa') {
-      enter2FaDialog(sessionId, dialogManager);
+
     } else if (type == 'input-password') {
       enterPasswordDialog(sessionId, dialogManager);
     } else if (type == 'session-login' || type == 'session-re-login') {
@@ -4010,10 +4009,6 @@ class FFI {
         remember: remember);
   }
 
-  void send2FA(SessionID sessionId, String code, bool trustThisDevice) {
-    bind.sessionSend2Fa(
-        sessionId: sessionId, code: code, trustThisDevice: trustThisDevice);
-  }
 
   /// Close the remote session.
   Future<void> close({bool closeSession = true}) async {

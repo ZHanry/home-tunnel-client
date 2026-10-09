@@ -59,12 +59,12 @@ func keysetPin(keys remotehost.Keyset) string {
 // Strangers still need local approval per connection; the grant model is unchanged.
 // enrollWithLogin enrolls through a dedicated account session. The desktop's
 // own session is bound to its device and the server refuses it for enrollment.
-func (server *Server) enrollWithLogin(ctx context.Context, host *localRemoteHost, state model.State, username, password, mfaCode, trustPin string) error {
+func (server *Server) enrollWithLogin(ctx context.Context, host *localRemoteHost, state model.State, username, password, trustPin string) error {
 	client, err := api.New(state.Profile.APIBaseURL, nil)
 	if err != nil {
 		return err
 	}
-	if _, err = client.Login(ctx, username, password, mfaCode); err != nil {
+	if _, err = client.Login(ctx, username, password); err != nil {
 		return err
 	}
 	defer func() {
@@ -76,16 +76,16 @@ func (server *Server) enrollWithLogin(ctx context.Context, host *localRemoteHost
 	if err != nil {
 		return err
 	}
-	return host.enrollAndEnable(ctx, state, token, trustPin, password, mfaCode)
+	return host.enrollAndEnable(ctx, state, token, trustPin, password)
 }
 
-func (host *localRemoteHost) enrollAndEnable(ctx context.Context, state model.State, token, trustPin, password, mfaCode string) error {
+func (host *localRemoteHost) enrollAndEnable(ctx context.Context, state model.State, token, trustPin, password string) error {
 	host.mu.Lock()
 	host.token = token
 	host.trustPin = trustPin
 	host.trustFirstUse = trustPin == ""
 	host.mu.Unlock()
-	err := host.service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: state.DeviceID, Name: localDeviceName(state), Platform: runtime.GOOS, Password: password, MFACode: mfaCode})
+	err := host.service.Enroll(ctx, remotehost.Enrollment{LinkedDeviceID: state.DeviceID, Name: localDeviceName(state), Platform: runtime.GOOS, Password: password})
 	host.mu.Lock()
 	host.token = ""
 	host.trustPin = ""
@@ -104,11 +104,10 @@ func (host *localRemoteHost) enrollAndEnable(ctx context.Context, state model.St
 // setupRemoteAfterLogin signs in once more with the password the user just
 // entered. A fresh login counts as recent verification on the server, so
 // signing in is the only step needed before this computer can be reached by its
-// device ID. An MFA code cannot be replayed, so those accounts confirm once in
-// the remote card instead.
-func (server *Server) setupRemoteAfterLogin(ctx context.Context, username, password string, mfaUsed bool) {
+// device ID.
+func (server *Server) setupRemoteAfterLogin(ctx context.Context, username, password string) {
 	host, state, err := server.localRemote(ctx)
-	if err != nil || mfaUsed || username == "" || password == "" || host.service.State(ctx).Enrolled {
+	if err != nil || username == "" || password == "" || host.service.State(ctx).Enrolled {
 		return
 	}
 	host.mu.Lock()
@@ -118,7 +117,7 @@ func (server *Server) setupRemoteAfterLogin(ctx context.Context, username, passw
 		work, cancel := context.WithTimeout(host.ctx, 40*time.Second)
 		defer cancel()
 		host.actions.Lock()
-		err := server.enrollWithLogin(work, host, state, username, password, "", "")
+		err := server.enrollWithLogin(work, host, state, username, password, "")
 		host.actions.Unlock()
 		host.mu.Lock()
 		defer host.mu.Unlock()
@@ -372,12 +371,6 @@ func safeRemoteCode(err error) string {
 	}
 	var apiErr *remotehost.APIError
 	if errors.As(err, &apiErr) {
-		switch apiErr.Code {
-		case "MFA_REQUIRED":
-			return "RD_MFA_REQUIRED"
-		case "MFA_INVALID":
-			return "RD_MFA_INVALID"
-		}
 		if valid(apiErr.Code) {
 			return apiErr.Code
 		}
@@ -597,7 +590,7 @@ func (server *Server) remoteAction(writer http.ResponseWriter, request *http.Req
 				err = remotehost.ErrUnavailable
 				break
 			}
-			err = server.enrollWithLogin(ctx, host, state, body.Username, body.Password, body.MFACode, body.TrustPin)
+			err = server.enrollWithLogin(ctx, host, state, body.Username, body.Password, body.TrustPin)
 		case "enable":
 			err = host.service.SetEnabled(ctx, true)
 			if err == nil {

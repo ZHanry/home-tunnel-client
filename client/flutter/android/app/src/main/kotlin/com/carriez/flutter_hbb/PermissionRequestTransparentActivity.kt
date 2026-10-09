@@ -6,12 +6,18 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import ffi.FFI
 
 class PermissionRequestTransparentActivity: Activity() {
     private val logTag = "permissionRequest"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!FFI.accountReady()) {
+            setResult(RES_FAILED)
+            finish()
+            return
+        }
         Log.d(logTag, "onCreate PermissionRequestTransparentActivity: intent.action: ${intent.action}")
 
         when (intent.action) {
@@ -39,6 +45,7 @@ class PermissionRequestTransparentActivity: Activity() {
     }
 
     private fun launchService(mediaProjectionResultIntent: Intent) {
+        if (!FFI.accountReady()) { setResult(RES_FAILED); return }
         Log.d(logTag, "Launch MainService")
         val serviceIntent = Intent(this, MainService::class.java)
         serviceIntent.action = ACT_INIT_MEDIA_PROJECTION_AND_SERVICE

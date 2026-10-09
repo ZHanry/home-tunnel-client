@@ -36,11 +36,11 @@ func defaultAgentPath() string {
 func productName() string {
 	switch runtime.GOOS {
 	case "darwin":
-		return "Home Tunnel macOS Client"
+		return "NestLink macOS CLI"
 	case "windows":
-		return "Home Tunnel Windows Client"
+		return "NestLink Windows CLI"
 	default:
-		return "Home Tunnel Linux Client"
+		return "NestLink Linux CLI"
 	}
 }
 

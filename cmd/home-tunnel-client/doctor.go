@@ -41,7 +41,7 @@ func doctor(arguments []string, bundle bool) error {
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(report)
 	}
-	fmt.Printf("Home Tunnel %s · %s/%s\nCredential storage: %s\n", report.Version, report.OS, report.Architecture, report.CredentialStorage)
+	fmt.Printf("NestLink %s · %s/%s\nCredential storage: %s\n", report.Version, report.OS, report.Architecture, report.CredentialStorage)
 	for _, check := range report.Checks {
 		fmt.Printf("[%s] %s: %s (%d ms)\n", check.Status, check.Name, check.Message, check.LatencyMS)
 	}

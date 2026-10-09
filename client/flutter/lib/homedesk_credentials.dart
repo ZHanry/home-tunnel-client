@@ -1,4 +1,4 @@
-// HOMEDESK: Portal credentials use Windows DPAPI or Android Keystore; no plaintext fallback.
+// Account refresh credentials use the operating system's protected storage.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
@@ -67,7 +67,7 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
   }
 
   @override
-  bool get supported => Platform.isWindows || Platform.isAndroid;
+  bool get supported => Platform.isWindows || Platform.isAndroid || Platform.isMacOS || Platform.isLinux;
 
   Future<Directory> _directory() => _directoryFuture ??= () async {
         final root = (await _applicationSupportDirectory()).absolute;
@@ -132,7 +132,7 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
       await handle.flush();
       await handle.close();
       handle = null;
-      if (Platform.isAndroid) {
+      if (!Platform.isWindows) {
         // HOMEDESK: Atomic same-directory rename inside the app's private storage.
         await temporary.rename(destination.path);
         return;
@@ -178,7 +178,34 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
 
   Future<void> _deleteRecord(Directory directory) async {
     final record = _file(directory, _credentialFile);
-    if (await record.exists()) await record.delete();
+    if (await record.exists()) {
+      if (Platform.isLinux) {
+        final blob = await _readBlob(directory);
+        final handle = ascii.decode(blob);
+        if (RegExp(r'^nlss:[A-Za-z0-9_-]{43}$').hasMatch(handle)) {
+          await _secretTool(['clear', 'application', 'HomeDesk', 'portal-record', handle.substring(5)], allowMissing: true);
+        }
+      }
+      await record.delete();
+    }
+  }
+
+  Future<String> _secretTool(List<String> arguments, {String? secret, bool allowMissing = false}) async {
+    final process = await Process.start('/usr/bin/secret-tool', arguments);
+    final output = process.stdout.transform(utf8.decoder).join();
+    final errors = process.stderr.drain<void>();
+    try {
+      if (secret != null) process.stdin.write(secret);
+      await process.stdin.close();
+      final result = await process.exitCode.timeout(const Duration(seconds: 10));
+      await errors;
+      final value = await output;
+      if ((result != 0 && !(allowMissing && result == 1)) || value.length > _maxBlobBytes * 2) throw _storageFailure();
+      return value.trim();
+    } catch (_) {
+      process.kill();
+      throw _storageFailure();
+    }
   }
 
   Future<Uint8List> _readBlob(Directory directory) async {
@@ -210,7 +237,17 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
   }
 
   Future<Uint8List> _crypt(Uint8List bytes, {required bool encrypt}) async {
-    if (Platform.isAndroid) {
+    if (Platform.isLinux) {
+      if (encrypt) {
+        final id = _newGeneration();
+        await _secretTool(['store', '--label=NestLink account', 'application', 'HomeDesk', 'portal-record', id], secret: base64Encode(bytes));
+        return Uint8List.fromList(ascii.encode('nlss:$id'));
+      }
+      final handle = ascii.decode(bytes);
+      if (!RegExp(r'^nlss:[A-Za-z0-9_-]{43}$').hasMatch(handle)) throw _storageFailure();
+      return Uint8List.fromList(base64Decode(await _secretTool(['lookup', 'application', 'HomeDesk', 'portal-record', handle.substring(5)])));
+    }
+    if (Platform.isAndroid || Platform.isMacOS) {
       // HOMEDESK: Non-exportable AES-GCM key remains in AndroidKeyStore.
       try {
         final result = await android.crypt(bytes, _entropy, encrypt: encrypt);
@@ -380,10 +417,13 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
         readFailure = error;
       }
       final transaction = await _rotate(directory);
-      await _deleteRecord(directory);
-      if (readFailure != null) throw readFailure;
-      final record = await _decode(blob!, generation);
-      return CredentialLease(record: record, transaction: transaction);
+      try {
+        if (readFailure != null) throw readFailure;
+        final record = await _decode(blob!, generation);
+        return CredentialLease(record: record, transaction: transaction);
+      } finally {
+        await _deleteRecord(directory);
+      }
     });
   }
 

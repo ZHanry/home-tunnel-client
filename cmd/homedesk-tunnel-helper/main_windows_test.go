@@ -17,7 +17,6 @@ func TestPublicConfigurationDerivesAPIInsteadOfRequiringAbsentField(t *testing.T
 	}
 	for _, change := range []func(*model.Profile){
 		func(p *model.Profile) { p.PublicBaseURL = "https://other.example.invalid" },
-		func(p *model.Profile) { p.FRPSHost = "other.example.invalid" },
 		func(p *model.Profile) { p.FRPSTLSCertificatePEM = "" },
 		func(p *model.Profile) { p.FRPSPort = 0 },
 	} {
@@ -32,11 +31,11 @@ func TestPublicConfigurationDerivesAPIInsteadOfRequiringAbsentField(t *testing.T
 func TestRejectedOriginDoesNotBecomeUnknownDeviceRegistration(t *testing.T) {
 	origin, _ := url.Parse("https://control.example.invalid")
 	guard := &guardedTransport{origin: origin, transport: http.DefaultTransport.(*http.Transport).Clone()}
-	request, _ := http.NewRequest(http.MethodPost, "https://other.example.invalid/api/v1/auth/enroll", nil)
+	request, _ := http.NewRequest(http.MethodPost, "https://other.example.invalid/api/v2/auth/devices", nil)
 	if _, err := guard.RoundTrip(request); err == nil {
 		t.Fatal("必须拒绝外部 origin")
 	}
-	if guard.enrollmentPosted.Load() {
+	if guard.registrationPosted.Load() {
 		t.Fatal("被拒绝的请求不能误计为已发送登记")
 	}
 }

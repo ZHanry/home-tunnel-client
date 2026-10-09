@@ -254,12 +254,10 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	var body struct {
-		Server         string `json:"server"`
-		Username       string `json:"username"`
-		Password       string `json:"password"`
-		NewPassword    string `json:"new_password"`
-		MFACode        string `json:"mfa_code"`
-		EnrollmentCode string `json:"enrollment_code"`
+		Server      string `json:"server"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		NewPassword string `json:"new_password"`
 	}
 	if err := readJSON(request, &body); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
@@ -276,17 +274,15 @@ func (server *Server) login(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if err := app.Enroll(ctx, app.EnrollOptions{
-		StatePath:      server.options.StatePath,
-		Server:         body.Server,
-		Username:       body.Username,
-		Password:       body.Password,
-		NewPassword:    body.NewPassword,
-		MFACode:        body.MFACode,
-		EnrollmentCode: body.EnrollmentCode,
-		DeviceName:     app.DefaultDeviceName(),
-		CommitState:    func(state model.State) error { return server.commitEnrollment(ctx, generation, state) },
-		PasswordLogin: func(username, password string, mfaUsed bool) {
-			server.setupRemoteAfterLogin(ctx, username, password, mfaUsed)
+		StatePath:   server.options.StatePath,
+		Server:      body.Server,
+		Username:    body.Username,
+		Password:    body.Password,
+		NewPassword: body.NewPassword,
+		DeviceName:  app.DefaultDeviceName(),
+		CommitState: func(state model.State) error { return server.commitEnrollment(ctx, generation, state) },
+		PasswordLogin: func(username, password string) {
+			server.setupRemoteAfterLogin(ctx, username, password)
 		},
 	}); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())

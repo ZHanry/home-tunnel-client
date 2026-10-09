@@ -35,7 +35,7 @@ func TestDoctorProbesAndBundleRedaction(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "private-access-token", "refresh_token": "private-refresh-token", "access_expires_at": "2099-01-01T00:00:00Z"})
 		case "/api/v1/client/connections":
 			_, _ = io.WriteString(w, `{"items":[]}`)
-		case "/api/v1/auth/session/close":
+		case "/api/v2/auth/session/close":
 			closed = true
 			w.WriteHeader(204)
 		default:
