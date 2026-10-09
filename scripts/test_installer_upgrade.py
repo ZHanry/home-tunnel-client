@@ -31,7 +31,7 @@ class InstallerUpgrade(unittest.TestCase):
             package, filesystem, mocks = work / "package", work / "fs", work / "mocks"
             for directory in (package, filesystem, mocks, filesystem / "var/tmp"):
                 directory.mkdir(parents=True, exist_ok=True)
-            production = ROOT / ("packaging/install.sh" if platform == "linux" else "packaging/macos/install.sh")
+            production = ROOT / ("docs/legacy/packaging/install.sh" if platform == "linux" else "docs/legacy/packaging/macos/install.sh")
             source = production.read_text(encoding="utf-8")
             root_check = 'if [[ ${EUID:-$(id -u)} -ne 0 ]]; then'
             self.assertEqual(source.count(root_check), 1, "installer preflight changed; review fixture isolation")

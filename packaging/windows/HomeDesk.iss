@@ -12,7 +12,7 @@
 AppId={{8F3C1B2A-7D54-4E19-9A6C-2B0E5D8F4A11}
 AppName=nestlink
 AppVersion={#AppVersion}
-VersionInfoVersion=12.0.0.1
+VersionInfoVersion=13.0.0.0
 AppPublisher=nestlink
 AppPublisherURL=https://github.com/ZHanry/home-tunnel-client
 DefaultDirName={localappdata}\Home Tunnel
@@ -20,7 +20,7 @@ DefaultGroupName=nestlink
 DisableProgramGroupPage=yes
 LicenseFile={#SourceDir}\LICENSE-RUSTDESK
 OutputDir={#OutputDir}
-OutputBaseFilename=nestlink-Setup-{#AppVersion}-x64
+OutputBaseFilename=NestLink-Setup-{#AppVersion}-x64
 SetupIconFile={#SourceDir}\HomeDesk.ico
 Compression=lzma2
 SolidCompression=yes
@@ -51,6 +51,7 @@ Name: "{group}\Uninstall nestlink"; Filename: "{uninstallexe}"
 [InstallDelete]
 Type: files; Name: "{app}\home-tunnel-gui.exe"
 Type: files; Name: "{app}\home-tunnel-service.exe"
+Type: files; Name: "{app}\home-tunnel-client.exe"
 Type: files; Name: "{app}\home_tunnel_remote_host.exe"
 Type: files; Name: "{app}\home_tunnel_remote_host.dll"
 

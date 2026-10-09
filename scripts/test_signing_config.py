@@ -26,7 +26,7 @@ class SigningConfiguration(unittest.TestCase):
                        str(ROOT / 'packaging/windows/sign-release.ps1'), '-Files', 'unused.exe']
         else:
             command = ['bash', '-c', 'set -Eeuo pipefail; source "$1"; init_signing; cleanup_signing',
-                       '--', str(ROOT / 'packaging/macos/signing.sh')]
+                       '--', str(ROOT / 'docs/legacy/packaging/macos/signing.sh')]
         return subprocess.run(command, env=environment, capture_output=True, text=True, timeout=20)
 
     def test_missing_identity_is_explicitly_unsigned(self):
