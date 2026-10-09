@@ -301,7 +301,7 @@ class _DesktopTabState extends State<DesktopTab>
   bool get showLogo => widget.showLogo;
   bool get showTitle => widget.showTitle;
   bool get showMinimize => widget.showMinimize;
-  bool get showMaximize => widget.showMaximize;
+  bool get showMaximize => widget.showMaximize && tabType != DesktopTabType.main;
   bool get showClose => widget.showClose;
   Widget Function(Widget pageView)? get pageViewBuilder =>
       widget.pageViewBuilder;
@@ -522,7 +522,7 @@ class _DesktopTabState extends State<DesktopTab>
               state.value.tabs[selected].key == kTabLabelSettingPage;
           return HomeDeskTitleBar(brand: appName, inSettings: settings,
             maximized: stateGlobal.isMaximized.value,
-            canMaximize: !bind.isIncomingOnly() || !isInHomePage(),
+            canMaximize: false,
             onHome: () {
               final index = state.value.tabs.indexWhere((tab) => tab.key == kTabLabelHomePage);
               if (index >= 0) controller.jumpTo(index);

@@ -102,10 +102,14 @@ bool FlutterWindow::OnCreate() {
         registry->GetRegistrarForPlugin("FlutterGpuTextureRendererPluginCApi"));
   });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  flutter_controller_->engine()->SetNextFrameCallback([this]() {
+    SetPropW(GetHandle(), L"nestlink.first-frame", reinterpret_cast<HANDLE>(static_cast<INT_PTR>(1)));
+  });
   return true;
 }
 
 void FlutterWindow::OnDestroy() {
+  RemovePropW(GetHandle(), L"nestlink.first-frame");
   homedesk_tray_.Remove(); // HOMEDESK: 退出后移除本窗口图标。
   if (flutter_controller_) {
     flutter_controller_ = nullptr;

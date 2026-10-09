@@ -16,6 +16,9 @@ import 'package:flutter_hbb/homedesk_services.dart';
 import 'homedesk_services_test.dart' as portal;
 import 'homedesk_family_devices_test.dart' as family;
 import 'package:flutter_hbb/homedesk_recent.dart';
+import 'package:flutter_hbb/homedesk_window.dart';
+import 'package:flutter_hbb/homedesk_title_bar.dart';
+import 'package:flutter_hbb/homedesk_theme.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 
 class PreviewConsole extends HomeDeskConsoleApi {
@@ -133,6 +136,26 @@ Widget host(
 }
 
 void main() {
+  test('fixed workspace fits laptop and scaled desktop work areas', () {
+    expect(nestLinkWorkspaceSize(const Size(1920, 1040)), const Size(1120, 760));
+    expect(nestLinkWorkspaceSize(const Size(1366, 728)), const Size(1120, 696));
+    expect(nestLinkWorkspaceSize(const Size(960, 520)), const Size(928, 488));
+  });
+  testWidgets('fixed title bar keeps minimize and close without maximize or double-click resize', (tester) async {
+    var minimized = 0, maximized = 0;
+    await tester.pumpWidget(MaterialApp(theme: homeDeskTheme(ThemeData()), home: Scaffold(body: HomeDeskTitleBar(
+        brand: 'nestlink', inSettings: false, maximized: false, canMaximize: false,
+        onHome: () {}, onDrag: () {}, onMaximize: () => maximized++,
+        onMinimize: () => minimized++, onClose: () {}))));
+    expect(find.byTooltip('最大化窗口'), findsNothing);
+    await tester.tap(find.byTooltip('最小化到系统托盘'));
+    expect(minimized, 1);
+    await tester.tap(find.text('nestlink'));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tap(find.text('nestlink'));
+    expect(maximized, 0);
+    expect(find.byTooltip('关闭窗口'), findsOneWidget);
+  });
   testWidgets('首次登录切换到远控仍保留账号会话所有者', (tester) async {
     final account = HomeDeskAccount();
     final api = portal.PortalFixtureApi();

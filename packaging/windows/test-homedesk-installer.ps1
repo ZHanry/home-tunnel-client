@@ -27,14 +27,48 @@ $versionInfo = (Get-Item -LiteralPath $guiPath).VersionInfo
 if ($versionInfo.ProductVersion -ne $build.version -or $versionInfo.FileVersion -ne $build.version) { throw "Installed GUI version mismatch: product=$($versionInfo.ProductVersion), file=$($versionInfo.FileVersion), expected=$($build.version)" }
 if (Test-Path -LiteralPath (Join-Path $destination 'home-tunnel-client.exe')) { throw 'Retired standalone CLI must not ship' }
 $gui = Start-Process -FilePath $guiPath -WorkingDirectory $destination -WindowStyle Hidden -PassThru
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class NestLinkWindowProbe {
+  public delegate bool Visitor(IntPtr window, IntPtr context);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(Visitor visitor, IntPtr context);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr GetProp(IntPtr window, string name);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr window, int index);
+  public static string[] Inspect(uint process) {
+    var results = new List<string>();
+    EnumWindows((window, context) => {
+      uint owner; GetWindowThreadProcessId(window, out owner);
+      if (owner == process) {
+        var caption = new StringBuilder(512); GetWindowText(window, caption, caption.Capacity);
+        bool rendered = GetProp(window, "nestlink.first-frame") != IntPtr.Zero;
+        bool resizable = (GetWindowLong(window, -16) & 0x00040000) != 0;
+        results.Add(caption.ToString() + "|rendered=" + rendered + "|resizable=" + resizable);
+      }
+      return true;
+    }, IntPtr.Zero);
+    return results.ToArray();
+  }
+}
+'@
 try {
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $deadline = [DateTime]::UtcNow.AddSeconds(60)
+    $windowReady = $false
     do {
         Start-Sleep -Milliseconds 500
         $gui.Refresh()
         if ($gui.HasExited) { throw "Installed GUI exited during startup: $($gui.ExitCode)" }
-    } while ($gui.MainWindowHandle -eq 0 -and [DateTime]::UtcNow -lt $deadline)
-    if ($gui.MainWindowHandle -eq 0 -or $gui.MainWindowTitle -cne 'nestlink') { throw 'Installed GUI did not create its branded window' }
+        # .NET MainWindowHandle excludes windows intentionally started hidden in CI.
+        # Enumerate this exact process and require its real first Flutter frame.
+        $windows = @([NestLinkWindowProbe]::Inspect([uint32]$gui.Id))
+        $windowReady = $windows -ccontains 'nestlink|rendered=True|resizable=False'
+    } while (-not $windowReady -and [DateTime]::UtcNow -lt $deadline)
+    [ordered]@{process=$gui.Id;windows=$windows;first_frame_and_fixed_window=$windowReady} | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $EvidenceDirectory 'windows-startup.json')
+    if (-not $windowReady) { throw "Installed GUI did not render its branded fixed window: $($windows -join ', ')" }
 } finally {
     if (-not $gui.HasExited) { Stop-Process -Id $gui.Id -Force; $gui.WaitForExit() }
 }

@@ -25,6 +25,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'common.dart';
 import 'homedesk_theme.dart'; // HOMEDESK: 所有桌面窗口与弹窗共用主页主题。
+import 'homedesk_window.dart';
 import 'nestlink_workspace.dart';
 import 'nestlink_locale.dart';
 import 'consts.dart';
@@ -163,7 +164,8 @@ void runMainApp(bool startService) async {
       isMainWindow: true, alwaysOnTop: alwaysOnTop);
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     // Restore the location of the main window before window hide or show.
-    await restoreWindowPosition(WindowType.Main);
+    await nestLinkFixWorkspaceWindow();
+    setResizable(false);
     // Check the startup argument, if we successfully handle the argument, we keep the main window hidden.
     final handledByUniLinks = await initUniLinks();
     debugPrint("handled by uni links: $handledByUniLinks");
@@ -177,8 +179,6 @@ void runMainApp(bool startService) async {
     }
     windowManager.setOpacity(1);
     windowManager.setTitle(getWindowName());
-    // Do not use `windowManager.setResizable()` here.
-    setResizable(!bind.isIncomingOnly());
   });
 }
 

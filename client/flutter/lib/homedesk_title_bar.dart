@@ -1,4 +1,4 @@
-// HOMEDESK: 主窗口标题栏保留拖动、缩放和系统按钮，取消重复的主页/设置页签。
+// HOMEDESK: 主窗口保留拖动和系统按钮，窗口尺寸由工作台统一管理。
 import 'package:flutter/material.dart';
 import 'homedesk_theme.dart';
 
@@ -66,7 +66,7 @@ class HomeDeskTitleBar extends StatelessWidget {
                               color: colors.onSurface))))),
           _button(
               context, '最小化到系统托盘', Icons.horizontal_rule_rounded, onMinimize),
-          _button(
+          if (canMaximize) _button(
               context,
               maximized ? '还原窗口' : '最大化窗口',
               maximized ? Icons.filter_none_rounded : Icons.crop_square_rounded,
