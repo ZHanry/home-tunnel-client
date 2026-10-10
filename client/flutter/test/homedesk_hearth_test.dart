@@ -108,7 +108,7 @@ List<Peer> recentFixture() => [
     ];
 Future<List<peer_menu.PopupMenuEntry<String>>> previewPeerMenu(
         BuildContext context, Peer peer, PeerTabIndex tab) async =>
-    ['文件传输', '终端', 'TCP 隧道', 'RDP', '重命名', '忘记密码', '取消收藏', '删除记录']
+    ['文件传输', '终端', 'TCP 隧道', 'RDP', '重命名', '忘记密码', '删除记录']
         .map((label) => peer_menu.PopupMenuItem<String>(
             value: label, onTap: () {}, child: Text(label)))
         .toList();
@@ -194,7 +194,6 @@ Widget hearthHost(
                         readOption: family.option),
                     recentBuilder: (_) => HomeDeskRecent(
                         recent: recentFixture(),
-                        favorites: [recentFixture().first],
                         menuBuilder: previewPeerMenu,
                         onConnect: (_) {}),
                     recentSummaryBuilder: (_) => HomeDeskRecent(
@@ -285,7 +284,7 @@ void main() {
         }
         expect(tester.takeException(), isNull);
         await export(tester, paint, 'home-$suffix');
-        await tester.tap(find.byTooltip('家庭服务'));
+        await tester.tap(find.byKey(const ValueKey('nav-services')));
         await tester.pumpAndSettle();
         // 登录仍通过原有表单和 fixture API，不注入生产会话或读取用户凭据。
         await portal.enterCredentials(tester);
@@ -297,7 +296,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('文件共享'), findsNothing);
         expect(find.text('家庭相册'), findsOneWidget);
-        await tester.tap(find.byTooltip('最近连接'));
+        await tester.tap(find.byKey(const ValueKey('nav-remote')));
         await tester.pumpAndSettle();
         expect(find.textContaining('暂无记录'), findsNothing);
         expect(find.byKey(const ValueKey('recent-search')), findsOneWidget);
@@ -306,6 +305,9 @@ void main() {
         expect(tester.takeException(), isNull);
         await export(tester, paint, 'recent-$suffix');
         if (size.width == 800 && dark) {
+          await tester.ensureVisible(
+              find.byKey(const ValueKey('recent-more-987654321')));
+          await tester.pumpAndSettle();
           await tester.tap(find.byKey(const ValueKey('recent-more-987654321')));
           await tester.pumpAndSettle();
           expect(find.text('忘记密码'), findsOneWidget);
@@ -313,7 +315,9 @@ void main() {
           await tester.tap(find.text('重命名'));
           await tester.pumpAndSettle();
         }
-        await tester.tap(find.byKey(const ValueKey('recent-filter-1')));
+        expect(find.byKey(const ValueKey('recent-filter-1')), findsNothing);
+        await tester.enterText(
+            find.byKey(const ValueKey('recent-search')), '儿童房');
         await tester.pumpAndSettle();
         expect(find.text('儿童房电脑'), findsOneWidget);
         expect(find.text('客厅电脑'), findsNothing);

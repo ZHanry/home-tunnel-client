@@ -1,5 +1,15 @@
 # Changelog
 
+## 14.0.0 — local desktop development
+
+- Use the NestLink name and one purple linked-N icon for desktop shortcuts, Windows resources, tray and application UI.
+- Start on All devices, with computer and phone/tablet groups, search, online/offline filters, favorites and device information. Retain account ownership and remote configuration checks when connecting.
+- Replace blue desktop chrome with a pale lavender navigation and white device rows; include a matching dark purple theme.
+- Use a split login page with one small title-bar logo, a simple device illustration, a Sign in button and protected session persistence enabled by default.
+- Keep the shared tray icon present while the main window is visible, and restore it after Explorer restarts.
+- Install to an Explorer-visible user application directory and verify the real executable/icon paths to prevent blank desktop shortcuts. Clean the separate protected login cache too.
+- Add a repeatable local installation script that backs up, uninstalls and clears the previous app/configuration before installing and checking payload hashes. GitHub publication awaits user approval.
+
 ## 10.1.0 — candidate (not yet released)
 
 - Fix the Windows approval popup's opaque backing and wait for populated popup content before showing its native window.

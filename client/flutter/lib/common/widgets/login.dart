@@ -616,7 +616,9 @@ Future<bool?> loginDialog() async {
           );
         });
 
-    final title = Row(
+    final title = (isDesktop || isWebDesktop)
+        ? Text(translate('Login'))
+        : Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

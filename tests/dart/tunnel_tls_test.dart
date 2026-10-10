@@ -178,7 +178,9 @@ Future<void> main() async {
     assert(catalog.services.single.webUrl.toString() ==
         'https://album.example.invalid');
     await trusted.logout();
-    assert(!trusted.isSignedIn && accepted.length == 5);
+    assert(!trusted.isSignedIn && accepted.length == 6);
+    assert(accepted.where((request) =>
+        request == 'GET /api/v2/auth/device-capabilities').length == 1);
     print('通过：真实 HTTPS 验证拒绝不可信证书/错误主机名，可信回环登录、目录与独立退出成功。');
   } finally {
     for (final api in apis) {

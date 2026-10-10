@@ -18,9 +18,8 @@ PopupMenuEntryBuilder homeDeskUpstreamMenuBuilder(Widget card) {
 Future<List<peer_menu.PopupMenuEntry<String>>> homeDeskPeerMenu(
     BuildContext context, Peer peer, PeerTabIndex tab) {
   final BasePeerCard card = switch (tab) {
-    PeerTabIndex.fav => FavoritePeerCard(peer: peer),
-    PeerTabIndex.lan => DiscoveredPeerCard(peer: peer),
-    _ => RecentPeerCard(peer: peer),
+    PeerTabIndex.lan => DiscoveredPeerCard(peer: peer, showFavorites: false),
+    _ => RecentPeerCard(peer: peer, showFavorites: false),
   };
   return homeDeskUpstreamMenuBuilder(card.build(context))(context);
 }

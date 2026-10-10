@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_hbb/homedesk_console_api.dart';
 import 'package:flutter_hbb/homedesk_dashboard.dart';
+import 'package:flutter_hbb/homedesk_navigation.dart';
 import 'package:flutter_hbb/homedesk_devices.dart';
 import 'package:flutter_hbb/homedesk_account.dart';
 import 'package:flutter_hbb/homedesk_tunnel_api.dart';
@@ -104,7 +105,9 @@ Widget host(
             : null),
     home: Scaffold(
         body: MediaQuery(
-      data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+      data: MediaQueryData.fromView(
+              WidgetsBinding.instance.platformDispatcher.views.first)
+          .copyWith(textScaler: TextScaler.linear(scale)),
       child: RepaintBoundary(
           key: paintKey,
           child: HomeDeskDashboard(
@@ -120,7 +123,7 @@ Widget host(
                     dashboard.currentState?.showManualConnection()),
             recentBuilder: (_) => const Center(child: Text('最近连接内容')),
             servicesBuilder: servicesBuilder,
-            localBuilder: (_) => const Center(child: Text('测试凭据：默认不可见')),
+            remoteCredentialsBuilder: (_) => const Text('合成一次性密码 demo42'),
             statusBuilder: (_) => const Padding(
                 padding: EdgeInsets.all(14),
                 child: Row(children: [
@@ -137,57 +140,100 @@ Widget host(
 
 void main() {
   test('fixed workspace fits laptop and scaled desktop work areas', () {
-    expect(nestLinkWorkspaceSize(const Size(1920, 1040)), const Size(1120, 760));
+    expect(
+        nestLinkWorkspaceSize(const Size(1920, 1040)), const Size(1120, 760));
     expect(nestLinkWorkspaceSize(const Size(1366, 728)), const Size(1120, 696));
     expect(nestLinkWorkspaceSize(const Size(960, 520)), const Size(928, 488));
   });
-  testWidgets('fixed title bar keeps minimize and close without maximize or double-click resize', (tester) async {
+  testWidgets(
+      'fixed title bar keeps minimize and close without maximize or double-click resize',
+      (tester) async {
     var minimized = 0, maximized = 0;
-    await tester.pumpWidget(MaterialApp(theme: homeDeskTheme(ThemeData()), home: Scaffold(body: HomeDeskTitleBar(
-        brand: 'nestlink', inSettings: false, maximized: false, canMaximize: false,
-        onHome: () {}, onDrag: () {}, onMaximize: () => maximized++,
-        onMinimize: () => minimized++, onClose: () {}))));
+    await tester.pumpWidget(MaterialApp(
+        theme: homeDeskTheme(ThemeData()),
+        home: Scaffold(
+            body: HomeDeskTitleBar(
+                brand: 'nestlink',
+                inSettings: false,
+                maximized: false,
+                canMaximize: false,
+                onHome: () {},
+                onDrag: () {},
+                onMaximize: () => maximized++,
+                onMinimize: () => minimized++,
+                onClose: () {}))));
     expect(find.byTooltip('最大化窗口'), findsNothing);
     await tester.tap(find.byTooltip('最小化到系统托盘'));
     expect(minimized, 1);
-    await tester.tap(find.text('nestlink'));
+    await tester.tap(find.text('NestLink'));
     await tester.pump(const Duration(milliseconds: 60));
-    await tester.tap(find.text('nestlink'));
+    await tester.tap(find.text('NestLink'));
     expect(maximized, 0);
     expect(find.byTooltip('关闭窗口'), findsOneWidget);
   });
-  testWidgets('首次登录切换到远控仍保留账号会话所有者', (tester) async {
+  testWidgets('未登录隐藏侧栏，登录显示，账号页退出回到登录并保留会话所有者', (tester) async {
     final account = HomeDeskAccount();
     final api = portal.PortalFixtureApi();
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: HomeDeskDashboard(
-      brandName: 'NestLink', initializeAccount: true,
-      devicesBuilder: (_) => HomeDeskFamilyDevices(account: account,
-          onLogin: () {}, onConnect: (_) {}, readOption: portal.portalOption),
-      servicesBuilder: (_) => HomeDeskServices(account: account,
-          readOption: portal.portalOption, saveOrigin: (_) async {},
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: HomeDeskDashboard(
+      brandName: 'NestLink',
+      initializeAccount: true,
+      devicesBuilder: (_) => HomeDeskFamilyDevices(
+          account: account,
+          onLogin: () {},
+          onConnect: (_) {},
+          readOption: portal.portalOption),
+      servicesBuilder: (_) => HomeDeskServices(
+          account: account,
+          readOption: portal.portalOption,
+          saveOrigin: (_) async {},
           credentialStoreFactory: () => portal.FixtureCredentialStore(),
           apiBuilder: (_, {required isAllowed, credentialStorage}) => api),
-      recentBuilder: (_) => const SizedBox(), localBuilder: (_) => const SizedBox(),
-      statusBuilder: (_) => const SizedBox(), onSettings: () {}, onConnect: (_) {},
+      recentBuilder: (_) => const SizedBox(),
+      localBuilder: (_) => const SizedBox(),
+      statusBuilder: (_) => const SizedBox(),
+      onSettings: () {},
+      onConnect: (_) {},
     ))));
     await tester.pumpAndSettle();
     expect(account.signedIn, isFalse);
+    expect(find.byType(HomeDeskNavigation, skipOffstage: false), findsNothing);
+    HomeDeskDashboard.navigate('account');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('account-settings-scroll')), findsNothing);
+    expect(find.byKey(const ValueKey('tunnel-login')), findsOneWidget);
     await portal.enterCredentials(tester);
     await tester.pumpAndSettle();
     expect(account.signedIn, isTrue);
     expect(api.closed, isFalse);
+    expect(find.byKey(const ValueKey('nav-account')).hitTestable(),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nav-remote')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('remote-device-id')), findsOneWidget);
     expect(find.byType(HomeDeskServices, skipOffstage: false), findsOneWidget);
     await tester.pump(const Duration(seconds: 12));
     expect(account.signedIn, isTrue);
     expect(api.closed, isFalse);
+    await tester.tap(find.byKey(const ValueKey('nav-account')));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('account-settings-scroll')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('account-sign-out')));
+    await tester.pumpAndSettle();
+    expect(account.signedIn, isFalse);
+    expect(find.byType(HomeDeskNavigation, skipOffstage: false), findsNothing);
+    expect(find.byKey(const ValueKey('tunnel-login')).hitTestable(),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('account-settings-scroll')), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     account.dispose();
     expect(api.closed, isTrue);
   });
 
-  testWidgets('远控首页校验设备ID，凭据只在主动查看共享时展示', (tester) async {
+  testWidgets('远控首页校验设备ID并直接显示凭据，无共享弹窗', (tester) async {
     tester.view.physicalSize = const Size(1080, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -199,7 +245,9 @@ void main() {
         dashboard: key,
         onConnect: (id) => connected = id));
     await tester.pump();
-    expect(find.text('测试凭据：默认不可见'), findsNothing);
+    expect(find.text('合成一次性密码 demo42'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('nav-remote')));
+    await tester.pump();
     expect(find.text('家庭连接服务未就绪，请检查网络设置'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('remote-connect')));
     await tester.pump();
@@ -210,11 +258,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('remote-connect')));
     await tester.pumpAndSettle();
     expect(connected, '123456');
-    await tester.ensureVisible(find.text('共享与授权'));
-    await tester.tap(find.text('共享与授权'));
-    await tester.pumpAndSettle();
-    expect(find.text('测试凭据：默认不可见'), findsOneWidget);
-    await tester.tap(find.byTooltip('关闭'));
+    expect(find.text('合成一次性密码 demo42'), findsOneWidget);
+    expect(find.text('共享与授权'), findsNothing);
+    expect(find.byTooltip('本机共享'), findsNothing);
+    HomeDeskDashboard.navigate('local');
     await tester.pumpAndSettle();
     expect(find.text('最近连接内容'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -231,8 +278,7 @@ void main() {
         dashboard: GlobalKey<HomeDeskDashboardState>(),
         scale: 2));
     await tester.pump();
-    await tester.tap(find.descendant(
-        of: find.byType(NavigationBar), matching: find.text('设备')));
+    await tester.tap(find.byKey(const ValueKey('nav-devices')));
     await tester.pumpAndSettle();
     expect(find.text('从连接第一台电脑开始'), findsOneWidget);
     expect(find.text('手动连接'), findsWidgets);
@@ -311,8 +357,7 @@ void main() {
         scale: 2,
         servicesBuilder: (_) => const Center(child: Text('合成穿透服务'))));
     await tester.pump();
-    await tester.tap(find.descendant(
-        of: find.byType(NavigationBar), matching: find.text('穿透')));
+    await tester.tap(find.byKey(const ValueKey('nav-services')));
     await tester.pumpAndSettle();
     expect(find.text('合成穿透服务'), findsOneWidget);
     expect(find.byKey(const ValueKey('remote-device-id')), findsNothing);
@@ -341,19 +386,51 @@ void main() {
         final paint = GlobalKey();
         final account = HomeDeskAccount();
         final api = family.FamilyApi()..signedIn = true;
-        if (sample == 'empty') { api.result = HomeTunnelCatalog(devices: [], services: []); api.bindings = []; }
+        if (sample == 'empty') {
+          api.result = HomeTunnelCatalog(devices: [], services: []);
+          api.bindings = [];
+        }
         account.publish(api, api.result, family.one, (_) async {});
         await tester.pumpWidget(MaterialApp(
-          theme: ThemeData(brightness: dark ? Brightness.dark : Brightness.light, fontFamily: 'HomeDeskPreview'),
-          home: Scaffold(body: RepaintBoundary(key: paint, child: HomeDeskDashboard(
-            key: key, brandName: 'nestlink',
-            devicesBuilder: (_) => HomeDeskFamilyDevices(account: account, onLogin: () {}, onConnect: (_) {}, readOption: family.option),
-            recentBuilder: (_) => HomeDeskRecent(recent: sample == 'empty' ? [] : [
-              Peer.fromJson({'id':'987654321','alias':'书房电脑','platform':'Windows','online':true}),
-              Peer.fromJson({'id':'246813579','alias':'Linux 工作站','platform':'Linux','online':false})], onLoad: (_) {}, onQueryOnline: (_) {}),
-            servicesBuilder: (_) => const SizedBox.shrink(), localBuilder: (_) => const SizedBox.shrink(),
-            statusBuilder: (_) => const SizedBox.shrink(), onSettings: () {}, onConnect: (_) {},
-          )))));
+            theme: ThemeData(
+                brightness: dark ? Brightness.dark : Brightness.light,
+                fontFamily: 'HomeDeskPreview'),
+            home: Scaffold(
+                body: RepaintBoundary(
+                    key: paint,
+                    child: HomeDeskDashboard(
+                      key: key,
+                      brandName: 'nestlink',
+                      devicesBuilder: (_) => HomeDeskFamilyDevices(
+                          account: account,
+                          onLogin: () {},
+                          onConnect: (_) {},
+                          readOption: family.option),
+                      recentBuilder: (_) => HomeDeskRecent(
+                          recent: sample == 'empty'
+                              ? []
+                              : [
+                                  Peer.fromJson({
+                                    'id': '987654321',
+                                    'alias': '书房电脑',
+                                    'platform': 'Windows',
+                                    'online': true
+                                  }),
+                                  Peer.fromJson({
+                                    'id': '246813579',
+                                    'alias': 'Linux 工作站',
+                                    'platform': 'Linux',
+                                    'online': false
+                                  })
+                                ],
+                          onLoad: (_) {},
+                          onQueryOnline: (_) {}),
+                      servicesBuilder: (_) => const SizedBox.shrink(),
+                      localBuilder: (_) => const SizedBox.shrink(),
+                      statusBuilder: (_) => const SizedBox.shrink(),
+                      onSettings: () {},
+                      onConnect: (_) {},
+                    )))));
         await tester.pumpAndSettle();
         final boundary =
             paint.currentContext!.findRenderObject()! as RenderRepaintBoundary;
@@ -368,7 +445,8 @@ void main() {
         });
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
-        account.dispose(); api.close();
+        account.dispose();
+        api.close();
       }
     });
   }

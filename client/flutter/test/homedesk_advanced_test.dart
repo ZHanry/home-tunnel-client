@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_hbb/homedesk_advanced.dart';
@@ -93,6 +91,18 @@ void main() {
     expect(find.byType(DropdownButtonFormField<String>), findsNothing);
     expect(find.byType(TextField), findsNothing);
     expect(find.text('远控仅限内网'), findsNothing);
+    for (final removed in [
+      '关于',
+      '常规',
+      '安全',
+      'ID',
+      '启动服务',
+      '停止服务',
+      '自建公网模式',
+      '家庭账号已登录'
+    ]) {
+      expect(find.text(removed), findsNothing);
+    }
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
     expect(writes, 0);

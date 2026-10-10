@@ -29,19 +29,19 @@ class HomeDeskTokens extends ThemeExtension<HomeDeskTokens> {
       required this.warningSoft,
       required this.dangerSoft});
   static const light = HomeDeskTokens(
-      background: Color(0xFFF3F6FC),
-      chrome: Color(0xFFFFFFFF),
+      background: Color(0xFFFAF9FD),
+      chrome: Color(0xFFF2EFF9),
       surface: Color(0xFFFFFFFF),
-      surface2: Color(0xFFF8FAFF),
-      sunken: Color(0xFFF0F4FB),
-      border: Color(0xFFE3E9F3),
-      strong: Color(0xFFCBD6E8),
-      text: Color(0xFF18243B),
-      secondary: Color(0xFF60708A),
-      muted: Color(0xFF60708A),
-      accent: Color(0xFF2D6AE8),
-      accentText: Color(0xFF235BC7),
-      accentSoft: Color(0xFFEAF1FF),
+      surface2: Color(0xFFF8F6FC),
+      sunken: Color(0xFFF0ECF7),
+      border: Color(0xFFE6E1EE),
+      strong: Color(0xFFCFC5DF),
+      text: Color(0xFF282235),
+      secondary: Color(0xFF70677F),
+      muted: Color(0xFF70677F),
+      accent: Color(0xFF7955CF),
+      accentText: Color(0xFF6842BB),
+      accentSoft: Color(0xFFE8DFF7),
       onAccent: Color(0xFFFFFFFF),
       success: Color(0xFF276F46),
       warning: Color(0xFF85570E),
@@ -50,20 +50,20 @@ class HomeDeskTokens extends ThemeExtension<HomeDeskTokens> {
       warningSoft: Color(0xFFFAEFD7),
       dangerSoft: Color(0xFFFBE5E1));
   static const dark = HomeDeskTokens(
-      background: Color(0xFF111B2C),
-      chrome: Color(0xFF152136),
-      surface: Color(0xFF19273D),
-      surface2: Color(0xFF20314C),
-      sunken: Color(0xFF152236),
-      border: Color(0xFF2B3E5B),
-      strong: Color(0xFF3D5372),
-      text: Color(0xFFEAF1FD),
-      secondary: Color(0xFFB5C5DC),
-      muted: Color(0xFF99ADC9),
-      accent: Color(0xFF78A7FF),
-      accentText: Color(0xFF7CAAFE),
-      accentSoft: Color(0xFF233F68),
-      onAccent: Color(0xFF102441),
+      background: Color(0xFF1B1724),
+      chrome: Color(0xFF211B2D),
+      surface: Color(0xFF282132),
+      surface2: Color(0xFF30273C),
+      sunken: Color(0xFF241D30),
+      border: Color(0xFF40354E),
+      strong: Color(0xFF625371),
+      text: Color(0xFFF4EEFC),
+      secondary: Color(0xFFC8BCD8),
+      muted: Color(0xFFAE9DBF),
+      accent: Color(0xFFB89AEA),
+      accentText: Color(0xFFC5AAF1),
+      accentSoft: Color(0xFF423057),
+      onAccent: Color(0xFF21162F),
       success: Color(0xFF6DCB91),
       warning: Color(0xFFE6B566),
       danger: Color(0xFFF08B7D),
@@ -78,9 +78,9 @@ class HomeDeskTokens extends ThemeExtension<HomeDeskTokens> {
       body = 14.0,
       auxiliary = 13.0,
       caption = 12.0;
-  static const cardRadius = 16.0,
-      blockRadius = 12.0,
-      controlRadius = 10.0,
+  static const cardRadius = 10.0,
+      blockRadius = 8.0,
+      controlRadius = 8.0,
       smallRadius = 8.0,
       dialogRadius = 20.0;
   static const gap = 16.0,
@@ -106,6 +106,10 @@ class HomeDeskTokens extends ThemeExtension<HomeDeskTokens> {
   HomeDeskTokens lerp(covariant HomeDeskTokens? other, double t) =>
       t < .5 ? this : other ?? this;
 }
+
+double homeDeskControlHeight(BuildContext context,
+        {double minimum = HomeDeskTokens.buttonHeight}) =>
+    minimum * MediaQuery.textScalerOf(context).scale(1).clamp(1, 2);
 
 ThemeData homeDeskTheme(ThemeData base) {
   final t = base.brightness == Brightness.dark
@@ -137,7 +141,10 @@ ThemeData homeDeskTheme(ThemeData base) {
       borderRadius: BorderRadius.circular(HomeDeskTokens.controlRadius),
       borderSide: BorderSide(color: t.border));
   return base.copyWith(
-    scrollbarTheme: const ScrollbarThemeData(thickness: MaterialStatePropertyAll(0), thumbVisibility: MaterialStatePropertyAll(false), trackVisibility: MaterialStatePropertyAll(false)),
+    scrollbarTheme: const ScrollbarThemeData(
+        thickness: WidgetStatePropertyAll(0),
+        thumbVisibility: WidgetStatePropertyAll(false),
+        trackVisibility: WidgetStatePropertyAll(false)),
     extensions: [
       ...base.extensions.values
           .where((e) => e is! HomeDeskTokens && e is! ColorThemeExtension),
@@ -229,8 +236,11 @@ ThemeData homeDeskTheme(ThemeData base) {
             tapTargetSize: MaterialTapTargetSize.shrinkWrap)),
     iconTheme: IconThemeData(color: t.secondary, size: 20),
     inputDecorationTheme: InputDecorationTheme(
+        constraints:
+            const BoxConstraints(minHeight: HomeDeskTokens.buttonHeight),
         filled: true,
         fillColor: t.sunken,
+        hoverColor: Colors.transparent,
         isDense: true,
         floatingLabelBehavior: FloatingLabelBehavior.always,
         alignLabelWithHint: true,

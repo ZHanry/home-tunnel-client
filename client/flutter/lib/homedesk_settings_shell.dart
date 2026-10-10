@@ -99,12 +99,6 @@ class HomeDeskSettingsShell extends StatelessWidget {
                                   child: child)),
                         ])),
                   ])),
-                  HomeDeskStatus(
-                      live: statusData == null,
-                      data: statusData,
-                      footer: true,
-                      account: account ??
-                          HomeDeskDashboard.active?.navigationAccount)
                 ]));
           });
         }));

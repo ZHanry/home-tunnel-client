@@ -7,6 +7,7 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' hide TabBarTheme;
 import 'package:flutter_hbb/homedesk_title_bar.dart'; // HOMEDESK: 主窗口使用独立简洁标题栏。
+import 'package:flutter_hbb/homedesk_dashboard.dart';
 import 'package:flutter_hbb/homedesk_window.dart'; // HOMEDESK: 最小化到现有窗口所属托盘。
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -526,6 +527,7 @@ class _DesktopTabState extends State<DesktopTab>
             onHome: () {
               final index = state.value.tabs.indexWhere((tab) => tab.key == kTabLabelHomePage);
               if (index >= 0) controller.jumpTo(index);
+              HomeDeskDashboard.navigate('devices');
             },
             onDrag: () => startDragging(true),
             onMaximize: () => toggleMaximize(true).then((v) => stateGlobal.setMaximized(v)),
@@ -905,7 +907,7 @@ Future<bool> closeConfirmDialog() async {
         const Icon(Icons.warning_amber_sharp,
             color: Colors.redAccent, size: 28),
         const SizedBox(width: 10),
-        Text(translate("Warning")),
+        Expanded(child: Text(translate("Warning"))),
       ]),
       content: Column(
           mainAxisAlignment: MainAxisAlignment.start,

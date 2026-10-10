@@ -147,22 +147,19 @@ void main() {
                     apiBuilder: (origin,
                             {required isAllowed, credentialStorage}) =>
                         api)))));
-    await tester.tap(find.byKey(const ValueKey('family-login')));
+    expect(find.byKey(const ValueKey('tunnel-login')), findsOneWidget);
     await tester.pumpAndSettle();
     await portal.enterCredentials(tester);
-    await tester.tap(find.byTooltip('家庭设备'));
+    await tester.tap(find.byKey(const ValueKey('nav-devices')));
     await tester.pumpAndSettle();
     expect(find.text('卧室电脑'), findsOneWidget);
     expect(api.logins, 1);
-    await tester.tap(find.byTooltip('家庭服务'));
+    await tester.tap(find.byKey(const ValueKey('nav-services')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
+    await state.signOut();
     await tester.pumpAndSettle();
-    await tester.tap(find.text('退出登录'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('家庭设备'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('family-login')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tunnel-login')), findsOneWidget);
+    expect(state.catalog, isNull);
     expect(find.text('卧室电脑'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

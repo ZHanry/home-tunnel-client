@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:back_button_interceptor/back_button_interceptor.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -41,6 +40,7 @@ import 'desktop/pages/view_camera_page.dart' as desktop_view_camera;
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
 import 'models/model.dart';
 import 'models/platform_model.dart';
+import 'nestlink_dialog.dart';
 
 import 'package:flutter_hbb/native/win32.dart'
     if (dart.library.html) 'package:flutter_hbb/web/win32.dart';
@@ -1061,7 +1061,7 @@ void showToast(String text,
 // - Remove argument "contentPadding", no need for it, all should look the same.
 // - Remove "required" for argument "content". See simple confirm dialog "delete peer", only title and actions are used. No need to "content: SizedBox.shrink()".
 // - Make dead code alive, transform arguments "onSubmit" and "onCancel" into correspondenting buttons "ConfirmOkButton", "CancelButton".
-class CustomAlertDialog extends StatelessWidget {
+class CustomAlertDialog extends StatefulWidget {
   const CustomAlertDialog(
       {Key? key,
       this.title,
@@ -1084,52 +1084,114 @@ class CustomAlertDialog extends StatelessWidget {
   final Function()? onCancel;
 
   @override
-  Widget build(BuildContext context) {
-    // request focus
-    FocusScopeNode scopeNode = FocusScopeNode();
-    Future.delayed(Duration.zero, () {
-      if (!scopeNode.hasFocus) scopeNode.requestFocus();
-    });
-    bool tabTapped = false;
-    if (isAndroid) gFFI.invokeMethod("enable_soft_keyboard", true);
+  State<CustomAlertDialog> createState() => _CustomAlertDialogState();
+}
 
+class _CustomAlertDialogState extends State<CustomAlertDialog> {
+  final _scopeNode = FocusScopeNode();
+
+  @override
+  void initState() {
+    super.initState();
+    if (isAndroid) gFFI.invokeMethod("enable_soft_keyboard", true);
+  }
+
+  @override
+  void dispose() {
+    _scopeNode.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _key(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final keyboard = HardwareKeyboard.instance;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      if (widget.onCancel == null) return KeyEventResult.ignored;
+      widget.onCancel!();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.tab) {
+      if (keyboard.isShiftPressed) {
+        _scopeNode.previousFocus();
+      } else {
+        _scopeNode.nextFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (widget.onSubmit == null ||
+        (event.logicalKey != LogicalKeyboardKey.enter &&
+            event.logicalKey != LogicalKeyboardKey.numpadEnter) ||
+        keyboard.isShiftPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isMetaPressed) {
+      return KeyEventResult.ignored;
+    }
+    // Preserve the focused control's own activation and multiline editing.
+    var controlHandlesEnter = false;
+    final focused = FocusManager.instance.primaryFocus?.context;
+    bool inspect(Widget child) {
+      if (child is ButtonStyleButton ||
+          child is IconButton ||
+          child is RawMaterialButton ||
+          child is DropdownButton ||
+          child is Checkbox ||
+          child is Radio ||
+          child is Switch ||
+          (child is EditableText &&
+              (child.maxLines == null || child.maxLines! > 1))) {
+        controlHandlesEnter = true;
+        return false;
+      }
+      return true;
+    }
+
+    if (focused != null && inspect(focused.widget)) {
+      focused.visitAncestorElements((element) => inspect(element.widget));
+    }
+    if (controlHandlesEnter) return KeyEventResult.ignored;
+    widget.onSubmit!();
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget dialog;
+    if (isDesktop || isWebDesktop) {
+      dialog = NestLinkDialog(
+        title: widget.title ?? const SizedBox.shrink(),
+        width: widget.contentBoxConstraints.maxWidth.isFinite
+            ? widget.contentBoxConstraints.maxWidth + 48
+            : 548,
+        showClose: widget.onCancel != null,
+        onClose: () => widget.onCancel?.call(),
+        contentPadding: widget.contentPadding == null
+            ? const EdgeInsets.fromLTRB(24, 8, 24, 20)
+            : EdgeInsets.all(widget.contentPadding!),
+        content: widget.content,
+        actions: widget.actions ?? const [],
+      );
+    } else {
+      dialog = AlertDialog(
+        scrollable: true,
+        title: widget.title,
+        content: ConstrainedBox(
+          constraints: widget.contentBoxConstraints,
+          child: widget.content,
+        ),
+        actions: widget.actions,
+        titlePadding: widget.titlePadding ?? MyTheme.dialogTitlePadding(),
+        contentPadding:
+            MyTheme.dialogContentPadding(actions: widget.actions is List),
+        actionsPadding: MyTheme.dialogActionsPadding(),
+        buttonPadding: MyTheme.dialogButtonPadding,
+      );
+    }
     return FocusScope(
-      node: scopeNode,
+      node: _scopeNode,
       autofocus: true,
-      onKey: (node, key) {
-        if (key.logicalKey == LogicalKeyboardKey.escape) {
-          if (key is RawKeyDownEvent) {
-            onCancel?.call();
-          }
-          return KeyEventResult.handled; // avoid TextField exception on escape
-        } else if (!tabTapped &&
-            onSubmit != null &&
-            (key.logicalKey == LogicalKeyboardKey.enter ||
-                key.logicalKey == LogicalKeyboardKey.numpadEnter)) {
-          if (key is RawKeyDownEvent) onSubmit?.call();
-          return KeyEventResult.handled;
-        } else if (key.logicalKey == LogicalKeyboardKey.tab) {
-          if (key is RawKeyDownEvent) {
-            scopeNode.nextFocus();
-            tabTapped = true;
-          }
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: AlertDialog(
-          scrollable: true,
-          title: title,
-          content: ConstrainedBox(
-            constraints: contentBoxConstraints,
-            child: content,
-          ),
-          actions: actions,
-          titlePadding: titlePadding ?? MyTheme.dialogTitlePadding(),
-          contentPadding:
-              MyTheme.dialogContentPadding(actions: actions is List),
-          actionsPadding: MyTheme.dialogActionsPadding(),
-          buttonPadding: MyTheme.dialogButtonPadding),
+      onKeyEvent: _key,
+      child: dialog,
     );
   }
 }

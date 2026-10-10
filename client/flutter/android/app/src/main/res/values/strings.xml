@@ -1,4 +1,8 @@
 <resources>
-    <string name="app_name">RustDesk</string>
-    <string name="accessibility_service_description">Allow other devices to control your phone using virtual touch, when RustDesk screen sharing is established</string>
+    <string name="app_name">NestLink</string>
+    <string name="input_service_name">NestLink input control</string>
+    <string name="app_started">NestLink is open</string>
+    <string name="screen_sharing_channel">NestLink screen sharing</string>
+    <string name="screen_sharing_channel_description">Screen sharing and authorized remote connections.</string>
+    <string name="accessibility_service_description">Allow input from an authorized device while sharing this screen with NestLink.</string>
 </resources>

@@ -6,10 +6,10 @@ import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
-import 'package:flutter_hbb/homedesk_devices.dart'; // HOMEDESK: 独立家庭设备墙。
 import 'package:flutter_hbb/homedesk_dashboard.dart'; // HOMEDESK: 家庭设备中心主布局。
 import 'package:flutter_hbb/homedesk_services.dart'; // HOMEDESK: 家庭服务统一入口。
-import 'package:flutter_hbb/homedesk_local_info.dart'; // HOMEDESK: 本机信息使用独立弹窗布局。
+import 'package:flutter_hbb/nestlink_remote_credentials.dart';
+import 'package:flutter_hbb/nestlink_locale.dart';
 import 'package:flutter_hbb/homedesk_account.dart'; // HOMEDESK: 账号会话在两个页面间共享。
 import 'package:flutter_hbb/homedesk_family_devices.dart'; // HOMEDESK: 同账号设备关联远控 ID。
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
@@ -51,6 +51,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   var systemError = '';
   StreamSubscription? _uniLinksSubscription;
   var svcStopped = false.obs;
+  final _nativeAccountReady = false.obs;
   var watchIsCanScreenRecording = false;
   var watchIsProcessTrust = false;
   var watchIsInputMonitoring = false;
@@ -68,20 +69,20 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final isIncomingOnly = bind.isIncomingOnly();
-    // HOMEDESK: 双角色客户端以设备中心为首页；纯被控形态保留本机信息页。
+    // HOMEDESK: 本机凭据直接位于远程协助页，权限仍由原生服务判断。
     return _buildBlock(child: HomeDeskDashboard(
       key: _dashboardKey,
       brandName: appName,
       devicesBuilder: (_) => HomeDeskFamilyDevices(account: _account,
+        listLayout: true,
         onLogin: () => _dashboardKey.currentState?.showAccount(),
         onConnect: (id) => connect(context, id),
         readOption: (key) => bind.mainGetLocalOption(key: key), // HOMEDESK: 只读取公开状态和配置指纹。
         lanBuilder: null), // HOMEDESK: 公网账号设备自动显示，内网目录保留受控入口。
-      recentBuilder: (_) => const HomeDeskRecent(), // HOMEDESK: 读取上游最近、收藏和局域网数据。
+      recentBuilder: (_) => const HomeDeskRecent(compact: true), // HOMEDESK: 读取上游最近连接记录。
       servicesBuilder: (_) => HomeDeskServices(account: _account, onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network)), // HOMEDESK: 登录状态共享，许可仍固定到当前配置。
       initializeAccount: true, // HOMEDESK: 只恢复已批准地址下明确保存的登录。
-      localBuilder: (dialogContext) => buildHomeDeskLocalInfo(dialogContext), // HOMEDESK: 不复用固定 200 像素侧栏。
+      remoteCredentialsBuilder: buildRemoteCredentials,
       statusBuilder: (_) => const OnlineStatusWidget(),
       onSettings: () => DesktopTabPage.onAddSetting(),
       onNetworkSettings: () => DesktopTabPage.onAddSetting(initialPage: SettingsTabKey.network),
@@ -94,40 +95,49 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         block: _block, mask: true, use: canBeBlocked, child: child);
   }
 
-  // HOMEDESK: 仅接线既有凭据模型、认证设置和安装动作，展示由独立组件负责。
-  Widget buildHomeDeskLocalInfo(BuildContext dialogContext) {
-    return ChangeNotifierProvider.value(
-      value: gFFI.serverModel,
-      child: Consumer<ServerModel>(builder: (_, model, child) {
-        final incoming = !bind.isOutgoingOnly();
-        final showPassword = model.approveMode != 'click' && model.verificationMethod != kUsePermanentPassword;
-        final portable = isWindows && !bind.mainIsInstalled() && !bind.isDisableInstallation() &&
-            bind.mainGetBuildinOption(key: kOptionHideHelpCards) != 'Y';
-        return HomeDeskLocalInfo(
-          id: model.serverId, password: model.serverPasswd,
-          incomingEnabled: incoming, showTemporaryPassword: showPassword,
-          passwordHint: model.approveMode == 'click' ? '连接时由本机确认' : '使用固定密码',
-          onCopyId: () {
-            Clipboard.setData(ClipboardData(text: model.serverId.text));
-            showToast(translate('Copied'));
-          },
-          onRefreshPassword: () => bind.mainUpdateTemporaryPassword(),
-          onPasswordSettings: bind.isDisableSettings() ? null : () {
-            Navigator.pop(dialogContext);
-            HomeDeskDashboard.navigate('settings');
-          },
-          onInstall: !portable ? null : () async {
-            Navigator.pop(dialogContext);
-            await rustDeskWinManager.closeAllSubWindows();
-            bind.mainGotoInstall();
-          },
-          warning: incoming ? buildPresetPasswordWarning() : null,
-          additionalHelp: !portable || systemError.isNotEmpty ?
-              Obx(() => buildHelpCards(stateGlobal.updateUrl.value)) : null,
-          pluginEntry: buildPluginEntry(),
-          status: const OnlineStatusWidget(),
-        );
-      }),
+  Widget buildRemoteCredentials(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _account,
+      builder: (_, __) => ChangeNotifierProvider.value(
+        value: gFFI.serverModel,
+        child: Consumer<ServerModel>(builder: (_, model, child) => Obx(() {
+          final incoming = !bind.isOutgoingOnly();
+          final stopped = svcStopped.value ||
+              mainGetBoolOptionSync(kOptionStopService);
+          final ready = _nativeAccountReady.value && _account.signedIn &&
+              bind.mainNestlinkAccountReady();
+          final click = model.approveMode == 'click' ||
+              bind.mainGetOptionSync(key: kOptionApproveMode) == 'click';
+          final permanent = model.verificationMethod == kUsePermanentPassword ||
+              bind.mainGetOptionSync(key: kOptionVerificationMethod) ==
+                  kUsePermanentPassword;
+          return NestLinkRemoteCredentials(
+            id: model.serverId,
+            password: model.serverPasswd,
+            incomingEnabled: incoming,
+            showTemporaryPassword: !click && !permanent,
+            serviceStopped: stopped,
+            accountReady: ready,
+            passwordHint: click
+                ? nl('连接时由本机确认', 'Approve connections on this device')
+                : nl('使用固定密码', 'Use the permanent password'),
+            onCopyId: () {
+              Clipboard.setData(ClipboardData(text: model.serverId.text));
+              showToast(translate('Copied'));
+            },
+            onRefreshPassword: () {
+              if (_account.signedIn && bind.mainNestlinkAccountReady() &&
+                  !bind.isOutgoingOnly() &&
+                  !mainGetBoolOptionSync(kOptionStopService) &&
+                  bind.mainGetOptionSync(key: kOptionApproveMode) != 'click' &&
+                  bind.mainGetOptionSync(key: kOptionVerificationMethod) !=
+                      kUsePermanentPassword) {
+                bind.mainUpdateTemporaryPassword();
+              }
+            },
+          );
+        })),
+      ),
     );
   }
 
@@ -503,23 +513,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       return buildInstallCard("", systemError, "", () {});
     }
 
-    if (isWindows && !bind.isDisableInstallation()) {
-      if (!bind.mainIsInstalled()) {
-        return buildInstallCard(
-            "", bind.isOutgoingOnly() ? "" : "install_tip", "Install",
-            () async {
-          await rustDeskWinManager.closeAllSubWindows();
-          bind.mainGotoInstall();
-        });
-      } else if (bind.mainIsInstalledLowerVersion()) {
-        return buildInstallCard(
-            "Status", "Your installation is lower version.", "Click to upgrade",
-            () async {
-          await rustDeskWinManager.closeAllSubWindows();
-          bind.mainUpdateMe();
-        });
-      }
-    } else if (isMacOS) {
+    if (isMacOS) {
       final isOutgoingOnly = bind.isOutgoingOnly();
       if (!(isOutgoingOnly || bind.mainIsCanScreenRecording(prompt: false))) {
         return buildInstallCard("Permissions", "config_screen", "Configure",
@@ -752,6 +746,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         svcStopped.value = v;
         setState(() {});
       }
+      _nativeAccountReady.value = _account.signedIn && bind.mainNestlinkAccountReady();
       if (watchIsCanScreenRecording) {
         if (bind.mainIsCanScreenRecording(prompt: false)) {
           watchIsCanScreenRecording = false;
@@ -952,6 +947,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 }
 
 void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
+  if (isDesktop) {
+    HomeDeskDashboard.active?.showRemoteSettings();
+    return;
+  }
   final p0 = TextEditingController(text: "");
   final p1 = TextEditingController(text: "");
   var errMsg0 = "";
@@ -1026,12 +1025,13 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.key, color: MyTheme.accent),
-          Text(translate("Set Password")).paddingOnly(left: 10),
+          Flexible(child: Text(translate("Set Password")).paddingOnly(left: 10)),
         ],
       ),
       content: ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 500),
+        constraints: const BoxConstraints(maxWidth: 500),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(

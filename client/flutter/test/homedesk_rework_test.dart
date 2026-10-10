@@ -64,13 +64,12 @@ void main() {
     expect(guidance.bottom, lessThanOrEqualTo(panel.bottom));
     expect(tester.takeException(), isNull);
   });
-  testWidgets('上游三个对端卡片的公开菜单接线可复用，无需修改上游', (tester) async {
+  testWidgets('最近和发现对端卡片的公开菜单接线可复用', (tester) async {
     final peer = device('123456789', '书房电脑');
     await tester.pumpWidget(host(Builder(builder: (context) {
       for (final card in [
-        RecentPeerCard(peer: peer),
-        FavoritePeerCard(peer: peer),
-        DiscoveredPeerCard(peer: peer)
+        RecentPeerCard(peer: peer, showFavorites: false),
+        DiscoveredPeerCard(peer: peer, showFavorites: false)
       ]) {
         expect(homeDeskUpstreamMenuBuilder(card.build(context)),
             isA<PopupMenuEntryBuilder>());
@@ -83,28 +82,14 @@ void main() {
     final peer = device('123456789', '书房电脑'),
         other = device('987654321', '客厅电脑');
     final calls = <String>[];
-    final labels = [
-      '加入收藏',
-      '删除记录',
-      '忘记密码',
-      '重命名',
-      '文件传输',
-      '终端',
-      'TCP 隧道',
-      'RDP'
-    ];
+    final labels = ['删除记录', '忘记密码', '重命名', '文件传输', '终端', 'TCP 隧道', 'RDP'];
     final tabs = <PeerTabIndex>[];
     await tester.pumpWidget(host(HomeDeskRecent(
         recent: [peer, other],
-        favorites: [peer],
         menuBuilder: (context, p, tab) async {
           expect(p.id, peer.id);
           tabs.add(tab);
-          return [
-            ...labels,
-            if (tab == PeerTabIndex.fav) '取消收藏',
-            if (tab == PeerTabIndex.lan) '远程开机'
-          ]
+          return [...labels, if (tab == PeerTabIndex.lan) '远程开机']
               .map((label) => peer_menu.PopupMenuItem<String>(
                   value: label,
                   child: Text(label),
@@ -132,18 +117,10 @@ void main() {
     expect(find.text('书房电脑'), findsNothing);
     await tester.enterText(find.byKey(const ValueKey('recent-search')), '');
     await tester.pump();
-    for (final pair in [(1, '取消收藏')]) {
-      await tester.tap(find.byKey(ValueKey('recent-filter-${pair.$1}')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('recent-more-123456789')));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text(pair.$2));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(pair.$2));
-      await tester.pumpAndSettle();
-      expect(calls.last, pair.$2);
-    }
-    expect(tabs, containsAll([PeerTabIndex.recent, PeerTabIndex.fav]));
+    expect(tabs, everyElement(PeerTabIndex.recent));
+    expect(find.text('收藏'), findsNothing);
+    expect(find.byIcon(Icons.star_rounded), findsNothing);
+    expect(find.byKey(const ValueKey('recent-filter-1')), findsNothing);
     expect(find.text('经典视图'), findsNothing);
     expect(find.text('局域网发现'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -162,23 +139,19 @@ void main() {
         recentBuilder: (_) => HomeDeskRecent(
             key: recentKey,
             recent: [peer],
-            favorites: [peer],
             onLoad: (tab) => loads.add('recent:$tab')),
         localBuilder: (_) => const SizedBox(),
         statusBuilder: (_) => const SizedBox(),
         onSettings: () {},
         onConnect: (_) {})));
     await tester.pumpAndSettle();
-    expect(loads.where((s) => s.startsWith('summary:')), isEmpty);
+    expect(loads.where((s) => s.startsWith('summary:')).length, 1);
+    await tester.tap(find.byKey(const ValueKey('nav-remote')));
+    await tester.pumpAndSettle();
     expect(loads.last, 'recent:PeerTabIndex.recent');
-    await tester.ensureVisible(find.byKey(const ValueKey('recent-filter-1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('recent-filter-1')));
-    await tester.pumpAndSettle();
-    expect(loads.last, 'recent:PeerTabIndex.fav');
     await tester.tap(find.byKey(const ValueKey('nav-devices')));
     await tester.pumpAndSettle();
-    expect(loads.where((s) => s.startsWith('summary:')).length, 1);
+    expect(loads.where((s) => s.startsWith('summary:')).length, 2);
     await tester.tap(find.byKey(const ValueKey('nav-remote')));
     await tester.pumpAndSettle();
     final before = loads.length;
@@ -186,7 +159,7 @@ void main() {
     recentKey.currentState!.onWindowFocus();
     await tester.pumpAndSettle();
     expect(loads.length, before + 1);
-    expect(loads.last, 'recent:PeerTabIndex.fav');
+    expect(loads.last, 'recent:PeerTabIndex.recent');
     await tester.pumpWidget(const SizedBox());
     expect(tester.takeException(), isNull);
   });
@@ -326,7 +299,7 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
-  testWidgets('服务状态工具右对齐并显示主机，页头设备筛选与添加按钮等高', (tester) async {
+  testWidgets('穿透标题行保留刷新与筛选，不显示账号状态条和计数提示', (tester) async {
     tester.view.physicalSize = const Size(800, 600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -335,17 +308,25 @@ void main() {
     await tester.pumpWidget(host(Padding(
         padding: const EdgeInsets.all(24), child: portal.fixturePage(api))));
     await portal.enterCredentials(tester);
-    expect(find.text('console.example.com'), findsOneWidget);
-    final strip =
-        tester.getRect(find.byKey(const ValueKey('tunnel-account-status')));
-    final menu =
-        tester.getRect(find.byKey(const ValueKey('tunnel-account-menu')));
-    expect(menu.right, closeTo(strip.right - 13, .5));
+    expect(find.text('console.example.com'), findsNothing);
+    expect(find.byKey(const ValueKey('tunnel-account-status')), findsNothing);
+    final tools =
+        tester.getRect(find.byKey(const ValueKey('tunnel-title-tools')));
+    final refresh =
+        tester.getRect(find.byKey(const ValueKey('tunnel-refresh')));
+    expect(tools.contains(refresh.center), isTrue);
+    expect(find.byKey(const ValueKey('tunnel-account-menu')), findsNothing);
     final filter =
         tester.getSize(find.byKey(const ValueKey('tunnel-device-filter')));
     final add =
         tester.getSize(find.byKey(const ValueKey('tunnel-add-service')));
     expect(filter.height, closeTo(add.height, .5));
+    final filterRect =
+        tester.getRect(find.byKey(const ValueKey('tunnel-device-filter')));
+    final addRect =
+        tester.getRect(find.byKey(const ValueKey('tunnel-add-service')));
+    expect(filterRect.top, closeTo(addRect.top, .5));
+    expect(filterRect.bottom, closeTo(addRect.bottom, .5));
     expect(add.height, greaterThanOrEqualTo(40));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -398,13 +379,7 @@ void main() {
         dashboard: GlobalKey<HomeDeskDashboardState>()));
     await tester.pumpAndSettle();
     final entries = <Rect>[];
-    for (final value in [
-      'remote',
-      'devices',
-      'services',
-      'settings',
-      'account'
-    ]) {
+    for (final value in ['devices', 'remote', 'services', 'account']) {
       final item = find.byKey(ValueKey('nav-$value'));
       expect(item.hitTestable(), findsOneWidget);
       final rect = tester.getRect(item);
@@ -412,12 +387,12 @@ void main() {
       expect(rect.bottom, lessThanOrEqualTo(600));
       entries.add(rect);
     }
-    for (final label in ['English', '切换主题', '13.0.0']) {
+    for (final label in ['English', '切换主题', '版本']) {
       final item = find.byTooltip(label);
       expect(item.hitTestable(), findsOneWidget);
       final rect = tester.getRect(item);
-      expect(rect.top, greaterThanOrEqualTo(44));
-      expect(rect.bottom, lessThanOrEqualTo(600));
+      expect(rect.top, greaterThanOrEqualTo(0));
+      expect(rect.bottom, lessThanOrEqualTo(44));
       entries.add(rect);
     }
     for (var i = 0; i < entries.length; i++) {

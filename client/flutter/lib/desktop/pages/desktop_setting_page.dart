@@ -427,9 +427,6 @@ class _General extends StatefulWidget {
 }
 
 class _GeneralState extends State<_General> {
-  final RxBool serviceStop =
-      isWeb ? RxBool(false) : Get.find<RxBool>(tag: 'stop-service');
-  RxBool serviceBtnEnabled = true.obs;
   final GlobalKey _minToolbarOptionKey = GlobalKey();
 
   @override
@@ -438,9 +435,6 @@ class _GeneralState extends State<_General> {
     return ListView(
       controller: scrollController,
       children: [
-        if (!isWeb) service(),
-        theme(),
-        _Card(title: 'Language', children: [language()]),
         if (!isWeb) hwcodec(),
         if (!isWeb) audio(context),
         if (!isWeb) record(context),
@@ -475,34 +469,6 @@ class _GeneralState extends State<_General> {
           label: 'Follow System',
           onChanged: isOptFixed ? null : onChanged),
     ]);
-  }
-
-  Widget service() {
-    if (bind.isOutgoingOnly()) {
-      return const Offstage();
-    }
-
-    final hideStopService =
-        bind.mainGetBuildinOption(key: kOptionHideStopService) == 'Y';
-
-    return Obx(() {
-      if (hideStopService && !serviceStop.value) {
-        return const Offstage();
-      }
-
-      return _Card(title: 'Service', children: [
-        _Button(serviceStop.value ? 'Start' : 'Stop', () {
-          () async {
-            serviceBtnEnabled.value = false;
-            await start_service(serviceStop.value);
-            // enable the button after 1 second
-            Future.delayed(const Duration(seconds: 1), () {
-              serviceBtnEnabled.value = true;
-            });
-          }();
-        }, enabled: serviceBtnEnabled.value)
-      ]);
-    });
   }
 
   Widget other() {
@@ -2323,7 +2289,7 @@ class _About extends StatefulWidget {
 }
 
 class _AboutState extends State<_About> {
-  int _versionTapCount = 0; // HOMEDESK: 连续点击版本号五次解锁高级模式。
+  int _versionTapCount = 0; // HOMEDESK: 连续点击品牌名五次，沿用既有高级模式解锁校验。
   DateTime? _lastVersionTap;
 
   Future<void> _onVersionTap() async {
@@ -2346,38 +2312,36 @@ class _AboutState extends State<_About> {
   @override
   Widget build(BuildContext context) {
     return futureBuilder(future: () async {
-      final version = await bind.mainGetVersion();
       final buildDate = await bind.mainGetBuildDate();
       final fingerprint = await bind.mainGetFingerprint();
       return {
-        'version': version,
         'buildDate': buildDate,
         'fingerprint': fingerprint
       };
     }(), hasData: (data) {
-      final version = data['version'].toString();
       final buildDate = data['buildDate'].toString();
       final fingerprint = data['fingerprint'].toString();
       final scrollController = ScrollController();
       return SingleChildScrollView(
         controller: scrollController,
-        child: _Card(title: '关于 $appName', children: [ // HOMEDESK: 标题使用当前品牌，内部保留开源来源说明。
+        child: _Card(title: 'About', children: [ // HOMEDESK: 品牌与开源说明保留，版本入口统一在标题栏。
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(
                 height: 8.0,
               ),
-              // HOMEDESK: 首页去除支持提示后，在关于页明确保留项目来源。
-              const SelectionArea(
-                child: Text('基于 RustDesk 开源项目开发 · AGPL-3.0'),
-              ),
-              // HOMEDESK: 普通文本避免 SelectionArea 抢走点击，保留五次点击解锁和持久化。
+              // HOMEDESK: 仅改变既有五击入口的展示，授权和解锁条件仍由原回调检查。
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: _onVersionTap,
-                child: Text('${translate('Version')}: $version')
+                child: Text(appName,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600))
                     .marginSymmetric(vertical: 4.0),
+              ),
+              // HOMEDESK: 首页去除支持提示后，在关于页明确保留项目来源。
+              const SelectionArea(
+                child: Text('基于 RustDesk 开源项目开发 · AGPL-3.0'),
               ),
               SelectionArea(
                   child: Text('${translate('Build Date')}: $buildDate')

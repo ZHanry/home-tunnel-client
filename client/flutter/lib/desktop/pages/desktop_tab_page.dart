@@ -11,6 +11,8 @@ import 'package:window_manager/window_manager.dart';
 // import 'package:flutter/services.dart';
 
 import '../../common/shared_state.dart';
+import '../../homedesk_advanced.dart';
+import '../../homedesk_dashboard.dart';
 
 class DesktopTabPage extends StatefulWidget {
   const DesktopTabPage({Key? key}) : super(key: key);
@@ -21,25 +23,27 @@ class DesktopTabPage extends StatefulWidget {
   static void onAddSetting(
       {SettingsTabKey initialPage = SettingsTabKey.general}) {
     try {
-      DesktopTabController tabController = Get.find<DesktopTabController>();
-      tabController.add(TabInfo(
-          key: kTabLabelSettingPage,
-          label: kTabLabelSettingPage,
-          selectedIcon: Icons.build_sharp,
-          unselectedIcon: Icons.build_outlined,
-          page: DesktopSettingPage(
-            key: const ValueKey(kTabLabelSettingPage),
-            initialTabkey: initialPage,
-          )));
-      DesktopSettingPage.selectSection(initialPage); // HOMEDESK: 已打开设置时也切换到请求的分类。
+      final dashboard = HomeDeskDashboard.active;
+      if (dashboard == null) return;
+      onHome();
+      if (initialPage == SettingsTabKey.network) {
+        showHomeDeskNetworkSettings(dashboard.context,
+            serviceAddress: dashboard.navigationAccount?.api?.base.origin);
+      } else if (initialPage == SettingsTabKey.safety) {
+        dashboard.showRemoteSettings();
+      } else {
+        dashboard.showAccount();
+      }
     } catch (e) {
       debugPrintStack(label: '$e');
     }
   }
 
-  static void onHome() { // HOMEDESK: 设置页与简化标题栏共用返回入口。
+  static void onHome() {
+    // HOMEDESK: 设置页与简化标题栏共用返回入口。
     final controller = Get.find<DesktopTabController>();
-    final index = controller.state.value.tabs.indexWhere((tab) => tab.key == kTabLabelHomePage);
+    final index = controller.state.value.tabs
+        .indexWhere((tab) => tab.key == kTabLabelHomePage);
     if (index >= 0) controller.jumpTo(index);
   }
 }
@@ -89,7 +93,7 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
   Widget build(BuildContext context) {
     final tabWidget = Container(
         child: Scaffold(
-            backgroundColor: Theme.of(context).colorScheme.background,
+            backgroundColor: Theme.of(context).colorScheme.surface,
             body: DesktopTab(
               controller: tabController,
               tail: Offstage(

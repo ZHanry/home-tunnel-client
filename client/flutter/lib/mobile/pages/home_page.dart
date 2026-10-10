@@ -12,7 +12,6 @@ import '../../homedesk_services.dart';
 import '../../homedesk_family_devices.dart';
 import '../../homedesk_advanced.dart';
 import '../../homedesk_mobile_shell.dart';
-import '../../homedesk_dashboard.dart';
 import '../../homedesk_recent.dart';
 
 abstract class PageShape extends Widget {
@@ -109,14 +108,15 @@ class HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(body: SafeArea(child: HomeDeskDashboard(brandName: 'nestlink', initializeAccount: true,
-      devicesBuilder: (_) => HomeDeskFamilyDevices(account: _account,
-          onLogin: () => HomeDeskDashboard.navigate('account'), onConnect: (id) => connect(context, id),
-          readOption: (key) => bind.mainGetLocalOption(key: key)),
-      recentBuilder: (_) => const HomeDeskRecent(summary: true),
-      servicesBuilder: (_) => HomeDeskServices(account: _account),
-      localBuilder: (_) => ServerPage(), statusBuilder: (_) => const SizedBox.shrink(),
-      onSettings: () => HomeDeskDashboard.navigate('settings'), onConnect: (id) => connect(context, id))));
+    return NestLinkMobileHome(
+        account: _account,
+        readOption: (key) => bind.mainGetLocalOption(key: key),
+        onConnect: (id) => connect(context, id),
+        recentBuilder: (_) => const HomeDeskRecent(summary: true),
+        servicesBuilder: (_) => HomeDeskServices(account: _account),
+        localBuilder:
+            bind.isOutgoingOnly() ? null : (_) => ServerPage(embedded: true),
+        onNetworkSettings: () => showHomeDeskNetworkSettings(context));
   }
 
   Widget buildLegacy(BuildContext context) {

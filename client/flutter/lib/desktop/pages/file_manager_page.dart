@@ -765,10 +765,12 @@ class _FileManagerViewState extends State<FileManagerView> {
                               children: [
                                 SvgPicture.asset("assets/folder_new.svg",
                                     colorFilter: svgColor(MyTheme.accent)),
-                                Text(
-                                  translate("Create Folder"),
-                                ).paddingOnly(
-                                  left: 10,
+                                Expanded(
+                                  child: Text(
+                                    translate("Create Folder"),
+                                  ).paddingOnly(
+                                    left: 10,
+                                  ),
                                 ),
                               ],
                             ),

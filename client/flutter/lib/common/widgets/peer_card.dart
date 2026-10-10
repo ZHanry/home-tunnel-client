@@ -956,7 +956,12 @@ abstract class BasePeerCard extends StatelessWidget {
 }
 
 class RecentPeerCard extends BasePeerCard {
-  RecentPeerCard({required Peer peer, EdgeInsets? menuPadding, Key? key})
+  final bool showFavorites;
+  RecentPeerCard(
+      {required Peer peer,
+      EdgeInsets? menuPadding,
+      Key? key,
+      this.showFavorites = true})
       : super(
             peer: peer,
             tab: PeerTabIndex.recent,
@@ -976,8 +981,6 @@ class RecentPeerCard extends BasePeerCard {
     if (peer.platform == kPeerPlatformWindows) {
       menuItems.add(_terminalRunAsAdminAction(context));
     }
-
-    final List favs = (await bind.mainGetFav()).toList();
 
     if (isDesktop && peer.platform != kPeerPlatformAndroid) {
       menuItems.add(_tcpTunnelingAction(context));
@@ -1000,10 +1003,13 @@ class RecentPeerCard extends BasePeerCard {
       menuItems.add(_unrememberPasswordAction(peer.id));
     }
 
-    if (!favs.contains(peer.id)) {
-      menuItems.add(_addFavAction(peer.id));
-    } else {
-      menuItems.add(_rmFavAction(peer.id, () async {}));
+    if (showFavorites) {
+      final List favs = (await bind.mainGetFav()).toList();
+      if (!favs.contains(peer.id)) {
+        menuItems.add(_addFavAction(peer.id));
+      } else {
+        menuItems.add(_rmFavAction(peer.id, () async {}));
+      }
     }
 
     if (gFFI.userModel.userName.isNotEmpty) {
@@ -1081,7 +1087,12 @@ class FavoritePeerCard extends BasePeerCard {
 }
 
 class DiscoveredPeerCard extends BasePeerCard {
-  DiscoveredPeerCard({required Peer peer, EdgeInsets? menuPadding, Key? key})
+  final bool showFavorites;
+  DiscoveredPeerCard(
+      {required Peer peer,
+      EdgeInsets? menuPadding,
+      Key? key,
+      this.showFavorites = true})
       : super(
             peer: peer,
             tab: PeerTabIndex.lan,
@@ -1102,8 +1113,6 @@ class DiscoveredPeerCard extends BasePeerCard {
       menuItems.add(_terminalRunAsAdminAction(context));
     }
 
-    final List favs = (await bind.mainGetFav()).toList();
-
     if (isDesktop && peer.platform != kPeerPlatformAndroid) {
       menuItems.add(_tcpTunnelingAction(context));
     }
@@ -1119,10 +1128,13 @@ class DiscoveredPeerCard extends BasePeerCard {
       menuItems.add(_createShortCutAction(peer.id));
     }
 
-    if (!favs.contains(peer.id)) {
-      menuItems.add(_addFavAction(peer.id));
-    } else {
-      menuItems.add(_rmFavAction(peer.id, () async {}));
+    if (showFavorites) {
+      final List favs = (await bind.mainGetFav()).toList();
+      if (!favs.contains(peer.id)) {
+        menuItems.add(_addFavAction(peer.id));
+      } else {
+        menuItems.add(_rmFavAction(peer.id, () async {}));
+      }
     }
 
     if (gFFI.userModel.userName.isNotEmpty) {

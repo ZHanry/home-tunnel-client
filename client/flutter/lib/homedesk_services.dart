@@ -4,13 +4,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'homedesk_credentials.dart';
 import 'homedesk_theme.dart';
 import 'homedesk_account.dart';
+import 'homedesk_dashboard.dart';
 import 'homedesk_device_label.dart';
 import 'homedesk_local_agent.dart';
 import 'homedesk_service_editor.dart';
@@ -18,6 +18,8 @@ import 'homedesk_tunnel_api.dart';
 import 'homedesk_tunnel_session.dart';
 import 'nestlink_native_session.dart';
 import 'nestlink_locale.dart';
+import 'nestlink_login.dart';
+import 'nestlink_dialog.dart';
 import 'models/platform_model.dart';
 
 typedef HomeTunnelApiBuilder = HomeTunnelApi Function(String origin,
@@ -76,13 +78,16 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       if (api != null && api.isSignedIn) {
         _publishedApi = api;
         final generation = _generation;
-        widget.account!
-            .publish(api, _catalog, api.guiDeviceId.isNotEmpty ? api.guiDeviceId : (_localAgent?.deviceId ?? ''), _editDevice,
-                onCatalog: (value) {
-          if (_current(api, generation)) {
-            _changeState(() => _applyCatalog(value));
-          }
-        });
+        widget.account!.publish(api, _catalog, _localDeviceId, _editDevice,
+            onSignOut: () => _signOut(api),
+            onManageServices: (device) =>
+                _manageDeviceServices(api, generation, device),
+            onDelete: (device) => _deleteDevice(api, generation, device),
+            onCatalog: (value) {
+              if (_current(api, generation)) {
+                _changeState(() => _applyCatalog(value));
+              }
+            });
       } else {
         widget.account!.clear(_publishedApi);
         _publishedApi = null;
@@ -93,6 +98,30 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   final _origin = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
+  late final _originFocus = FocusNode(onKeyEvent: _loginFieldKey);
+  late final _usernameFocus = FocusNode(onKeyEvent: _loginFieldKey);
+  late final _passwordFocus = FocusNode(onKeyEvent: _loginFieldKey);
+
+  KeyEventResult _loginFieldKey(FocusNode node, KeyEvent event) {
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      if (event is KeyDownEvent) unawaited(_login());
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.tab) {
+      if (event is KeyDownEvent) {
+        if (HardwareKeyboard.instance.isShiftPressed) {
+          node.previousFocus();
+        } else {
+          node.nextFocus();
+        }
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   NestLinkNativeSession? _nativeSession;
   HomeTunnelApi? _api;
   HomeTunnelCatalog? _catalog;
@@ -103,8 +132,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   final Map<String, HomeDeskDeviceDraft> _deviceDrafts = {};
   final Set<String> _entityBusy = {};
   final Set<String> _needsReview = {};
+  final Set<String> _revokedDevices = {};
+  bool _localDeviceRevoked = false;
   String? _draftOwner;
-  bool _rememberLogin = false;
+  bool _obscurePassword = true;
   bool _allowed = false;
   bool _busy = false;
   String _message = '';
@@ -113,6 +144,25 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   String? _apiPermission;
   int _generation = 0;
   int _ticks = 0;
+
+  String get _localDeviceId {
+    final guiId = _api?.guiDeviceId ?? '';
+    final agentId = (_localAgent ?? widget.localAgent)?.deviceId ?? '';
+    final devices = _catalog?.devices ?? const <HomeTunnelDevice>[];
+    for (final device in devices) {
+      if (guiId.isNotEmpty &&
+          (device.id == guiId || device.remoteDeviceId == guiId)) {
+        return device.id;
+      }
+    }
+    for (final device in devices) {
+      if (agentId.isNotEmpty &&
+          (device.id == agentId || device.tunnelDeviceId == agentId)) {
+        return device.id;
+      }
+    }
+    return guiId.isNotEmpty ? guiId : agentId;
+  }
 
   bool _readAllowed() {
     try {
@@ -148,7 +198,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     _catalog = null;
     _deviceId = '';
     _busy = false;
-    _rememberLogin = false;
     _entityBusy.clear();
     _clearSecrets();
     _origin.text = _approvedOrigin() ?? '';
@@ -240,14 +289,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _apiPermission = permission;
       generation = ++_generation;
       _changeState(() {
-        _rememberLogin = true;
         _message = '正在恢复记住的登录…';
       });
       final restored = await api.restore();
       if (!_current(api, generation)) return;
       if (!restored) {
         _changeState(() {
-          _rememberLogin = false;
           _message = '没有可以恢复的登录，请重新输入密码。';
         });
         return;
@@ -255,7 +302,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       final catalog = await api.catalog();
       if (!_current(api, generation)) return;
       _changeState(() {
-        _catalog = catalog;
+        _applyCatalog(catalog);
         _message = '已恢复记住的登录。';
       });
       await _attachLocal(api, generation);
@@ -266,7 +313,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _apiPermission = null;
       if (mounted && generation == _generation) {
         _changeState(() {
-          _rememberLogin = false;
           _message = '保存的登录未能恢复，请重新登录。${_errorMessage(error)}';
         });
       }
@@ -320,6 +366,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       return;
     }
     _selectDraftOwner(origin, _username.text.trim());
+    _revokedDevices.clear();
+    _localDeviceRevoked = false;
     final previousAgent = _localAgent;
     _localAgent = null;
     _api?.close();
@@ -358,12 +406,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       await api.login(
           username: _username.text.trim(),
           password: _password.text,
-          rememberLogin: _rememberLogin && _credentialStore.supported);
+          rememberLogin: _credentialStore.supported);
       if (!_current(api, generation)) return;
       _changeState(_clearSecrets);
       final catalog = await api.catalog();
       if (!_current(api, generation)) return;
-      _changeState(() => _catalog = catalog);
+      _changeState(() => _applyCatalog(catalog));
       await _attachLocal(api, generation);
     } catch (error) {
       if (!mounted || generation != _generation) return;
@@ -386,12 +434,22 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           : '服务暂时无法连接，请检查地址、证书和网络后重试。';
 
   Future<void> _attachLocal(HomeTunnelApi api, int generation) async {
-    if (widget.apiBuilder == null && widget.readOption == null && _current(api, generation)) {
+    if (_localDeviceRevoked) return;
+    if (widget.apiBuilder == null &&
+        widget.readOption == null &&
+        _current(api, generation)) {
       if (_nativeSession == null) {
         final native = NestLinkNativeSession(api);
         _nativeSession = native;
-        api.onSessionClosed = () { native.close(); if (identical(_nativeSession, native)) _nativeSession = null; };
-        try { await native.start(); } catch (_) { _message = '设备登记未完成，请稍后重试。'; }
+        api.onSessionClosed = () {
+          native.close();
+          if (identical(_nativeSession, native)) _nativeSession = null;
+        };
+        try {
+          await native.start();
+        } catch (_) {
+          _message = '设备登记未完成，请稍后重试。';
+        }
       }
     }
     // 合成预览/组件注入保持无真实后台进程；生产仅在许可有效且身份已校验后接入。
@@ -407,16 +465,24 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         permission: _readPermission,
         isAllowed: () => _current(api, generation),
         name: '${Platform.localHostname} · ${bind.mainGetAppNameSync()}');
+    final attachingAgent = _localAgent!;
     try {
-      final catalog = await _localAgent!.attach(api, _catalog!);
+      var catalog = await attachingAgent.attach(api, _catalog!);
+      if (_current(api, generation) && api.guiDeviceId.isNotEmpty) {
+        catalog = await api.associateLocalDevice(attachingAgent.deviceId);
+      }
       if (_current(api, generation) && mounted) {
-        _changeState(() => _catalog = catalog);
+        _changeState(() => _applyCatalog(catalog));
       }
     } on HomeDeskAgentException catch (_) {
       if (mounted && _current(api, generation)) _changeState(() {});
+    } on HomeTunnelApiException catch (error) {
+      if (mounted && _current(api, generation)) {
+        _changeState(() => _message = error.message);
+      }
     } catch (_) {
-      if (_localAgent != null) {
-        _localAgent!.error = const HomeDeskAgentException('RUNTIME_FAILED');
+      if (_current(api, generation) && identical(_localAgent, attachingAgent)) {
+        attachingAgent.error = const HomeDeskAgentException('RUNTIME_FAILED');
         if (mounted) _changeState(() {});
       }
     }
@@ -433,6 +499,20 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   }
 
   void _applyCatalog(HomeTunnelCatalog catalog) {
+    final devices = catalog.devices
+        .where((device) => !_revokedDevices.contains(device.id))
+        .toList();
+    final ids = devices.map((device) => device.id).toSet();
+    final services = catalog.services
+        .where((service) => ids.contains(service.deviceId))
+        .toList();
+    if (devices.length != catalog.devices.length ||
+        services.length != catalog.services.length) {
+      catalog = HomeTunnelCatalog(
+          devices: devices,
+          services: services,
+          capabilities: catalog.capabilities);
+    }
     _catalog = catalog;
     if (!catalog.devices.any((device) => device.id == _deviceId)) {
       _deviceId = '';
@@ -451,7 +531,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _message = '';
     });
     try {
-      final catalog = await api.catalog();
+      var catalog = await api.catalog();
+      final agent = _localAgent;
+      if (_current(api, generation) && agent?.phase == 'running' &&
+          api.guiDeviceId.isNotEmpty &&
+          !catalog.devices.any((device) => device.id == api.guiDeviceId &&
+              device.tunnelDeviceId == agent!.deviceId)) {
+        catalog = await api.associateLocalDevice(agent!.deviceId);
+      }
       if (!_current(api, generation)) return;
       _changeState(() {
         _applyCatalog(catalog);
@@ -463,7 +550,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         if (!api.isSignedIn) {
           _catalog = null;
           _deviceId = '';
-          _rememberLogin = false;
         }
       });
     } finally {
@@ -473,9 +559,9 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     }
   }
 
-  Future<void> _logout() async {
-    final api = _api;
-    final localAgent = _localAgent;
+  Future<void> _signOut(HomeTunnelApi api) async {
+    if (!identical(api, _api)) return;
+    final localAgent = _localAgent ?? widget.localAgent;
     _localAgent = null;
     _changeState(() {
       _generation++;
@@ -483,59 +569,105 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _apiPermission = null;
       _catalog = null;
       _deviceId = '';
-      _busy = false;
-      _rememberLogin = false;
+      _busy = true;
       _entityBusy.clear();
       _serviceDrafts.clear();
       _deviceDrafts.clear();
       _needsReview.clear();
+      _revokedDevices.clear();
+      _localDeviceRevoked = false;
       _draftOwner = null;
       _clearSecrets();
       _message = '';
     });
     final generation = _generation;
-    if (localAgent != null) await localAgent.stop();
-    if (api == null) {
-      return;
-    }
     try {
-      await api.logout();
-    } catch (error) {
-      // 网络失败不重试旧凭据；安全存储未失效必须向用户准确说明。
-      if (mounted &&
-          generation == _generation &&
-          ((error is HomeTunnelApiException &&
-                  error.code == 'SECURE_STORE_ERROR') ||
-              error is HomeDeskCredentialException)) {
-        _changeState(() => _message = '本次会话已关闭，但无法确认清除保存的登录。请检查本机安全存储后再试。');
+      try {
+        if (localAgent != null) await localAgent.stop();
+      } catch (_) {
+        // Logging out must still clear the account if stopping the runtime fails.
+      }
+      Object? logoutError;
+      try {
+        await api.logout();
+      } catch (error) {
+        logoutError = error;
+      }
+      // The shared account action owns the entire local session, including
+      // startup restoration. Keep sign-in disabled until this erase finishes.
+      try {
+        await _credentialStore.clear();
+      } catch (_) {
+        if (mounted && generation == _generation) {
+          _changeState(() => _message = '本次会话已关闭，但无法确认清除保存的登录。请检查本机安全存储后再试。');
+        }
+        return;
+      }
+      if (logoutError != null &&
+          !(logoutError is HomeTunnelApiException &&
+              logoutError.code == 'SECURE_STORE_ERROR') &&
+          logoutError is! HomeDeskCredentialException &&
+          mounted &&
+          generation == _generation) {
+        _changeState(() => _message = '已退出本机登录，但服务端会话暂未能关闭。');
       }
     } finally {
       api.close();
-    }
-  }
-
-  Future<void> _forgetRemembered() async {
-    final api = _api;
-    if (api == null || _busy || !_ensureAllowed()) return;
-    final generation = _generation;
-    _changeState(() => _busy = true);
-    try {
-      await api.forgetRememberedLogin();
-      if (_current(api, generation)) {
-        _changeState(() {
-          _rememberLogin = false;
-          _message = '已取消记住登录。本次会话仍可继续使用。';
-        });
-      }
-    } catch (error) {
-      if (_current(api, generation)) {
-        _changeState(() => _message = _errorMessage(error));
-      }
-    } finally {
       if (mounted && generation == _generation) {
         _changeState(() => _busy = false);
       }
     }
+  }
+
+  Future<void> _manageDeviceServices(
+      HomeTunnelApi api, int generation, HomeTunnelDevice device) async {
+    if (!_current(api, generation) ||
+        _catalog == null ||
+        !_catalog!.devices.any((entry) => entry.id == device.id)) {
+      throw const HomeTunnelApiException('设备目录已变化，请刷新后重试。', 'DEVICE_NOT_FOUND');
+    }
+    _changeState(() {
+      _deviceId = device.id;
+      _serviceType = 0;
+    });
+    HomeDeskDashboard.navigate('services');
+  }
+
+  Future<void> _deleteDevice(
+      HomeTunnelApi api, int generation, HomeTunnelDevice device) async {
+    if (!_current(api, generation) ||
+        _catalog == null ||
+        !_catalog!.devices.any((entry) => entry.id == device.id)) {
+      throw const HomeTunnelApiException('设备目录已变化，请刷新后重试。', 'DEVICE_NOT_FOUND');
+    }
+    await _operate(device.id, api, generation, () async {
+      await api.deleteDevice(device.id);
+      if (!_current(api, generation)) return;
+      _deviceDrafts.remove(device.id);
+      for (final service
+          in _catalog!.services.where((entry) => entry.deviceId == device.id)) {
+        _serviceDrafts.remove(service.id);
+        _needsReview.remove(service.id);
+      }
+      _changeState(() {
+        _revokedDevices.add(device.id);
+        _needsReview.remove(device.id);
+        _applyCatalog(_catalog!);
+      });
+      final agent = _localAgent ?? widget.localAgent;
+      if (agent?.deviceId == device.id || api.guiDeviceId == device.id) {
+        _localDeviceRevoked = true;
+        _localAgent = null;
+        try {
+          await agent?.stop();
+        } catch (_) {
+          // A completed server revocation must not be replayed if runtime cleanup fails.
+        }
+        _nativeSession?.close();
+        _nativeSession = null;
+      }
+      await _reloadAfterMutation(api, generation);
+    });
   }
 
   Future<T> _operate<T>(String key, HomeTunnelApi api, int generation,
@@ -572,7 +704,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           _message = '操作已完成，但列表暂未刷新。请刷新查看当前设置。';
           if (!api.isSignedIn) {
             _catalog = null;
-            _rememberLogin = false;
           }
         });
       }
@@ -627,8 +758,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final catalog = _catalog;
     if (api == null || catalog == null || _busy || !_ensureAllowed()) return;
     final generation = _generation;
-    final selected =
-        deviceId ?? service?.deviceId ?? catalog.devices.firstOrNull?.id;
+    final localId = _localDeviceId;
+    final selected = deviceId ??
+        service?.deviceId ??
+        (catalog.devices.any((device) => device.id == localId)
+            ? localId
+            : catalog.devices.firstOrNull?.id);
     if (selected == null ||
         !catalog.devices.any((device) => device.id == selected)) return;
     final key = service?.id ?? 'new:$selected';
@@ -746,7 +881,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final generation = _generation;
     final confirmed = await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (context) => NestLinkDialog(
                 title: const Text('删除内网穿透？'),
                 content: Text('删除“${service.name}”后，其访问地址将停止工作。可以随后重新创建服务。'),
                 actions: [
@@ -859,21 +994,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     }
   }
 
-  Future<void> _openManagement() async {
-    if (!_ensureAllowed()) return;
-    if (_api != null) return _open(_api!.base);
-    try {
-      final api = _createApi();
-      final base = api.base;
-      api.close();
-      await _open(base);
-    } catch (_) {
-      if (mounted) {
-        _changeState(() => _message = '请先填写有效的 HTTPS 服务端地址。');
-      }
-    }
-  }
-
   Future<void> _copy(String endpoint) async {
     if (!_ensureAllowed()) return;
     final generation = _generation;
@@ -908,6 +1028,9 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     for (final controller in [_origin, _username, _password]) {
       controller.dispose();
     }
+    for (final node in [_originFocus, _usernameFocus, _passwordFocus]) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -916,7 +1039,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final informational = _message == '访问地址已复制。' ||
         _message == '操作已完成。' ||
         _message == '已恢复记住的登录。' ||
-        _message.startsWith('已取消记住登录');
+        _message.startsWith('已退出本机登录');
     return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Text(_message,
@@ -925,100 +1048,121 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                     informational ? colors.onSurfaceVariant : colors.error)));
   }
 
-  Widget _loginFormContent() => SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
-      child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Card(
-                  child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Center(child: SvgPicture.asset('assets/icon.svg', width: 52, height: 52)),
-                            const SizedBox(height: 14),
-                            Text(nl('登录 nestlink', 'Sign in to nestlink'),
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    fontSize: 18, fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 10),
-                            Text(nl('连接你的自建服务，管理设备、远控与内网穿透。',
-                                'Connect to your own service for devices, remote control and tunnels.'), textAlign: TextAlign.center),
-                            const SizedBox(height: 20),
-                            if (!_allowed) ...[
-                              const Text('请确认内网穿透的 HTTPS 地址和账号授权。穿透服务独立于 P2P 远控设置。'),
-                              if (widget.onNetworkSettings != null)
-                                Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: TextButton.icon(
-                                        onPressed: widget.onNetworkSettings,
-                                        icon: const Icon(Icons.tune_rounded),
-                                        label: const Text('打开网络设置'))),
-                              const SizedBox(height: 12),
-                            ],
-                            HomeDeskFieldLabel(nl('服务端 HTTPS 地址', 'HTTPS service address'),
-                                child: TextField(
-                                    key: const ValueKey('tunnel-origin'),
-                                    controller: _origin,
-                                    enabled: !_busy && _allowed,
-                                    keyboardType: TextInputType.url,
-                                    autocorrect: false,
-                                    decoration: const InputDecoration(
-                                        hintText: 'https://console.example.com',
-                                        border: null))),
-                            const SizedBox(height: 14),
-                            HomeDeskFieldLabel(nl('账号', 'Account'),
-                                child: TextField(
-                                    key: const ValueKey('tunnel-username'),
-                                    controller: _username,
-                                    enabled: !_busy && _allowed,
-                                    autocorrect: false,
-                                    decoration:
-                                        const InputDecoration(border: null))),
-                            const SizedBox(height: 14),
-                            HomeDeskFieldLabel(nl('密码', 'Password'),
-                                child: TextField(
-                                    key: const ValueKey('tunnel-password'),
-                                    controller: _password,
-                                    enabled: !_busy && _allowed,
-                                    obscureText: true,
-                                    enableSuggestions: false,
-                                    autocorrect: false,
-                                    onSubmitted: (_) => _login(),
-                                    decoration:
-                                        const InputDecoration(border: null))),
-                            const SizedBox(height: 16),
-                            CheckboxListTile(
-                                key: const ValueKey('tunnel-remember'),
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(nl('记住登录', 'Remember me')),
-                                subtitle: Text(_credentialStore.supported
-                                    ? nl('使用本机系统安全存储，下次启动时恢复。', 'Restore with this device’s protected storage.')
-                                    : nl('当前平台未启用安全存储，本次登录仅保留在内存中。', 'Protected storage is unavailable; this login is kept in memory.')),
-                                value: _rememberLogin,
-                                onChanged: !_busy &&
-                                        _allowed &&
-                                        _credentialStore.supported
-                                    ? (value) => _changeState(
-                                        () => _rememberLogin = value ?? false)
-                                    : null),
-                            if (_message.isNotEmpty) _messageBox(),
-                            FilledButton.icon(
-                                key: const ValueKey('tunnel-login'),
-                                onPressed: !_busy && _allowed ? _login : null,
-                                icon: const Icon(Icons.login_rounded, size: 20),
-                                label: Text(_busy ? nl('正在登录…', 'Signing in…') : nl('登录并查看', 'Sign in'))),
-                            const SizedBox(height: 8),
-                            TextButton(
-                                onPressed:
-                                    !_busy && _allowed ? _openManagement : null,
-                                child: Text(nl('打开管理台', 'Open console'))),
-                            const SizedBox(height: 8),
-                            Text(nl('密码不会保存。管理台会在浏览器中单独登录。', 'Your password is never saved. The console has its own browser session.'),
-                                style: TextStyle(fontSize: 12)),
-                          ]))))));
+  Widget _loginFormContent() {
+    final t = HomeDeskTokens.of(context);
+    return NestLinkLoginLayout(
+        form: FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Column(
+                key: const ValueKey('nestlink-login-form'),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(nl('登录 NestLink', 'Sign in to NestLink'),
+                      style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w600,
+                          color: t.text)),
+                  const SizedBox(height: 32),
+                  if (!_allowed) ...[
+                    const Text(
+                        '请确认内网穿透的 HTTPS 地址和账号授权。同一台设备支持远程协助和内网穿透，登录一次即可使用。'),
+                    if (widget.onNetworkSettings != null)
+                      Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                              onPressed: widget.onNetworkSettings,
+                              icon: const Icon(Icons.tune_rounded),
+                              label: const Text('打开网络设置'))),
+                    const SizedBox(height: 12),
+                  ],
+                  HomeDeskFieldLabel(
+                      nl('服务端 HTTPS 地址', 'HTTPS service address'),
+                      child: FocusTraversalOrder(
+                          order: const NumericFocusOrder(1),
+                          child: TextField(
+                              key: const ValueKey('tunnel-origin'),
+                              controller: _origin,
+                              focusNode: _originFocus,
+                              autofocus: true,
+                              enabled: !_busy && _allowed,
+                              keyboardType: TextInputType.url,
+                              textInputAction: TextInputAction.next,
+                              autocorrect: false,
+                              decoration: const InputDecoration(
+                                  prefixIcon:
+                                      Icon(Icons.link_rounded, size: 20),
+                                  hintText: 'https://console.example.com',
+                                  border: null)))),
+                  const SizedBox(height: 20),
+                  HomeDeskFieldLabel(nl('账号', 'Account'),
+                      child: FocusTraversalOrder(
+                          order: const NumericFocusOrder(2),
+                          child: TextField(
+                              key: const ValueKey('tunnel-username'),
+                              controller: _username,
+                              focusNode: _usernameFocus,
+                              enabled: !_busy && _allowed,
+                              textInputAction: TextInputAction.next,
+                              autocorrect: false,
+                              decoration: InputDecoration(
+                                  prefixIcon: const Icon(
+                                      Icons.person_outline_rounded,
+                                      size: 20),
+                                  hintText: nl('请输入账号', 'Enter your account'),
+                                  border: null)))),
+                  const SizedBox(height: 20),
+                  HomeDeskFieldLabel(nl('密码', 'Password'),
+                      child: FocusTraversalOrder(
+                          order: const NumericFocusOrder(3),
+                          child: TextField(
+                              key: const ValueKey('tunnel-password'),
+                              controller: _password,
+                              focusNode: _passwordFocus,
+                              enabled: !_busy && _allowed,
+                              obscureText: _obscurePassword,
+                              enableSuggestions: false,
+                              autocorrect: false,
+                              textInputAction: TextInputAction.done,
+                              onSubmitted: (_) => _login(),
+                              decoration: InputDecoration(
+                                  prefixIcon: const Icon(
+                                      Icons.lock_outline_rounded,
+                                      size: 20),
+                                  hintText: nl('请输入密码', 'Enter your password'),
+                                  suffixIcon: Focus(
+                                      skipTraversal: true,
+                                      descendantsAreTraversable: false,
+                                      child: IconButton(
+                                          tooltip: _obscurePassword
+                                              ? nl('显示密码', 'Show password')
+                                              : nl('隐藏密码', 'Hide password'),
+                                          onPressed: _busy
+                                              ? null
+                                              : () => _changeState(() =>
+                                                  _obscurePassword =
+                                                      !_obscurePassword),
+                                          icon: Icon(
+                                              _obscurePassword
+                                                  ? Icons
+                                                      .visibility_off_outlined
+                                                  : Icons.visibility_outlined,
+                                              size: 20))),
+                                  border: null)))),
+                  const SizedBox(height: 28),
+                  if (_message.isNotEmpty) _messageBox(),
+                  FocusTraversalOrder(
+                      order: const NumericFocusOrder(4),
+                      child: FilledButton(
+                          key: const ValueKey('tunnel-login'),
+                          style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(46)),
+                          onPressed: !_busy && _allowed ? _login : null,
+                          child: Text(_busy
+                              ? nl('正在登录…', 'Signing in…')
+                              : nl('登录', 'Sign in')))),
+                ])));
+  }
 
   List<_ServiceGroup> _groups() {
     final catalog = _catalog;
@@ -1026,20 +1170,15 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final groups = <String, _ServiceGroup>{
       for (final device in catalog.devices)
         device.id: _ServiceGroup(
-            device.id, homeDeskDeviceLabel(device.name), device.online,
+            device.id, homeDeskDeviceLabel(device.name), device.tunnelOnline,
             device: device)
     };
     for (final service in catalog.services) {
-      (groups[service.deviceId] ??=
-              _ServiceGroup(service.deviceId, '未返回的设备', null))
-          .services
-          .add(service);
+      groups[service.deviceId]?.services.add(service);
     }
     final visible = groups.values
         .where((group) => _deviceId.isEmpty || group.id == _deviceId)
         .toList();
-    visible.sort((left, right) => (right.device?.favorite == true ? 1 : 0)
-        .compareTo(left.device?.favorite == true ? 1 : 0));
     return visible;
   }
 
@@ -1210,7 +1349,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
 
   Widget _groupCard(_ServiceGroup group) {
     final t = HomeDeskTokens.of(context);
-    final local = _localAgent?.deviceId == group.id;
+    final local = _localDeviceId == group.id;
     final visible = group.services
         .where((service) => switch (_serviceType) {
               1 => service.proxyType == 'http' || service.proxyType == 'https',
@@ -1220,11 +1359,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
             })
         .toList();
     return Padding(
-        padding: const EdgeInsets.only(bottom: HomeDeskTokens.moduleGap),
+        padding: const EdgeInsets.only(bottom: 12),
         child: Container(
+            key: ValueKey('tunnel-device-${group.id}'),
             padding: const EdgeInsets.all(HomeDeskTokens.cardPadding),
             decoration: BoxDecoration(
-                color: t.surface2,
+                color: t.surface,
                 border: Border.all(color: t.border),
                 borderRadius: BorderRadius.circular(HomeDeskTokens.cardRadius)),
             child: Column(
@@ -1242,7 +1382,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                     if (group.device != null)
                       IconButton(
                           key: ValueKey('edit-device-${group.id}'),
-                          tooltip: '管理设备',
+                          tooltip: nl('编辑标签', 'Edit tags'),
                           onPressed: _busy || _entityBusy.contains(group.id)
                               ? null
                               : () => _editDevice(group.device!),
@@ -1261,29 +1401,16 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                             ? HomeDeskTone.success
                             : HomeDeskTone.neutral),
                     _badge('${group.services.length} 项服务'),
-                    if (group.device?.favorite == true)
-                      const Icon(Icons.star_rounded, size: 18),
                     for (final tag in group.device?.tags ?? <String>[])
                       _badge(tag),
                   ]),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
                   if (visible.isEmpty)
-                    Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  group.services.isEmpty
-                                      ? '还没有发布服务'
-                                      : '当前类型下暂无服务',
-                                  style: t.sectionStyle),
-                              if (group.services.isEmpty) ...[
-                                const SizedBox(height: 6),
-                                Text('点击“添加服务”，选择要访问的网页或端口。',
-                                    style: t.auxiliaryStyle)
-                              ],
-                            ]))
+                    Text(
+                        group.services.isEmpty
+                            ? nl('还没有发布服务', 'No services published')
+                            : nl('当前类型下暂无服务', 'No services of this type'),
+                        style: t.auxiliaryStyle)
                   else
                     LayoutBuilder(builder: (context, c) {
                       final scale = MediaQuery.textScalerOf(context).scale(1);
@@ -1297,72 +1424,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                       ]);
                     }),
                 ])));
-  }
-
-  Widget _accountHeader(HomeTunnelApi api) {
-    final t = HomeDeskTokens.of(context);
-    final information = Wrap(
-        spacing: 12,
-        runSpacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          HomeDeskBadge('账号已登录 · ${api.displayName}',
-              tone: HomeDeskTone.success),
-          Text(api.base.host,
-              key: const ValueKey('tunnel-server-host'),
-              style: t.auxiliaryStyle),
-          _connectionNotice(),
-        ]);
-    final actions = Row(mainAxisSize: MainAxisSize.min, children: [
-      IconButton(
-          key: const ValueKey('tunnel-refresh'),
-          tooltip: _busy ? '正在刷新…' : '刷新',
-          onPressed: _busy ? null : _refresh,
-          icon: const Icon(Icons.refresh_rounded, size: 20)),
-      PopupMenuButton<String>(
-          key: const ValueKey('tunnel-account-menu'),
-          tooltip: '账号操作',
-          enabled: !_busy,
-          onSelected: (action) {
-            if (action == 'management') _openManagement();
-            if (action == 'forget') _forgetRemembered();
-            if (action == 'logout') _logout();
-          },
-          itemBuilder: (_) => [
-                const PopupMenuItem(value: 'management', child: Text('打开管理台')),
-                if (api.rememberedLogin)
-                  const PopupMenuItem(
-                      key: ValueKey('tunnel-forget'),
-                      value: 'forget',
-                      child: Text('取消记住登录')),
-                const PopupMenuItem(value: 'logout', child: Text('退出登录'))
-              ],
-          icon: const Icon(Icons.more_horiz_rounded)),
-    ]);
-    return Container(
-        key: const ValueKey('tunnel-account-status'),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-            color: t.surface2,
-            border: Border.all(color: t.border),
-            borderRadius: BorderRadius.circular(HomeDeskTokens.blockRadius)),
-        child: LayoutBuilder(builder: (context, c) {
-          if (c.maxWidth < 420 ||
-              MediaQuery.textScalerOf(context).scale(1) > 1.5) {
-            return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  information,
-                  const SizedBox(height: 6),
-                  Align(alignment: Alignment.centerRight, child: actions)
-                ]);
-          }
-          return Row(children: [
-            Expanded(child: information),
-            const SizedBox(width: 12),
-            actions
-          ]);
-        }));
   }
 
   bool _noticeValid() =>
@@ -1410,6 +1471,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     }
     if (_busy) {
       _noticeMessage('已有操作正在进行，请稍后重试。');
+      return;
+    }
+    if (_localDeviceRevoked) {
+      _noticeMessage('本机设备已删除，请重新登录后再登记。');
       return;
     }
     final api = _api, generation = _generation;
@@ -1463,13 +1528,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
               final valid = _noticeValid();
               final pending = agent?.agentState == 'Degraded' ||
                   agent?.agentState == 'Error';
-              return AlertDialog(
+              return NestLinkDialog(
                   title: Text(agent == null ? '本机接入信息' : _noticeTitle(agent)),
-                  content: SingleChildScrollView(
-                      child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
+                  content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(valid && agent != null
                             ? agent.description
                             : '当前账号或网络许可已变化，请重新登录。'),
@@ -1489,7 +1553,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                                   ? null
                                   : () => _retryLocal(api, generation),
                               child: Text(_busy ? '正在接入…' : '重试本机接入')),
-                      ])),
+                      ]),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(dialogContext),
@@ -1515,45 +1579,60 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
 
   Widget _connectionNotice() {
     final agent = _localAgent ?? widget.localAgent;
-    if (agent == null) {
+    if (agent == null ||
+        (agent.error == null &&
+            agent.agentState != 'Degraded' &&
+            agent.agentState != 'Error' &&
+            (agent.isAttaching || agent.phase == 'running'))) {
       return const SizedBox.shrink();
     }
-    final attention = agent.error != null ||
-        agent.agentState == 'Degraded' ||
-        agent.agentState == 'Error';
-    return TextButton(
-        key: const ValueKey('tunnel-connection-notice'),
-        onPressed: _showConnectionNotice,
-        child: HomeDeskBadge(_noticeTitle(agent),
-            tone: attention
-                ? HomeDeskTone.warning
-                : agent.isAttaching
-                    ? HomeDeskTone.neutral
-                    : HomeDeskTone.success));
+    final problem = agent.error?.message ?? agent.description;
+    return SizedBox(
+        width: 32,
+        height: 32,
+        child: IconButton(
+            key: const ValueKey('tunnel-connection-notice'),
+            tooltip: problem,
+            padding: EdgeInsets.zero,
+            color: Theme.of(context).colorScheme.error,
+            onPressed: _showConnectionNotice,
+            icon: const Icon(Icons.error_outline_rounded,
+                key: ValueKey('tunnel-connection-warning'), size: 20)));
   }
 
   Widget _catalogToolbar(HomeTunnelCatalog? catalog) {
     final t = HomeDeskTokens.of(context);
-    final heading =
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('内网穿透', style: t.titleStyle),
-      const SizedBox(height: 4),
-      Text(
-          '${catalog?.devices.length ?? 0} 台设备 · ${catalog?.services.length ?? 0} 项服务',
-          style: t.auxiliaryStyle)
+    final controlHeight = homeDeskControlHeight(context);
+    final dropdownTextHeight = MediaQuery.textScalerOf(context)
+        .scale(Theme.of(context).textTheme.titleMedium?.fontSize ?? 16)
+        .clamp(24.0, controlHeight);
+    final heading = Row(mainAxisSize: MainAxisSize.min, children: [
+      Flexible(child: Text(nl('内网穿透', 'Tunnels'), style: t.titleStyle)),
+      _connectionNotice(),
     ]);
+    final refresh = SizedBox.square(
+        dimension: controlHeight,
+        child: IconButton(
+            key: const ValueKey('tunnel-refresh'),
+            tooltip: _busy ? '正在刷新…' : '刷新',
+            onPressed: _busy ? null : _refresh,
+            icon: _busy || _entityBusy.isNotEmpty
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.refresh_rounded, size: 20)));
     final filter = catalog != null && catalog.devices.length > 1
         ? SizedBox(
             width: 184,
-            height: HomeDeskTokens.buttonHeight *
-                MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0),
+            height: controlHeight,
             child: DropdownButtonFormField<String>(
                 key: const ValueKey('tunnel-device-filter'),
                 value: _deviceId,
                 isExpanded: true,
-                decoration: const InputDecoration(
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                decoration: InputDecoration(
+                    contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: (controlHeight - dropdownTextHeight) / 2)),
                 items: [
                   const DropdownMenuItem(value: '', child: Text('全部设备')),
                   for (final device in catalog.devices)
@@ -1571,30 +1650,37 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         : null;
     final add = catalog == null || catalog.devices.isEmpty
         ? null
-        : FilledButton.icon(
-            key: const ValueKey('tunnel-add-service'),
-            onPressed: _busy
-                ? null
-                : () => _editService(
-                    deviceId: _deviceId.isEmpty ? null : _deviceId),
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text('添加服务'));
+        : SizedBox(
+            height: controlHeight,
+            child: FilledButton.icon(
+                key: const ValueKey('tunnel-add-service'),
+                onPressed: _busy
+                    ? null
+                    : () => _editService(
+                        deviceId: _deviceId.isEmpty ? null : _deviceId),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('添加服务')));
     return LayoutBuilder(builder: (context, c) {
       final controls = Wrap(
           spacing: 12,
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [if (filter != null) filter, if (add != null) add]);
-      if (c.maxWidth >= 620 &&
+      if (c.maxWidth >= 560 &&
           MediaQuery.textScalerOf(context).scale(1) <= 1.5) {
-        return Row(children: [
+        return Row(key: const ValueKey('tunnel-title-tools'), children: [
           Expanded(child: heading),
           const SizedBox(width: 12),
-          controls
+          controls,
+          const SizedBox(width: 12),
+          refresh,
         ]);
       }
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        heading,
+        Row(key: const ValueKey('tunnel-title-tools'), children: [
+          Expanded(child: heading),
+          refresh,
+        ]),
         if (filter != null || add != null) ...[
           const SizedBox(height: 12),
           controls
@@ -1604,40 +1690,33 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   }
 
   Widget _catalogView() {
-    final api = _api!, catalog = _catalog, groups = _groups();
+    final catalog = _catalog, groups = _groups();
     final t = HomeDeskTokens.of(context);
     return CustomScrollView(slivers: [
       SliverToBoxAdapter(
           child: Padding(
-              padding: const EdgeInsets.only(
-                  top: 24, bottom: HomeDeskTokens.moduleGap),
+              padding: const EdgeInsets.only(top: 16, bottom: 16),
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _catalogToolbar(catalog),
                     const SizedBox(height: 16),
-                    _accountHeader(api),
-                    const SizedBox(height: 16),
-                    HomeDeskSegments(
-                        labels: const ['全部', '网页', 'TCP 端口', 'UDP 端口'],
-                        selected: _serviceType,
-                        onSelected: (i) => setState(() => _serviceType = i),
-                        keyPrefix: 'service-type'),
-                    if (catalog != null &&
-                        !catalog.capabilities.tcpCanCreate &&
-                        !catalog.capabilities.udpCanCreate)
-                      Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text('TCP / UDP 新建能力尚未由服务端开放，当前可添加网页服务。',
-                              style: t.auxiliaryStyle)),
+                    Wrap(
+                        spacing: 16,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          HomeDeskSegments(
+                              labels: const ['全部', '网页', 'TCP 端口', 'UDP 端口'],
+                              selected: _serviceType,
+                              onSelected: (i) =>
+                                  setState(() => _serviceType = i),
+                              keyPrefix: 'service-type'),
+                        ]),
                     if (_message.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       _messageBox()
                     ],
-                    if (_busy || _entityBusy.isNotEmpty)
-                      const Padding(
-                          padding: EdgeInsets.only(top: 12),
-                          child: LinearProgressIndicator()),
                     if (catalog != null && groups.isEmpty)
                       Padding(
                           padding: const EdgeInsets.only(top: 20),
@@ -1649,9 +1728,6 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           delegate: SliverChildBuilderDelegate(
               (context, i) => _groupCard(groups[i]),
               childCount: groups.length)),
-      SliverToBoxAdapter(
-          child:
-              Text('内网穿透用于网页和端口转发。远程桌面请使用设备 ID 连接。', style: t.auxiliaryStyle)),
       const SliverToBoxAdapter(child: SizedBox(height: 24)),
     ]);
   }

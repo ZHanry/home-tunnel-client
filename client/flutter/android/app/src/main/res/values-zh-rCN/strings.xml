@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NestLink</string>
+    <string name="input_service_name">NestLink 输入控制</string>
+    <string name="app_started">NestLink 已打开</string>
+    <string name="screen_sharing_channel">NestLink 屏幕共享</string>
+    <string name="screen_sharing_channel_description">屏幕共享和已授权的远程连接。</string>
+    <string name="accessibility_service_description">使用 NestLink 共享屏幕时，允许已授权的设备通过触控操作本机。</string>
+</resources>

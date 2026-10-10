@@ -8,7 +8,10 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_hbb/homedesk_dashboard.dart';
+import 'package:flutter_hbb/homedesk_account.dart';
+import 'package:flutter_hbb/homedesk_local_agent.dart';
 import 'package:flutter_hbb/homedesk_services.dart';
+import 'package:flutter_hbb/homedesk_theme.dart';
 import 'package:flutter_hbb/homedesk_service_editor.dart';
 import 'package:flutter_hbb/homedesk_tunnel_api.dart';
 import 'package:flutter_hbb/homedesk_tunnel_session.dart';
@@ -32,6 +35,8 @@ class FixtureCredentialStore implements HomeDeskCredentialStorage {
   int clears = 0;
   int generation = 0;
   int peeks = 0;
+  bool clearFails = false;
+  Completer<void>? pendingClear;
   FixtureCredentialStore({this.supported = false, this.record});
 
   @override
@@ -80,6 +85,8 @@ class FixtureCredentialStore implements HomeDeskCredentialStorage {
   @override
   Future<void> clear() async {
     clears++;
+    if (pendingClear != null) await pendingClear!.future;
+    if (clearFails) throw StateError('fixture credential erase failed');
     generation++;
     record = null;
   }
@@ -129,6 +136,11 @@ class PortalFixtureApi extends HomeTunnelApi {
   int toggles = 0;
   int deletes = 0;
   int deviceUpdates = 0;
+  int deviceDeletes = 0;
+  bool keepDeletedDeviceInCatalog = false;
+  String? lastDeletedDevice;
+  Completer<void>? pendingDeviceDelete;
+  Completer<void>? pendingLogout;
   bool rememberRequested = false;
   bool remembered = false;
   bool restoreFails = false;
@@ -192,7 +204,25 @@ class PortalFixtureApi extends HomeTunnelApi {
   Future<void> logout() async {
     logouts++;
     signedIn = false;
+    if (pendingLogout != null) await pendingLogout!.future;
     if (logoutError != null) throw logoutError!;
+  }
+
+  @override
+  Future<List<HomeDeskRemoteBinding>> remoteBindings() async => [];
+
+  @override
+  Future<void> deleteDevice(String id) async {
+    deviceDeletes++;
+    lastDeletedDevice = id;
+    if (pendingDeviceDelete != null) await pendingDeviceDelete!.future;
+    if (mutationError != null) throw mutationError!;
+    if (!keepDeletedDeviceInCatalog) {
+      result = HomeTunnelCatalog(
+          devices: result.devices.where((device) => device.id != id).toList(),
+          services: result.services,
+          capabilities: result.capabilities);
+    }
   }
 
   @override
@@ -329,12 +359,12 @@ Widget portalHost(
         bool dark = false,
         GlobalKey? paint}) =>
     MaterialApp(
-        theme: ThemeData(
+        theme: homeDeskTheme(ThemeData(
             brightness: dark ? Brightness.dark : Brightness.light,
             fontFamily:
                 Platform.environment.containsKey('HOMEDESK_SERVICES_PREVIEW')
                     ? 'HomeDeskPreview'
-                    : null),
+                    : null)),
         builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context)
                 .copyWith(textScaler: TextScaler.linear(scale)),
@@ -360,9 +390,15 @@ Future<void> enterCredentials(WidgetTester tester) async {
 
 HomeDeskServices fixturePage(PortalFixtureApi api,
         {FixtureCredentialStore? store,
+        HomeDeskAccount? account,
+        HomeDeskLocalAgent? localAgent,
+        Future<void> Function(HomeTunnelApi, int)? onRetryLocal,
         String Function(String)? readOption,
         Future<void> Function(String)? saveOrigin}) =>
     HomeDeskServices(
+        account: account,
+        localAgent: localAgent,
+        onRetryLocal: onRetryLocal,
         readOption: readOption ?? portalOption,
         saveOrigin: saveOrigin ?? (_) async {},
         credentialStoreFactory: () => store ?? FixtureCredentialStore(),
@@ -378,7 +414,260 @@ HomeDeskPortalCredential rememberedFixture(
         refreshToken: 'fixture_refresh_token_0001',
         refreshExpiresAt: DateTime.utc(2100));
 
+class FixtureLocalAgent extends HomeDeskLocalAgent {
+  int stops = 0;
+  String status = '';
+  String connectionPhase = 'running';
+  bool attaching = false;
+  FixtureLocalAgent()
+      : super(
+            send: (_) async {},
+            read: () => '{}',
+            permission: () => 'permit-fixture',
+            isAllowed: () => true,
+            name: '合成本机');
+  @override
+  String get deviceId => 'fixture-nas';
+  @override
+  String get phase => connectionPhase;
+  @override
+  String get agentState => status;
+  @override
+  bool get isAttaching => attaching;
+  @override
+  Future<void> stop() async {
+    stops++;
+  }
+}
+
+class LocalDeviceFixtureApi extends PortalFixtureApi {
+  @override
+  String get guiDeviceId => 'fixture-local';
+}
+
 void main() {
+  testWidgets('穿透标题保留刷新，正常状态不显示角标或重复状态条', (tester) async {
+    final api = PortalFixtureApi(), agent = FixtureLocalAgent();
+    await tester
+        .pumpWidget(portalHost(page: fixturePage(api, localAgent: agent)));
+    await enterCredentials(tester);
+    expect(find.text('内网穿透'), findsOneWidget);
+    expect(find.byKey(const ValueKey('tunnel-account-status')), findsNothing);
+    expect(find.byKey(const ValueKey('tunnel-server-host')), findsNothing);
+    expect(find.text('console.example.com'), findsNothing);
+    expect(find.text('当前可新建网页服务'), findsNothing);
+    expect(find.textContaining(RegExp(r'^\d+ 台设备 · \d+ 项服务$')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('tunnel-connection-warning')), findsNothing);
+    final title =
+        tester.getRect(find.byKey(const ValueKey('tunnel-title-tools')));
+    final refresh =
+        tester.getRect(find.byKey(const ValueKey('tunnel-refresh')));
+    expect(refresh.right, closeTo(title.right, .5));
+    expect(refresh.center.dy, closeTo(title.center.dy, .5));
+    final reads = api.loads;
+    agent.connectionPhase = 'stopped';
+    agent.attaching = true;
+    await tester.tap(find.byKey(const ValueKey('tunnel-refresh')));
+    await tester.pumpAndSettle();
+    expect(api.loads, reads + 1);
+    expect(
+        find.byKey(const ValueKey('tunnel-connection-warning')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('本机接入异常角标悬停显示具体原因，点击保留安全重试入口', (tester) async {
+    final api = PortalFixtureApi();
+    final agent = FixtureLocalAgent()
+      ..error = const HomeDeskAgentException('RUNTIME_MISSING');
+    await tester
+        .pumpWidget(portalHost(page: fixturePage(api, localAgent: agent)));
+    await enterCredentials(tester);
+    final badge = find.byKey(const ValueKey('tunnel-connection-notice'));
+    expect(find.byKey(const ValueKey('tunnel-connection-warning')),
+        findsOneWidget);
+    expect(tester.widget<IconButton>(badge).tooltip, agent.error!.message);
+    final title = find.text('内网穿透');
+    expect(tester.getRect(badge).left,
+        greaterThanOrEqualTo(tester.getRect(title).right));
+    final mouse = await tester.createGesture(kind: ui.PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(badge));
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pumpAndSettle();
+    expect(find.text(agent.error!.message), findsOneWidget);
+    await mouse.removePointer();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    await tester.tap(badge);
+    await tester.pumpAndSettle();
+    expect(find.text(agent.error!.message), findsOneWidget);
+    expect(find.byKey(const ValueKey('tunnel-retry-local')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tunnel-account-status')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('隧道退化角标说明FRPS连接问题，恢复后移除角标', (tester) async {
+    final api = PortalFixtureApi();
+    final agent = FixtureLocalAgent()..status = 'Degraded';
+    await tester
+        .pumpWidget(portalHost(page: fixturePage(api, localAgent: agent)));
+    await enterCredentials(tester);
+    final badge = find.byKey(const ValueKey('tunnel-connection-notice'));
+    expect(tester.widget<IconButton>(badge).tooltip, contains('FRPS'));
+    expect(tester.widget<IconButton>(badge).tooltip, agent.description);
+    agent.status = 'Online';
+    await tester.tap(find.byKey(const ValueKey('tunnel-refresh')));
+    await tester.pumpAndSettle();
+    expect(badge, findsNothing);
+    expect(
+        find.byKey(const ValueKey('tunnel-connection-warning')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('登录字段按 Tab 和 Shift+Tab 顺序导航，密码显隐不打断字段导航', (tester) async {
+    final api = PortalFixtureApi();
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await tester.pumpAndSettle();
+    bool focused(String key) =>
+        tester.widget<TextField>(find.byKey(ValueKey(key))).focusNode!.hasFocus;
+    expect(focused('tunnel-origin'), isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(focused('tunnel-username'), isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(focused('tunnel-password'), isTrue);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(focused('tunnel-username'), isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(focused('tunnel-password'), isFalse);
+    final buttonFocus =
+        Focus.of(tester.element(find.text('登录')), scopeOk: true);
+    expect(buttonFocus.hasFocus, isTrue);
+    expect(api.logins, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('每个登录字段支持回车和数字键盘回车，忙时不重复提交', (tester) async {
+    for (final key in [
+      LogicalKeyboardKey.enter,
+      LogicalKeyboardKey.numpadEnter
+    ]) {
+      for (final field in [
+        'tunnel-origin',
+        'tunnel-username',
+        'tunnel-password'
+      ]) {
+        final api = PortalFixtureApi()
+          ..pendingCatalog = Completer<HomeTunnelCatalog>();
+        await tester.pumpWidget(portalHost(page: fixturePage(api)));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+            find.byKey(const ValueKey('tunnel-username')), 'fixture-user');
+        await tester.enterText(
+            find.byKey(const ValueKey('tunnel-password')), 'fixture-password');
+        final node =
+            tester.widget<TextField>(find.byKey(ValueKey(field))).focusNode!;
+        node.requestFocus();
+        await tester.pump();
+        await tester.sendKeyEvent(key);
+        await tester.sendKeyEvent(key);
+        await tester.pump();
+        expect(api.logins, 1, reason: '$field / $key');
+        expect(api.loads, 1);
+        api.pendingCatalog!.complete(sampleCatalog());
+        await tester.pumpAndSettle();
+        expect(find.text('家庭相册'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      }
+    }
+  });
+
+  testWidgets('输入框鼠标悬停填充色不变，键盘焦点边框保持可见', (tester) async {
+    final paint = GlobalKey();
+    await tester.pumpWidget(
+        portalHost(paint: paint, page: fixturePage(PortalFixtureApi())));
+    await tester.pumpAndSettle();
+    final target = find.byKey(const ValueKey('tunnel-username'));
+    final boundary =
+        paint.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final point = boundary.globalToLocal(
+        tester.getRect(target).bottomRight - const Offset(12, 12));
+    Future<int> fillPixel() async {
+      final image = await boundary.toImage(pixelRatio: 1);
+      final pixels = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final index = (point.dy.floor() * image.width + point.dx.floor()) * 4;
+      final value = pixels!.getUint32(index);
+      image.dispose();
+      return value;
+    }
+
+    final before = await tester.runAsync(fillPixel);
+    final mouse = await tester.createGesture(kind: ui.PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(1, 1));
+    await mouse.moveTo(tester.getCenter(target));
+    await tester.pumpAndSettle();
+    final after = await tester.runAsync(fillPixel);
+    expect(after, before);
+    final decoration = Theme.of(tester.element(target)).inputDecorationTheme;
+    expect(decoration.focusedBorder!.borderSide.color,
+        isNot(decoration.enabledBorder!.borderSide.color));
+    await mouse.removePointer();
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('键盘登录仍校验 HTTPS 地址和当前网络许可', (tester) async {
+    var allowed = true, builds = 0, saves = 0;
+    await tester.pumpWidget(portalHost(
+        page: HomeDeskServices(
+      readOption: (key) => portalOption(key, allowed: allowed),
+      saveOrigin: (_) async => saves++,
+      credentialStoreFactory: () => FixtureCredentialStore(),
+      apiBuilder: (origin, {required isAllowed, credentialStorage}) {
+        builds++;
+        return PortalFixtureApi();
+      },
+    )));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tunnel-origin')),
+        'http://unapproved.example.com');
+    await tester.enterText(
+        find.byKey(const ValueKey('tunnel-username')), 'fixture-user');
+    await tester.enterText(
+        find.byKey(const ValueKey('tunnel-password')), 'fixture-password');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('请输入有效的 HTTPS'), findsOneWidget);
+    expect(builds, 0);
+    expect(saves, 0);
+    await tester.enterText(find.byKey(const ValueKey('tunnel-origin')),
+        'https://console.example.com');
+    allowed = false;
+    await tester.sendKeyEvent(LogicalKeyboardKey.numpadEnter);
+    await tester.pump();
+    expect(builds, 0);
+    expect(saves, 0);
+    expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('tunnel-login')))
+            .onPressed,
+        isNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('首次进入不请求，未批准家庭服务地址时禁用登录', (tester) async {
     var built = 0;
     await tester.pumpWidget(portalHost(
@@ -396,18 +685,21 @@ void main() {
     final button =
         tester.widget<FilledButton>(find.byKey(const ValueKey('tunnel-login')));
     expect(button.onPressed, isNull);
-    expect(find.textContaining('穿透服务独立于 P2P'), findsOneWidget);
+    expect(find.textContaining('同一台设备支持远程协助和内网穿透'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('登录显示设备与服务，网页打开和原始端点复制不传凭据', (tester) async {
     final api = PortalFixtureApi();
+    final account = HomeDeskAccount();
+    addTearDown(account.dispose);
     final opened = <Uri>[];
     final copied = <String>[];
     await tester.pumpWidget(portalHost(
         page: HomeDeskServices(
       credentialStoreFactory: () => FixtureCredentialStore(),
+      account: account,
       saveOrigin: (_) async {},
       readOption: portalOption,
       apiBuilder: (origin, {required isAllowed, credentialStorage}) => api,
@@ -435,18 +727,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened.single.toString(), 'https://album.example.com');
     expect(copied.single, 'edge.example.com:10000');
-    await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('tunnel-account-menu')), -180,
-        scrollable: find.byType(Scrollable).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('打开管理台'));
-    await tester.pumpAndSettle();
-    expect(opened.last.toString(), 'https://console.example.com');
-    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('退出登录'));
+    expect(find.byKey(const ValueKey('tunnel-account-menu')), findsNothing);
+    expect(find.text('打开管理台'), findsNothing);
+    expect(find.text('退出登录'), findsNothing);
+    expect(find.text('取消记住登录'), findsNothing);
+    await account.signOut();
     await tester.pumpAndSettle();
     expect(api.logouts, 1);
     expect(api.closed, isTrue);
@@ -549,6 +834,33 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('空服务设备使用紧凑布局，旧收藏数据不显示也不改变设备顺序', (tester) async {
+    final api = PortalFixtureApi()
+      ..result = HomeTunnelCatalog(devices: const [
+        HomeTunnelDevice(
+            id: 'fixture-first', name: '第一台设备', platform: '', online: false),
+        HomeTunnelDevice(
+            id: 'fixture-legacy',
+            name: '旧收藏设备',
+            platform: '',
+            online: true,
+            favorite: true),
+      ], services: []);
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await enterCredentials(tester);
+    final first = find.byKey(const ValueKey('tunnel-device-fixture-first'));
+    final legacy = find.byKey(const ValueKey('tunnel-device-fixture-legacy'));
+    await tester.ensureVisible(legacy);
+    await tester.pumpAndSettle();
+    expect(tester.getRect(first).top, lessThan(tester.getRect(legacy).top));
+    expect(tester.getSize(first).height, lessThanOrEqualTo(150));
+    expect(tester.getSize(legacy).height, lessThanOrEqualTo(150));
+    expect(find.byIcon(Icons.star_rounded), findsNothing);
+    expect(find.text('添加服务'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('窄窗口和双倍字体登录及目录可滚动', (tester) async {
     tester.view.physicalSize = const Size(360, 640);
     tester.view.devicePixelRatio = 1;
@@ -599,7 +911,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.closed, isTrue);
     expect(find.text('家庭相册'), findsNothing);
-    expect(find.text('登录并查看'), findsOneWidget);
+    expect(find.text('登录'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -639,6 +951,119 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     }
+  });
+
+  testWidgets('新增服务默认选本机，显式设备筛选与原服务设备保持优先', (tester) async {
+    final api = LocalDeviceFixtureApi()
+      ..result = HomeTunnelCatalog(devices: [
+        ...sampleCatalog().devices,
+        const HomeTunnelDevice(
+            id: 'fixture-local',
+            name: '当前电脑',
+            platform: 'windows',
+            online: true),
+      ], services: sampleCatalog().services);
+    final account = HomeDeskAccount();
+    addTearDown(account.dispose);
+    await tester
+        .pumpWidget(portalHost(page: fixturePage(api, account: account)));
+    await enterCredentials(tester);
+    expect(account.localDeviceId, 'fixture-local');
+    await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('tunnel-device-fixture-local')), 140,
+        scrollable: find.byType(Scrollable).first);
+    expect(
+        find.descendant(
+            of: find.byKey(const ValueKey('tunnel-device-fixture-local')),
+            matching: find.text('● 本机')),
+        findsOneWidget);
+    tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position
+        .jumpTo(0);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('tunnel-add-service')));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<HomeDeskServiceEditor>(find.byType(HomeDeskServiceEditor))
+            .initial
+            .deviceId,
+        'fixture-local');
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    await account.manageDeviceServices!(account.catalog!.devices.first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('tunnel-add-service')));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<HomeDeskServiceEditor>(find.byType(HomeDeskServiceEditor))
+            .initial
+            .deviceId,
+        'fixture-nas');
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find
+        .byKey(ValueKey('edit-service-${sampleCatalog().services.first.id}')));
+    await tester.tap(find
+        .byKey(ValueKey('edit-service-${sampleCatalog().services.first.id}')));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<HomeDeskServiceEditor>(find.byType(HomeDeskServiceEditor))
+            .initial
+            .deviceId,
+        'fixture-nas');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('穿透身份映射到同一设备后，本机标识和新增服务使用统一设备 ID', (tester) async {
+    final api = PortalFixtureApi()
+      ..result = HomeTunnelCatalog(devices: const [
+        HomeTunnelDevice(
+            id: 'fixture-other',
+            name: '另一台设备',
+            platform: 'windows',
+            online: true),
+        HomeTunnelDevice(
+            id: 'fixture-local',
+            name: '当前电脑',
+            platform: 'windows',
+            online: true,
+            tunnelDeviceId: 'fixture-nas'),
+      ], services: []);
+    final account = HomeDeskAccount();
+    addTearDown(account.dispose);
+    await tester.pumpWidget(portalHost(
+        page: fixturePage(api,
+            account: account, localAgent: FixtureLocalAgent())));
+    await enterCredentials(tester);
+    expect(account.localDeviceId, 'fixture-local');
+    await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('tunnel-device-fixture-local')), 140,
+        scrollable: find.byType(Scrollable).first);
+    expect(
+        find.descendant(
+            of: find.byKey(const ValueKey('tunnel-device-fixture-local')),
+            matching: find.text('● 本机')),
+        findsOneWidget);
+    tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position
+        .jumpTo(0);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('tunnel-add-service')));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<HomeDeskServiceEditor>(find.byType(HomeDeskServiceEditor))
+            .initial
+            .deviceId,
+        'fixture-local');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('创建网页服务先本地校验，HTTPS作为本地协议提交', (tester) async {
@@ -852,7 +1277,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('设备管理只编辑标签和收藏，不伪造设备改名', (tester) async {
+  testWidgets('设备管理只编辑标签，无收藏入口且不伪造设备改名', (tester) async {
     final api = PortalFixtureApi();
     await tester.pumpWidget(portalHost(page: fixturePage(api)));
     await enterCredentials(tester);
@@ -863,38 +1288,49 @@ void main() {
     expect(find.text('设备名称由该设备上的 nestlink 客户端修改。'), findsOneWidget);
     await tester.enterText(
         find.byKey(const ValueKey('device-tags')), '书房, 常开, 书房');
-    await tester.tap(find.byKey(const ValueKey('device-favorite')));
+    expect(find.byKey(const ValueKey('device-favorite')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('device-save')));
     await tester.pumpAndSettle();
     expect(api.deviceUpdates, 1);
     expect(api.lastVersion, 1);
     expect(api.lastTags, ['书房', '常开']);
-    expect(api.lastFavorite, isTrue);
+    expect(api.lastFavorite, isFalse);
     expect(find.text('书房'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('记住登录默认不勾选，人工勾选才传给账号API', (tester) async {
+  testWidgets('登录默认安全记住会话，穿透菜单不提供退出或取消自动登录入口', (tester) async {
+    tester.view.physicalSize = const Size(1120, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final api = PortalFixtureApi();
     await tester.pumpWidget(portalHost(
         page:
             fixturePage(api, store: FixtureCredentialStore(supported: true))));
     await tester.pumpAndSettle();
-    final remember = find.byKey(const ValueKey('tunnel-remember'));
-    expect(tester.widget<CheckboxListTile>(remember).value, isFalse);
-    await tester.ensureVisible(remember);
-    await tester.tap(remember);
-    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('tunnel-remember')), findsNothing);
+    expect(find.text('打开管理台'), findsNothing);
+    expect(find.text('登录并查看'), findsNothing);
+    expect(find.text('登录'), findsOneWidget);
+    expect(
+        tester
+            .getRect(find.byKey(const ValueKey('nestlink-login-brand')))
+            .right,
+        lessThan(tester
+            .getRect(find.byKey(const ValueKey('nestlink-login-form')))
+            .left));
     await enterCredentials(tester);
     expect(api.rememberRequested, isTrue);
-    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('tunnel-forget')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('tunnel-forget')));
-    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('tunnel-account-menu')), findsNothing);
+    expect(find.text('打开管理台'), findsNothing);
+    expect(find.byKey(const ValueKey('tunnel-forget')), findsNothing);
+    expect(find.text('退出登录'), findsNothing);
+    expect(find.text('取消自动登录'), findsNothing);
+    expect(find.text('取消记住登录'), findsNothing);
     expect(api.isSignedIn, isTrue);
-    expect(api.rememberedLogin, isFalse);
+    expect(api.rememberedLogin, isTrue);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -914,6 +1350,203 @@ void main() {
     expect(store.record, isNotNull);
     expect(store.clears, 0);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('统一账号退出等待安全存储清除，重复点击只退出一次且下次不自动恢复', (tester) async {
+    final store =
+        FixtureCredentialStore(supported: true, record: rememberedFixture());
+    final account = HomeDeskAccount();
+    final api = PortalFixtureApi();
+    addTearDown(account.dispose);
+    await tester.pumpWidget(
+        portalHost(page: fixturePage(api, store: store, account: account)));
+    await tester.pumpAndSettle();
+    expect(api.restores, 1);
+    expect(account.signedIn, isTrue);
+    store.pendingClear = Completer<void>();
+    final first = account.signOut();
+    final duplicate = account.signOut();
+    expect(identical(first, duplicate), isTrue);
+    await tester.pump();
+    expect(api.logouts, 1);
+    expect(account.signedIn, isFalse);
+    expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('tunnel-login')))
+            .onPressed,
+        isNull);
+    expect(store.record, isNotNull);
+    store.pendingClear!.complete();
+    await first;
+    await tester.pumpAndSettle();
+    expect(store.record, isNull);
+    expect(api.closed, isTrue);
+    expect(find.text('家庭相册'), findsNothing);
+    await tester.pump(const Duration(seconds: 10));
+    expect(api.restores, 1);
+    await tester.pumpWidget(const SizedBox());
+    final restarted = PortalFixtureApi();
+    await tester.pumpWidget(portalHost(
+        page: fixturePage(restarted, store: store, account: account)));
+    await tester.pumpAndSettle();
+    expect(restarted.restores, 0);
+    expect(restarted.logins, 0);
+    expect(find.text('登录'), findsOneWidget);
+    await enterCredentials(tester);
+    expect(restarted.logins, 1);
+    expect(restarted.rememberRequested, isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('账号无owner回调时退出兼容调用API并关闭会话', (tester) async {
+    final account = HomeDeskAccount();
+    final api = PortalFixtureApi()..signedIn = true;
+    addTearDown(account.dispose);
+    account.publish(api, sampleCatalog(), '', (_) async {});
+    await account.signOut();
+    expect(account.api, isNull);
+    expect(api.logouts, 1);
+    expect(api.closed, isTrue);
+  });
+
+  testWidgets('统一退出遇到网络错误仍清除本机恢复凭据', (tester) async {
+    final store =
+        FixtureCredentialStore(supported: true, record: rememberedFixture());
+    final api = PortalFixtureApi()
+      ..logoutError = const HomeTunnelApiException('服务暂时离线。', 'NETWORK_ERROR');
+    final account = HomeDeskAccount();
+    addTearDown(account.dispose);
+    await tester.pumpWidget(
+        portalHost(page: fixturePage(api, store: store, account: account)));
+    await tester.pumpAndSettle();
+    await account.signOut();
+    await tester.pumpAndSettle();
+    expect(store.record, isNull);
+    expect(api.closed, isTrue);
+    expect(account.signedIn, isFalse);
+    expect(find.text('已退出本机登录，但服务端会话暂未能关闭。'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('共享设备管理选择穿透筛选，确认删除后隐藏撤销设备及其遗留服务', (tester) async {
+    final account = HomeDeskAccount();
+    final api = PortalFixtureApi();
+    addTearDown(account.dispose);
+    await tester
+        .pumpWidget(portalHost(page: fixturePage(api, account: account)));
+    await enterCredentials(tester);
+    final device = account.catalog!.devices.first;
+    final manage = account.manageDeviceServices!;
+    final remove = account.deleteDevice!;
+    await manage(device);
+    await tester.pumpAndSettle();
+    final filter = tester.widget<DropdownButtonFormField<String>>(
+        find.byKey(const ValueKey('tunnel-device-filter')));
+    expect(filter.initialValue, device.id);
+    expect(find.byKey(const ValueKey('tunnel-device-fixture-offline')),
+        findsNothing);
+    api.pendingDeviceDelete = Completer<void>();
+    api.keepDeletedDeviceInCatalog = true;
+    final deleting = remove(device);
+    await tester.pump();
+    expect(find.text('家庭相册'), findsOneWidget);
+    expect(api.deviceDeletes, 1);
+    api.pendingDeviceDelete!.complete();
+    await deleting;
+    await tester.pumpAndSettle();
+    expect(account.catalog!.devices.any((entry) => entry.id == device.id),
+        isFalse);
+    expect(find.text('家庭相册'), findsNothing);
+    expect(find.text('SSH 连接'), findsNothing);
+    expect(find.text('未返回的设备'), findsNothing);
+    expect(find.text('1 台设备 · 0 项服务'), findsNothing);
+    expect(account.catalog!.devices.single.id, 'fixture-offline');
+    expect(api.loads, lessThan(10));
+    await expectLater(remove(device), throwsA(isA<HomeTunnelApiException>()));
+    expect(api.deviceDeletes, 1);
+    await account.signOut();
+    await expectLater(manage(device), throwsA(isA<HomeTunnelApiException>()));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('设备撤销失败保留原目录，不把孤儿服务伪造成可操作设备', (tester) async {
+    final account = HomeDeskAccount();
+    final api = PortalFixtureApi();
+    addTearDown(account.dispose);
+    await tester
+        .pumpWidget(portalHost(page: fixturePage(api, account: account)));
+    await enterCredentials(tester);
+    final device = account.catalog!.devices.first;
+    api.mutationError =
+        const HomeTunnelApiException('本次撤销结果未确认，请刷新目录。', 'MUTATION_UNKNOWN');
+    await expectLater(
+        account.deleteDevice!(device), throwsA(isA<HomeTunnelApiException>()));
+    await tester.pumpAndSettle();
+    expect(find.text('家庭相册'), findsOneWidget);
+    expect(
+        account.catalog!.devices.any((entry) => entry.id == device.id), isTrue);
+    api.mutationError = null;
+    api.result = HomeTunnelCatalog(
+        devices:
+            api.result.devices.where((entry) => entry.id != device.id).toList(),
+        services: api.result.services);
+    await tester.tap(find.byKey(const ValueKey('tunnel-refresh')));
+    await tester.pumpAndSettle();
+    expect(find.text('家庭相册'), findsNothing);
+    expect(find.text('未返回的设备'), findsNothing);
+    expect(
+        find.byKey(const ValueKey('edit-service-fixture-web')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('删除本机停止接入，刷新或重试不重新登记，旧回调撤权后不可调用', (tester) async {
+    final account = HomeDeskAccount();
+    final api = PortalFixtureApi();
+    final agent = FixtureLocalAgent();
+    var retries = 0;
+    var allowed = true;
+    addTearDown(account.dispose);
+    await tester.pumpWidget(portalHost(
+        page: fixturePage(api,
+            account: account,
+            localAgent: agent,
+            readOption: (key) => portalOption(key, allowed: allowed),
+            onRetryLocal: (_, __) async {
+              retries++;
+            })));
+    await enterCredentials(tester);
+    final device = account.catalog!.devices.first;
+    final remove = account.deleteDevice!;
+    await remove(device);
+    await tester.pumpAndSettle();
+    expect(agent.stops, 1);
+    expect(api.deviceDeletes, 1);
+    await tester.tap(find.byKey(const ValueKey('tunnel-refresh')));
+    await tester.pumpAndSettle();
+    expect(agent.stops, 1);
+    expect(retries, 0);
+    agent.error = const HomeDeskAgentException('DEVICE_OUTSIDE_ACCOUNT');
+    await tester.tap(find.byKey(const ValueKey('tunnel-refresh')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('tunnel-connection-notice')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('tunnel-retry-local')));
+    await tester.pumpAndSettle();
+    expect(find.text('本机设备已删除，请重新登录后再登记。'), findsOneWidget);
+    expect(retries, 0);
+    final close = find.widgetWithText(TextButton, '关闭');
+    expect(close.hitTestable(), findsOneWidget);
+    await tester.tap(close);
+    await tester.pumpAndSettle();
+    allowed = false;
+    await expectLater(remove(device), throwsA(isA<HomeTunnelApiException>()));
+    expect(api.deviceDeletes, 1);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('纯内网不读取恢复凭据，origin不匹配不联网或误删别的账号', (tester) async {
@@ -1085,11 +1718,14 @@ void main() {
     final api = PortalFixtureApi()
       ..logoutError =
           const HomeTunnelApiException('无法清除安全存储。', 'SECURE_STORE_ERROR');
-    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    final account = HomeDeskAccount();
+    final failedStore = FixtureCredentialStore(supported: true);
+    addTearDown(account.dispose);
+    await tester.pumpWidget(portalHost(
+        page: fixturePage(api, account: account, store: failedStore)));
     await enterCredentials(tester);
-    await tester.tap(find.byKey(const ValueKey('tunnel-account-menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('退出登录'));
+    failedStore.clearFails = true;
+    await account.signOut();
     await tester.pumpAndSettle();
     expect(api.closed, isTrue);
     expect(find.textContaining('无法确认清除保存的登录'), findsOneWidget);
@@ -1208,7 +1844,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(metadata);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('device-favorite')));
+    await tester.ensureVisible(find.byKey(const ValueKey('device-tags')));
     await tester.pumpAndSettle();
     expect(find.byType(HomeDeskDeviceEditor), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1227,7 +1863,7 @@ void main() {
       await fonts.load();
       final icons = FontLoader('MaterialIcons');
       icons.addFont(Future.value(ByteData.sublistView(File(
-              '../target/toolchains/flutter/bin/cache/artifacts/material_fonts/materialicons-regular.otf')
+              'R:/toolchains/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf')
           .readAsBytesSync())));
       await icons.load();
       for (final dark in [false, true]) {
@@ -1241,7 +1877,7 @@ void main() {
               RepaintBoundary(key: paint, child: child!),
           home: Scaffold(
               body: HomeDeskDashboard(
-            brandName: 'HomeDesk',
+            brandName: 'NestLink',
             devicesBuilder: (_) => const Center(child: Text('家庭设备')),
             recentBuilder: (_) => const Center(child: Text('最近连接')),
             servicesBuilder: (_) => HomeDeskServices(
@@ -1256,7 +1892,7 @@ void main() {
             onConnect: (_) {},
           )),
         ));
-        await tester.tap(find.byTooltip('家庭服务'));
+        await tester.tap(find.byTooltip('内网穿透'));
         await tester.pumpAndSettle();
         await enterCredentials(tester);
         final boundary =
@@ -1274,7 +1910,7 @@ void main() {
         api.result = HomeTunnelCatalog(devices: const [
           HomeTunnelDevice(
               id: 'fixture-local',
-              name: '书房电脑 · HomeDesk',
+              name: '书房电脑 · NestLink',
               platform: 'windows',
               online: true),
         ], services: []);

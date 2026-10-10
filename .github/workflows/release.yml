@@ -4,7 +4,7 @@ name: Release client
     tags:
     - v*-rc.*
     - v*-RC*
-    - v13.*
+    - v[0-9]*.[0-9]*.[0-9]*
 permissions:
   contents: write
   checks: read

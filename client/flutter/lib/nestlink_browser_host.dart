@@ -8,6 +8,7 @@ import 'homedesk_dashboard.dart';
 import 'homedesk_tunnel_api.dart';
 import 'models/platform_model.dart';
 import 'nestlink_locale.dart';
+import 'nestlink_dialog.dart';
 
 final nestlinkBrowserStatus = ValueNotifier<String>('');
 
@@ -93,7 +94,7 @@ class NestLinkBrowserHost {
             _navigator = Navigator.of(context);
             _approval = DialogRoute<bool>(
                 context: context,
-                builder: (dialogContext) => AlertDialog(
+                builder: (dialogContext) => NestLinkDialog(
                       title: Text(nl('浏览器请求远控', 'Browser remote request')),
                       content: Text(
                           '${request['controller_name']}\n${nl('请求查看并操作这台设备。', 'wants to view and control this device.')}'),

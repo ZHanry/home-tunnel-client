@@ -1,6 +1,6 @@
 [package]
 name = "rustdesk"
-version = "13.0.0"
+version = "14.0.0"
 authors = ["rustdesk <info@rustdesk.com>"]
 edition = "2021"
 build= "build.rs"
@@ -19,6 +19,11 @@ path = "src/naming.rs"
 [[bin]]
 name = "service"
 path = "src/service.rs"
+
+[[test]]
+name = "nestlink-runtime-manifest"
+path = "../tests/runtime-manifest.rs"
+harness = false
 
 [features]
 inline = []

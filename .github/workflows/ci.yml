@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   windows:
-    name: Build HomeDesk Windows installer
+    name: Build NestLink Windows installer
     runs-on: windows-2022
     timeout-minutes: 180
     env:
@@ -92,7 +92,9 @@ jobs:
         cd client/flutter
         flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
         if ($LASTEXITCODE -ne 0) { throw 'Dart errors' }
-        flutter test --no-pub test/homedesk_devices_test.dart test/homedesk_dashboard_test.dart test/homedesk_advanced_test.dart test/homedesk_services_test.dart test/homedesk_mobile_test.dart test/homedesk_android_credentials_test.dart
+        $widgetTests = @(Get-ChildItem test -Filter '*_test.dart' | Where-Object { $_.Name -match '^(homedesk_|nestlink_)' } | ForEach-Object { 'test/' + $_.Name })
+        if ($widgetTests.Count -eq 0) { throw 'Current product tests are missing' }
+        flutter test --no-pub @widgetTests
         if ($LASTEXITCODE -ne 0) { throw 'Widget tests failed' }
         cd ../..
         $env:HOMEDESK_TEST_OPENSSL = "C:/Program Files/Git/usr/bin/openssl.exe"
@@ -106,6 +108,8 @@ jobs:
         New-Item -ItemType Directory -Force .downloads | Out-Null
         python build/tunnel/build-runtime.py --target win-x64
         if ($LASTEXITCODE -ne 0) { throw 'Managed helper failed' }
+        cargo test --manifest-path client/Cargo.toml --release --locked --features flutter,hwcodec --test nestlink-runtime-manifest -- (Resolve-Path client/target/tunnel-runtime/runtime.json).Path
+        if ($LASTEXITCODE -ne 0) { throw 'Runtime version and identity gate failed' }
         $compilerLines = .\packaging\windows\install-inno-setup.ps1
         $compiler = ($compilerLines | Where-Object { $_ -like 'ISCC=*' }) -replace '^ISCC=', ''
         python scripts/test-homedesk-upgrade.py --iscc $compiler --evidence material-input/windows-upgrade.json
@@ -158,6 +162,8 @@ jobs:
     - name: Validate strict P2P and retained packaging
       run: |-
         python3 scripts/check-repository.py
+        python3 scripts/check-device-capabilities-contract.py
+        python3 -m unittest discover -s scripts -p 'test_homedesk_release.py'
         python3 -m unittest discover -s tests -p 'test_*.py'
         rustc --test client/homedesk_build.rs -o /tmp/homedesk-brand
         /tmp/homedesk-brand
@@ -238,6 +244,7 @@ jobs:
     - name: Package current Agent and native GUI
       run: |-
         python3 scripts/package-nestlink-unix.py --target "${{ matrix.target }}"
+        cargo test --manifest-path client/Cargo.toml --release --locked --features flutter,hwcodec --test nestlink-runtime-manifest -- "$PWD/outputs/${{ matrix.target }}/deb/usr/share/homedesk/tunnel-runtime/runtime.json"
         python3 scripts/collect-native-materials.py
     - name: Install, start and remove the actual DEB with Secret Service regression
       if: startsWith(matrix.target, 'linux-')

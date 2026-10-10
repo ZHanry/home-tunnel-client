@@ -94,7 +94,7 @@ def export(source: Path, output: Path) -> dict[int, Path]:
     return generated
 
 
-def apply_client(repo_root: Path, source: Path, output: Path, generated: dict[int, Path]) -> None:
+def apply_client(repo_root: Path, source: Path, output: Path, generated: dict[int, Path], desktop_only: bool = False) -> None:
     client = repo_root / "client"
     copies = (
         (generated[512], client / "res" / "icon.png"),
@@ -113,6 +113,8 @@ def apply_client(repo_root: Path, source: Path, output: Path, generated: dict[in
     for source_path, destination in copies:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, destination)
+    if desktop_only:
+        return
     render_svg(source, 1024).save(client / 'flutter/macos/Runner/AppIcon.icns', format='ICNS')
     # Tray silhouettes retain the same bridge/cloud geometry at small sizes.
     tray = render_svg(source, 44)
@@ -136,19 +138,34 @@ def apply_client(repo_root: Path, source: Path, output: Path, generated: dict[in
         symbol = render_svg(source, symbol_size)
         safe.alpha_composite(symbol, ((foreground-symbol_size)//2, (foreground-symbol_size)//2))
         safe.save(directory / "ic_launcher_foreground.png", optimize=True)
+        # Android themed icons and notifications require the N silhouette only.
+        monochrome = Image.new("RGBA", safe.size, (0, 0, 0, 0))
+        for y in range(safe.height):
+            for x in range(safe.width):
+                r, g, b, a = safe.getpixel((x, y))
+                if min(r, g, b) > 220:
+                    monochrome.putpixel((x, y), (255, 255, 255, a))
+        monochrome.save(directory / "ic_launcher_monochrome.png", optimize=True)
+        notification_size = pixels // 2
+        notification = Image.new("RGBA", (notification_size, notification_size), (0, 0, 0, 0))
+        glyph = monochrome.crop(monochrome.getbbox())
+        glyph.thumbnail((round(notification_size * .8), round(notification_size * .8)), Image.Resampling.LANCZOS)
+        notification.alpha_composite(glyph, ((notification_size - glyph.width) // 2, (notification_size - glyph.height) // 2))
+        notification.save(directory / "ic_stat_logo.png", optimize=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply-client", action="store_true", help="同步至 client 的平台图标入口")
+    parser.add_argument("--desktop-only", action="store_true", help="本次仅同步桌面资源，不生成移动端图标")
     args = parser.parse_args()
     asset_dir = Path(__file__).resolve().parent
     repo_root = asset_dir.parent.parent
-    source = asset_dir / "homedesk.svg"
+    source = repo_root / "brand" / "icon.svg"
     output = asset_dir / "generated"
     generated = export(source, output)
     if args.apply_client:
-        apply_client(repo_root, source, output, generated)
+        apply_client(repo_root, source, output, generated, args.desktop_only)
     return 0
 
 

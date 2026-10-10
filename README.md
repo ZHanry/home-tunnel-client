@@ -1,10 +1,10 @@
-# nestlink
+# NestLink
 
-Windows/Linux 客户端，提供双向远控与内网穿透中枢。 当前发行目标 **13.0.0 正式版**，正在实施和验收。
+Windows/Linux 客户端，提供双向远控与内网穿透中枢。当前发行目标 **14.0.0**，统一紫色品牌、分组设备列表与设备能力入口。正在构建与验收，详见 [发行说明](docs/HOMEDESK_RELEASE.md)。
 
 使用自己的 HTTPS 服务和账号登录，连接配置自动获取。远控要求认证加密 P2P 直连及被控端批准或密码验证。HTTP/HTTPS 与受控 TCP/UDP 穿透、权限、端口池、访问控制和流量治理保留。
 
-平台、升级、验证边界与构建材料见 [13.0.0 说明](docs/HOMEDESK_RELEASE.md)。桌面客户端集中管理后台穿透，不分发独立 CLI/NAS 或 macOS GUI。旧界面截图从当前文档中移除。
+平台、升级、验证边界与构建材料见 [14.0.0 说明](docs/HOMEDESK_RELEASE.md)。桌面客户端集中管理后台穿透，不分发独立 CLI/NAS 或 macOS GUI。旧界面截图从当前文档中移除。
 
 [项目入口](https://github.com/ZHanry/home-tunnel) · [English](README.en.md) · [构建与来源](docs/BUILDING.md)
 

@@ -35,7 +35,7 @@ for name in ('home-tunnel-agent.exe', 'homedesk-tunnel-helper.exe', 'nestlink-br
     shutil.copy2(runtime / name, payload / 'tunnel-runtime' / name)
 for name in ('LICENSE', 'LICENSE-RUSTDESK', 'README.md'):
     shutil.copy2(ROOT / name, payload / name)
-shutil.copy2(ROOT / 'client/res/icon.ico', payload / 'HomeDesk.ico')
+shutil.copy2(ROOT / 'client/res/icon.ico', payload / 'NestLink.ico')
 products = ROOT / 'products'
 products.mkdir(exist_ok=True)
 subprocess.run([args.iscc, '/DAppVersion=' + version, '/DSourceDir=' + str(payload),

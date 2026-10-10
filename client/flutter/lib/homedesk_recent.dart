@@ -1,4 +1,4 @@
-// Account-only recent connections and favorites reuse native peer records.
+// Account-only recent connections reuse native peer records.
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
@@ -14,28 +14,27 @@ import 'homedesk_theme.dart';
 import 'nestlink_locale.dart';
 
 class HomeDeskRecent extends StatefulWidget {
-  final List<Peer>? recent, favorites;
+  final List<Peer>? recent;
   final ValueChanged<Peer>? onConnect;
   final HomeDeskPeerMenuBuilder? menuBuilder;
   final ValueChanged<PeerTabIndex>? onLoad;
   final ValueChanged<List<String>>? onQueryOnline;
-  final bool summary;
+  final bool summary, compact;
   const HomeDeskRecent(
       {super.key,
       this.recent,
-      this.favorites,
       this.onConnect,
       this.menuBuilder,
       this.onLoad,
       this.onQueryOnline,
-      this.summary = false});
+      this.summary = false,
+      this.compact = false});
   @override
   State<HomeDeskRecent> createState() => HomeDeskRecentState();
 }
 
 class HomeDeskRecentState extends State<HomeDeskRecent>
     with WindowListener, WidgetsBindingObserver {
-  int _selected = 0;
   List<Peers> _models = [];
   Timer? _onlineTimer;
   final _search = TextEditingController();
@@ -44,7 +43,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
       _minimized = false,
       _reloadQueued = false;
   DateTime? _restoredAt;
-  PeerTabIndex get _tab => [PeerTabIndex.recent, PeerTabIndex.fav][_selected];
+  PeerTabIndex get _tab => PeerTabIndex.recent;
   @override
   void initState() {
     super.initState();
@@ -52,7 +51,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
     WidgetsBinding.instance.addObserver(this);
     if (widget.recent == null) {
       try {
-        _models = [gFFI.recentPeersModel, gFFI.favoritePeersModel];
+        _models = [gFFI.recentPeersModel];
       } catch (_) {/* 原生桥接不可用时显示空态。 */}
     }
     if (_models.isNotEmpty || widget.onQueryOnline != null) {
@@ -71,15 +70,8 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
     _visible = visible;
   }
 
-  List<Peer> get _peers => widget.recent != null
-      ? [widget.recent!, widget.favorites ?? <Peer>[]][_selected]
-      : _models.isEmpty
-          ? []
-          : _models[_selected].peers;
-  bool _favorite(Peer peer) =>
-      _selected == 1 ||
-      (widget.favorites ?? (_models.isEmpty ? <Peer>[] : _models[1].peers))
-          .any((p) => p.id == peer.id);
+  List<Peer> get _peers =>
+      widget.recent ?? (_models.isEmpty ? <Peer>[] : _models.first.peers);
   List<Peer> get _filtered {
     final query = _search.text.trim().toLowerCase();
     return _peers
@@ -114,23 +106,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
     if (_models.isEmpty) {
       return;
     }
-    switch (_tab) {
-      case PeerTabIndex.recent:
-        bind.mainLoadRecentPeers();
-      case PeerTabIndex.fav:
-        bind.mainLoadFavPeers();
-      default:
-        break;
-    }
-    // 最近记录和发现设备的收藏标记也消费已有收藏模型。
-    if (_tab != PeerTabIndex.fav) {
-      bind.mainLoadFavPeers();
-    }
-  }
-
-  void _select(int value) {
-    setState(() => _selected = value);
-    _scheduleReload();
+    bind.mainLoadRecentPeers();
   }
 
   void _queryOnline() {
@@ -239,6 +215,14 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
     super.dispose();
   }
 
+  void _connectPeer(Peer peer) {
+    if (widget.onConnect != null) {
+      widget.onConnect!(peer);
+    } else {
+      connectInPeerTab(context, peer, _tab);
+    }
+  }
+
   Widget _row(BuildContext context, Peer peer) => Builder(builder: (context) {
         final t = HomeDeskTokens.of(context);
         final name = peer.alias.isNotEmpty
@@ -254,10 +238,6 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: t.sectionStyle)),
-            if (_favorite(peer)) ...[
-              const SizedBox(width: 6),
-              Icon(Icons.star_rounded, color: t.accent, size: 16)
-            ]
           ]),
           const SizedBox(height: 4),
           Text(
@@ -269,13 +249,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
         ]);
         final actions = Row(mainAxisSize: MainAxisSize.min, children: [
           OutlinedButton(
-              onPressed: () {
-                if (widget.onConnect != null) {
-                  widget.onConnect!(peer);
-                } else {
-                  connectInPeerTab(context, peer, _tab);
-                }
-              },
+              onPressed: () => _connectPeer(peer),
               child: Text(nl('连接', 'Connect'))),
           const SizedBox(width: 4),
           Builder(
@@ -314,6 +288,84 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
 
   Widget _body(BuildContext context) {
     final peers = _filtered;
+    if (widget.compact) {
+      final t = HomeDeskTokens.of(context);
+      if (peers.isEmpty) {
+        return Align(
+            alignment: Alignment.topLeft,
+            child: Text(nl('还没有最近连接', 'No recent connections'),
+                style: t.auxiliaryStyle));
+      }
+      return LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+              child: Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: peers.map((peer) {
+                    final name =
+                        peer.alias.isNotEmpty ? peer.alias : peer.hostname;
+                    return SizedBox(
+                        width: constraints.maxWidth.clamp(0, 236).toDouble(),
+                        child: Material(
+                            color: t.surface,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                    HomeDeskTokens.controlRadius),
+                                side: BorderSide(color: t.border)),
+                            clipBehavior: Clip.antiAlias,
+                            child: Row(children: [
+                              Expanded(
+                                  child: InkWell(
+                                      key:
+                                          ValueKey('recent-connect-${peer.id}'),
+                                      onTap: () => _connectPeer(peer),
+                                      child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 10),
+                                          child: Row(children: [
+                                            Container(
+                                                width: 6,
+                                                height: 6,
+                                                decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color: peer.online
+                                                        ? t.success
+                                                        : t.muted)),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                                child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                  if (name.isNotEmpty)
+                                                    Text(
+                                                        homeDeskDeviceLabel(
+                                                            name),
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                            color: t.text,
+                                                            fontSize: 13)),
+                                                  Text(peer.id,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: t.auxiliaryStyle),
+                                                ])),
+                                          ])))),
+                              Builder(
+                                  builder: (anchor) => IconButton(
+                                      key: ValueKey('recent-more-${peer.id}'),
+                                      tooltip:
+                                          nl('更多设备操作', 'More device actions'),
+                                      onPressed: () => _showMenu(anchor, peer),
+                                      icon: Icon(Icons.more_horiz_rounded,
+                                          color: t.secondary, size: 18))),
+                            ])));
+                  }).toList())));
+    }
     if (widget.summary) {
       return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -325,15 +377,6 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
               : peers.take(2).map((p) => _row(context, p)).toList());
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Row(children: [
-        Expanded(
-            child: HomeDeskSegments(
-                labels: [nl('最近', 'Recent'), nl('收藏', 'Favorites')],
-                selected: _selected,
-                onSelected: _select,
-                keyPrefix: 'recent-filter'))
-      ]),
-      const SizedBox(height: 12),
       TextField(
           key: const ValueKey('recent-search'),
           controller: _search,
@@ -359,9 +402,7 @@ class HomeDeskRecentState extends State<HomeDeskRecent>
                             Text(
                                 _search.text.trim().isNotEmpty
                                     ? nl('没有找到匹配的设备', 'No matching devices')
-                                    : _selected == 0
-                                        ? nl('还没有最近连接', 'No recent connections')
-                                        : nl('还没有收藏的设备', 'No favorite devices'),
+                                    : nl('还没有最近连接', 'No recent connections'),
                                 style: HomeDeskTokens.of(context).sectionStyle),
                             const SizedBox(height: 6),
                             Text(

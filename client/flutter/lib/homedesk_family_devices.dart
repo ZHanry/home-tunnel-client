@@ -6,20 +6,25 @@ import 'homedesk_tunnel_api.dart';
 import 'homedesk_device_label.dart';
 import 'homedesk_theme.dart';
 import 'homedesk_navigation.dart';
+import 'nestlink_device_list.dart';
 
 class HomeDeskFamilyDevices extends StatefulWidget {
   final HomeDeskAccount account;
   final VoidCallback onLogin;
   final ValueChanged<String> onConnect;
+  final VoidCallback? onManualConnect;
   final String Function(String) readOption;
   final WidgetBuilder? lanBuilder;
+  final bool listLayout;
   const HomeDeskFamilyDevices(
       {super.key,
       required this.account,
       required this.onLogin,
       required this.onConnect,
       required this.readOption,
-      this.lanBuilder});
+      this.onManualConnect,
+      this.lanBuilder,
+      this.listLayout = false});
 
   @override
   State<HomeDeskFamilyDevices> createState() => _HomeDeskFamilyDevicesState();
@@ -41,7 +46,7 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
   }
 
   bool _online(HomeTunnelDevice device) =>
-      account.bindings[device.id]?.online ?? device.online;
+      account.bindings[device.id]?.online == true || device.online;
   bool _needsAttention(HomeTunnelDevice device) =>
       device.id != account.localDeviceId &&
       (account.bindings[device.id] == null ||
@@ -142,7 +147,7 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                       Text(
                           binding == null
                               ? local
-                                  ? '查看连接码获取本机设备 ID。'
+                                  ? '本机设备 ID 尚未同步。'
                                   : '远控 ID 尚未同步，请在该设备上运行新版客户端。'
                               : '设备 ID：${binding.remoteId}',
                           maxLines: 2,
@@ -171,39 +176,33 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                                     color: t.warning))),
                       const Spacer(),
                       Row(children: [
-                        Expanded(
-                            child: local
-                                ? OutlinedButton(
-                                    onPressed: HomeDeskHomeActions.of(context)
-                                        ?.onLocal,
-                                    child: const Text('查看连接码'))
-                                : FilledButton(
-                                    key:
-                                        ValueKey('family-connect-${device.id}'),
-                                    onPressed: !available
-                                        ? null
-                                        : () {
-                                            final current =
-                                                account.bindings[device.id];
-                                            if (identical(account.api, owner) &&
-                                                account.signedIn &&
-                                                current != null &&
-                                                current.remoteId ==
-                                                    binding.remoteId &&
-                                                account.catalog?.devices.any(
-                                                        (d) =>
-                                                            d.id ==
-                                                            device.id) ==
-                                                    true &&
-                                                _matching(current)) {
-                                              widget
-                                                  .onConnect(current.remoteId);
-                                            }
-                                          },
-                                    child: Text(
-                                        binding != null && !binding.online
-                                            ? '尝试连接'
-                                            : '连接电脑'))),
+                        if (local)
+                          const Spacer()
+                        else
+                          Expanded(
+                              child: FilledButton(
+                                  key: ValueKey('family-connect-${device.id}'),
+                                  onPressed: !available
+                                      ? null
+                                      : () {
+                                          final current =
+                                              account.bindings[device.id];
+                                          if (identical(account.api, owner) &&
+                                              account.signedIn &&
+                                              current != null &&
+                                              current.remoteId ==
+                                                  binding.remoteId &&
+                                              account.catalog?.devices.any(
+                                                      (d) =>
+                                                          d.id == device.id) ==
+                                                  true &&
+                                              _matching(current)) {
+                                            widget.onConnect(current.remoteId);
+                                          }
+                                        },
+                                  child: Text(binding != null && !binding.online
+                                      ? '尝试连接'
+                                      : '连接电脑'))),
                         const SizedBox(width: 8),
                         IconButton(
                             key: ValueKey('family-manage-${device.id}'),
@@ -217,11 +216,8 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                                                 (d) => d.id == device.id) ==
                                             true) account.editDevice!(device);
                                   },
-                            icon: Icon(
-                                device.favorite
-                                    ? Icons.star_rounded
-                                    : Icons.more_horiz_rounded,
-                                size: 20)),
+                            icon:
+                                const Icon(Icons.more_horiz_rounded, size: 20)),
                       ]),
                     ]))));
   }
@@ -262,8 +258,15 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
             const HomeDeskHomePanels(),
           ]);
         }
-        final devices = [...?account.catalog?.devices]
-          ..sort((a, b) => (b.favorite ? 1 : 0).compareTo(a.favorite ? 1 : 0));
+        if (widget.listLayout) {
+          return NestLinkDeviceList(
+              account: account,
+              onConnect: widget.onConnect,
+              onManualConnect:
+                  widget.onManualConnect ?? actions?.onManualConnect,
+              readOption: readOption);
+        }
+        final devices = [...?account.catalog?.devices];
         final visible = devices
             .where((d) => switch (_filter) {
                   1 => _online(d),
@@ -336,7 +339,11 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                       key: const ValueKey('family-refresh'),
                       tooltip: '刷新家庭设备',
                       onPressed: account.loading ? null : account.refresh,
-                      icon: const Icon(Icons.refresh_rounded));
+                      icon: account.loading
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.refresh_rounded));
                   if (c.maxWidth >= 600 && scale <= 1.5) {
                     return Row(children: [
                       Expanded(child: heading),
@@ -358,7 +365,6 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                   Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Text(account.message, style: t.auxiliaryStyle)),
-                if (account.loading) const LinearProgressIndicator(),
                 if (devices.isEmpty)
                   Padding(
                       padding: const EdgeInsets.all(20),

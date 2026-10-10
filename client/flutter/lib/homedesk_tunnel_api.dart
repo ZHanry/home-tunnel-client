@@ -81,6 +81,14 @@ class HomeTunnelDevice {
   final List<String> tags;
   final bool favorite;
   final int metadataVersion;
+  final String? _remoteDeviceId;
+  final String? _tunnelDeviceId;
+  final bool? _tunnelOnline;
+
+  /// Capability credentials keep their scopes; the directory counts a device once.
+  String get remoteDeviceId => _remoteDeviceId ?? id;
+  String get tunnelDeviceId => _tunnelDeviceId ?? id;
+  bool get tunnelOnline => _tunnelOnline ?? online;
   const HomeTunnelDevice(
       {required this.id,
       required this.name,
@@ -88,7 +96,20 @@ class HomeTunnelDevice {
       required this.online,
       this.tags = const [],
       this.favorite = false,
-      this.metadataVersion = 1});
+      this.metadataVersion = 1,
+      String? remoteDeviceId,
+      String? tunnelDeviceId,
+      bool? tunnelOnline})
+      : _remoteDeviceId = remoteDeviceId,
+        _tunnelDeviceId = tunnelDeviceId,
+        _tunnelOnline = tunnelOnline;
+}
+
+class _DeviceCapabilities {
+  final String id;
+  final String? remote;
+  final String? tunnel;
+  const _DeviceCapabilities(this.id, this.remote, this.tunnel);
 }
 
 class HomeDeskRemoteBinding {
@@ -198,6 +219,13 @@ class _Operation {
 }
 
 class HomeTunnelApi {
+  final Map<String, _DeviceCapabilities> _deviceCapabilities = {};
+  final Set<String> _rawDeviceIds = {};
+  final Map<String, String> _tunnelRoutes = {};
+  Future<HomeTunnelCatalog>? _catalogLoading;
+  int _directoryRevision = 0;
+  bool? _capabilityProtocol;
+  final Set<String> _attemptedCapabilityLinks = {};
   String _guiDeviceId = '';
   String? _guiAccess;
   String? _guiRefresh;
@@ -242,8 +270,7 @@ class HomeTunnelApi {
         _maxResponseBytes = maxResponseBytes {
     if (requestTimeout <= Duration.zero || maxResponseBytes < 1) {
       _http.close(force: true);
-      throw const HomeTunnelApiException(
-          'nestlink 请求配置无效。', 'CONFIG_INVALID');
+      throw const HomeTunnelApiException('nestlink 请求配置无效。', 'CONFIG_INVALID');
     }
     _http.findProxy = (_) => 'DIRECT';
     _http.connectionTimeout = requestTimeout;
@@ -336,6 +363,13 @@ class HomeTunnelApi {
     _guiRefresh = null;
     _guiAccessExpires = null;
     _guiRefreshing = null;
+    _deviceCapabilities.clear();
+    _rawDeviceIds.clear();
+    _tunnelRoutes.clear();
+    _catalogLoading = null;
+    _directoryRevision++;
+    _capabilityProtocol = null;
+    _attemptedCapabilityLinks.clear();
     _accessToken = null;
     _refreshToken = null;
     _displayName = '';
@@ -407,8 +441,7 @@ class HomeTunnelApi {
       rethrow;
     } on HandshakeException {
       _checkGeneration(generation);
-      throw const HomeTunnelApiException(
-          'nestlink HTTPS 证书验证失败。', 'TLS_ERROR');
+      throw const HomeTunnelApiException('nestlink HTTPS 证书验证失败。', 'TLS_ERROR');
     } on FormatException {
       _checkGeneration(generation);
       if (mutation && operation.sent) throw _unknownMutation();
@@ -468,6 +501,13 @@ class HomeTunnelApi {
         collected.addAll(chunk);
       }
       _checkOperation(operation, generation);
+      // Older servers do not expose the optional physical-device directory.
+      // Their framework may return an HTML 404 instead of a JSON error.
+      if (response.statusCode == 404 &&
+          uri.path == '/api/v2/auth/device-capabilities') {
+        _checkOperation(operation, generation);
+        return _Reply(404, null);
+      }
       final value =
           collected.isEmpty ? null : jsonDecode(utf8.decode(collected));
       _checkOperation(operation, generation);
@@ -492,7 +532,7 @@ class HomeTunnelApi {
       'VALIDATION_ERROR': 'nestlink 请求参数无效，请检查输入。',
       'FORBIDDEN': 'nestlink 拒绝访问，请检查账号权限。',
       'VERSION_CONFLICT': '该资源已被其他操作修改，请保留草稿并刷新核对。',
-      'METADATA_VERSION_CONFLICT': '设备标签或收藏已变更，请保留草稿并刷新核对。',
+      'METADATA_VERSION_CONFLICT': '设备信息已变更，请保留草稿并刷新核对。',
       'ACCESS_POLICY_VERSION_CONFLICT': '访问策略已变更，请保留草稿并刷新核对。',
       'CLIENT_RAW_TUNNELS_DISABLED': '管理员尚未允许账号创建 TCP/UDP 服务。',
       'TCP_TUNNELS_DISABLED': '服务器尚未开放 TCP 服务。',
@@ -504,6 +544,10 @@ class HomeTunnelApi {
       'SUBDOMAIN_PREFIX_REQUIRED': '子域名不符合账号命名要求，请先检查可用性。',
       'OWNERSHIP_MISMATCH': '设备或服务已不存在，或不属于当前账号。',
       'DEVICE_REVOKED': '设备已撤销，请刷新设备目录。',
+      'NOT_FOUND': '设备或服务已不存在，请刷新目录。',
+      'ACCOUNT_SESSION_REQUIRED': '请使用账号管理会话操作设备。',
+      'DEVICE_CAPABILITY_SUBJECT_INVALID': '设备能力已失效或不属于当前账号。',
+      'DEVICE_CAPABILITY_LINK_CONFLICT': '设备能力已关联其他设备，请刷新核对。',
     };
     if (candidate is String && messages.containsKey(candidate)) {
       final object = reply.value as Map;
@@ -997,12 +1041,194 @@ class HomeTunnelApi {
     return result;
   }
 
-  Future<HomeTunnelCatalog> catalog() async {
+  String _physicalDeviceId(String subject) {
+    for (final capability in _deviceCapabilities.values) {
+      if (subject == capability.remote || subject == capability.tunnel) {
+        return capability.id;
+      }
+    }
+    return subject;
+  }
+
+  _DeviceCapabilities _capabilityLink(Object? raw) {
+    final value = _object(raw);
+    final id = _id(value['physical_device_id']);
+    final remote = value['remote_device_id'] == null
+        ? null
+        : _id(value['remote_device_id']);
+    final tunnel = value['tunnel_device_id'] == null
+        ? null
+        : _id(value['tunnel_device_id']);
+    if ((remote == null && tunnel == null) ||
+        remote == tunnel ||
+        (remote != null && remote != id)) {
+      throw const HomeTunnelApiException('设备能力关联无效。', 'RESPONSE_INVALID');
+    }
+    return _DeviceCapabilities(id, remote, tunnel);
+  }
+
+  Future<void> _readDeviceCapabilities(int generation, int revision) async {
+    if (_capabilityProtocol == false) return;
+    final reply = await _authenticated('GET', '/auth/device-capabilities',
+        generation: generation);
+    if (revision != _directoryRevision) return;
+    if (reply.status == 404) {
+      _capabilityProtocol = false;
+      return;
+    }
+    final value = _success(reply);
+    final items = value['items'];
+    if (value['version'] != 1 || items is! List || items.length > 1000) {
+      throw const HomeTunnelApiException('设备能力目录无效。', 'RESPONSE_INVALID');
+    }
+    final next = <String, _DeviceCapabilities>{};
+    final subjects = <String>{};
+    for (final item in items) {
+      final link = _capabilityLink(item);
+      if (next.containsKey(link.id) ||
+          !subjects.add(link.id) ||
+          (link.tunnel != null && !subjects.add(link.tunnel!))) {
+        throw const HomeTunnelApiException('设备能力目录重复。', 'RESPONSE_INVALID');
+      }
+      next[link.id] = link;
+    }
+    _checkGeneration(generation);
+    _capabilityProtocol = true;
+    _deviceCapabilities
+      ..clear()
+      ..addAll(next);
+  }
+
+  HomeTunnelService _serviceForDevice(HomeTunnelService service, String id) =>
+      HomeTunnelService(
+          id: service.id,
+          deviceId: id,
+          name: service.name,
+          proxyType: service.proxyType,
+          status: service.status,
+          webUrl: service.webUrl,
+          endpoint: service.endpoint,
+          enabled: service.enabled,
+          version: service.version,
+          accessPolicyVersion: service.accessPolicyVersion,
+          localScheme: service.localScheme,
+          localHost: service.localHost,
+          localPort: service.localPort,
+          subdomain: service.subdomain,
+          remotePort: service.remotePort,
+          applicationProtocol: service.applicationProtocol);
+
+  HomeTunnelCatalog _physicalCatalog(HomeTunnelCatalog catalog) {
+    final raw = {for (final device in catalog.devices) device.id: device};
+    final consumed = <String>{};
+    final devices = <HomeTunnelDevice>[];
+    for (final link in _deviceCapabilities.values) {
+      final remote = raw[link.remote];
+      final tunnel = raw[link.tunnel];
+      if (remote == null && tunnel == null) continue;
+      final primary = remote ?? tunnel!;
+      if (remote != null) consumed.add(remote.id);
+      if (tunnel != null) consumed.add(tunnel.id);
+      devices.add(HomeTunnelDevice(
+          id: link.id,
+          name: primary.name,
+          platform: primary.platform.isNotEmpty
+              ? primary.platform
+              : tunnel?.platform ?? '',
+          online: remote?.online == true || tunnel?.online == true,
+          tags: primary.tags,
+          favorite: primary.favorite,
+          metadataVersion: primary.metadataVersion,
+          remoteDeviceId: remote?.id ?? '',
+          tunnelDeviceId: tunnel?.id ?? '',
+          tunnelOnline: tunnel?.online == true));
+    }
+    devices.addAll(
+        catalog.devices.where((device) => !consumed.contains(device.id)));
+    _tunnelRoutes
+      ..clear()
+      ..addEntries(
+          devices.map((device) => MapEntry(device.id, device.tunnelDeviceId)));
+    final services = catalog.services.map((service) {
+      final physical = _physicalDeviceId(service.deviceId);
+      return physical == service.deviceId
+          ? service
+          : _serviceForDevice(service, physical);
+    }).toList();
+    _knownServices
+      ..clear()
+      ..addEntries(services.map((service) => MapEntry(service.id, service)));
+    return HomeTunnelCatalog(
+        devices: devices,
+        services: services,
+        capabilities: catalog.capabilities);
+  }
+
+  /// Called only with the subject returned by this account's approved native
+  /// Agent. Names, hostnames and arbitrary directory entries never form a pair.
+  Future<HomeTunnelCatalog> associateLocalDevice(String tunnelSubject) async {
+    _ensureAllowed();
+    final remote = _guiDeviceId;
+    final tunnel = _id(tunnelSubject);
+    if (remote.isEmpty || remote == tunnel) {
+      throw const HomeTunnelApiException('本机设备身份尚未确认。', 'IDENTITY_MISMATCH');
+    }
+    final generation = _generation;
+    final catalog = await this.catalog();
+    if (!_rawDeviceIds.contains(remote) || !_rawDeviceIds.contains(tunnel)) {
+      throw const HomeTunnelApiException('本机设备不属于当前账号。', 'OWNERSHIP_MISMATCH');
+    }
+    final existing = _deviceCapabilities[remote];
+    if (existing != null) {
+      if (existing.remote != remote || existing.tunnel != tunnel) {
+        throw const HomeTunnelApiException('本机设备能力关联已变化。', 'IDENTITY_MISMATCH');
+      }
+      return catalog;
+    }
+    if (_deviceCapabilities.values.any((link) => link.tunnel == tunnel)) {
+      throw const HomeTunnelApiException('本机设备能力已关联其他设备。', 'IDENTITY_MISMATCH');
+    }
+    var link = _DeviceCapabilities(remote, remote, tunnel);
+    if (_capabilityProtocol == true) {
+      if (!_attemptedCapabilityLinks.add(remote)) {
+        throw _unknownMutation();
+      }
+      final reply = await _authenticated(
+          'POST', '/auth/device-capabilities/link',
+          generation: generation,
+          mutation: true,
+          body: {'remote_device_id': remote, 'tunnel_device_id': tunnel});
+      link = _capabilityLink(_mutationObject(reply));
+      if (link.id != remote || link.remote != remote || link.tunnel != tunnel) {
+        throw _unknownMutation();
+      }
+    }
+    _checkGeneration(generation);
+    _deviceCapabilities[remote] = link;
+    _directoryRevision++;
+    // A catalog may already contain other physical devices. Re-read raw records
+    // so no previously projected capability route is lost by a second projection.
+    return this.catalog();
+  }
+
+  Future<HomeTunnelCatalog> catalog() {
+    final active = _catalogLoading;
+    if (active != null) return active;
+    late final Future<HomeTunnelCatalog> pending;
+    pending = _loadCatalog().whenComplete(() {
+      if (identical(_catalogLoading, pending)) _catalogLoading = null;
+    });
+    _catalogLoading = pending;
+    return pending;
+  }
+
+  Future<HomeTunnelCatalog> _loadCatalog() async {
     _ensureAllowed();
     if (_accessToken == null) {
       throw const HomeTunnelApiException('请先登录 nestlink。', 'AUTH_REQUIRED');
     }
     final generation = _generation;
+    final revision = _directoryRevision;
     var capabilities = const HomeTunnelCapabilities();
     final lists = await Future.wait([
       _pages('/client/devices', generation),
@@ -1010,26 +1236,39 @@ class HomeTunnelApi {
         capabilities = _parseCapabilities(value['capabilities']);
       }),
     ]);
+    await _readDeviceCapabilities(generation, revision);
+    _checkGeneration(generation);
+    if (revision != _directoryRevision) return _loadCatalog();
     final devices = lists[0]
         .map((item) => HomeTunnelDevice(
             id: _id(item['id']),
             name: _text(item['name']),
-            platform: item['platform'] is String
+            platform: item['platform'] is String && item['platform'] != ''
                 ? _text(item['platform'], maxLength: 64)
                 : '',
             online: _boolean(item['online']),
             tags: _tags(item['tags'] ?? const []),
             favorite: _boolean(item['favorite'] ?? false),
-            metadataVersion: _version(item['metadata_version'])))
+            metadataVersion: _version(item['metadata_version']),
+            remoteDeviceId:
+                item['credential_purpose'] == 'background' ? '' : null,
+            tunnelDeviceId: item['credential_purpose'] == 'gui' ||
+                    item['id'] == _guiDeviceId
+                ? ''
+                : null,
+            tunnelOnline: item['credential_purpose'] == 'gui' ||
+                    item['id'] == _guiDeviceId
+                ? false
+                : null))
         .toList();
     final services = lists[1].map(_service).toList();
     _checkGeneration(generation);
     _capabilities = capabilities;
-    _knownServices
+    _rawDeviceIds
       ..clear()
-      ..addEntries(services.map((service) => MapEntry(service.id, service)));
-    return HomeTunnelCatalog(
-        devices: devices, services: services, capabilities: capabilities);
+      ..addAll(devices.map((device) => device.id));
+    return _physicalCatalog(HomeTunnelCatalog(
+        devices: devices, services: services, capabilities: capabilities));
   }
 
   Future<List<HomeDeskRemoteBinding>> remoteBindings() async {
@@ -1056,12 +1295,18 @@ class HomeTunnelApi {
         throw const HomeTunnelApiException('家庭设备远控信息无效。', 'RESPONSE_INVALID');
       }
       bindings.add(HomeDeskRemoteBinding(
-          deviceId: id,
+          deviceId: _physicalDeviceId(id),
           remoteId: remote,
           server: server.toLowerCase(),
           keySHA256: key,
           platform: _text(item['platform'], maxLength: 32),
           online: _boolean(item['online'])));
+      // On legacy servers a published GUI binding identifies a remote-only
+      // subject until a native/server-confirmed tunnel association is available.
+      if (!_deviceCapabilities.containsKey(id) &&
+          _tunnelRoutes.containsKey(id)) {
+        _tunnelRoutes[id] = '';
+      }
     }
     _checkGeneration(generation);
     return List.unmodifiable(bindings);
@@ -1079,7 +1324,7 @@ class HomeTunnelApi {
           'name': name,
           'install_id': installId,
           'fingerprint_hash': fingerprint,
-          'client_version': '13.0.0',
+          'client_version': '14.0.0',
           'client_type': _clientType,
           'credential_purpose': 'gui',
         },
@@ -1087,6 +1332,7 @@ class HomeTunnelApi {
     _checkGeneration(generation);
     _guiDeviceId = _id(value['device_id']);
     _setGuiSession(value);
+    _directoryRevision++;
     // The permanent GUI credential is discarded. Restoring requires the protected account login.
   }
 
@@ -1285,15 +1531,17 @@ class HomeTunnelApi {
               'name': name,
               'install_id': installId,
               'fingerprint_hash': fingerprint,
-              'client_version': '13.0.0',
+              'client_version': '14.0.0',
               'client_type': _clientType,
               'credential_purpose': 'background',
             }));
-        return {
+        final registration = {
           'device_id': _id(result['device_id']),
           'device_credential': _token(result['device_credential']),
           'config_version': 1
         };
+        _directoryRevision++;
+        return registration;
       });
 
   int _version(Object? value) {
@@ -1327,7 +1575,7 @@ class HomeTunnelApi {
     final enabled = _boolean(item['enabled']);
     return HomeTunnelService(
         id: _id(item['id']),
-        deviceId: _id(item['device_id']),
+        deviceId: _physicalDeviceId(_id(item['device_id'])),
         name: _text(item['name']),
         proxyType: type,
         status: _text(item['state'] ?? (enabled ? 'Pending' : 'Disabled'),
@@ -1399,7 +1647,17 @@ class HomeTunnelApi {
       throw _invalidInput();
     }
     try {
-      if (creating) result['device_id'] = _id(result['device_id']);
+      if (creating) {
+        final id = _id(result['device_id']);
+        final link = _deviceCapabilities[id];
+        if ((id == _guiDeviceId && link == null) ||
+            _tunnelRoutes[id] == '' ||
+            (link != null && !_rawDeviceIds.contains(link.tunnel))) {
+          throw const HomeTunnelApiException(
+              '这台设备的内网穿透尚未接入，请稍后刷新。', 'TUNNEL_NOT_READY');
+        }
+        result['device_id'] = _tunnelRoutes[id] ?? link?.tunnel ?? id;
+      }
       for (final field in ['name', 'local_host']) {
         if (creating || result.containsKey(field)) {
           result[field] =
@@ -1408,7 +1666,8 @@ class HomeTunnelApi {
           if ((result[field] as String).isEmpty) throw _invalidInput();
         }
       }
-    } on HomeTunnelApiException {
+    } on HomeTunnelApiException catch (error) {
+      if (error.code == 'TUNNEL_NOT_READY') rethrow;
       throw _invalidInput();
     }
     if (result.containsKey('local_host') &&
@@ -1460,7 +1719,11 @@ class HomeTunnelApi {
     try {
       final result = await operation(generation);
       _checkGeneration(generation);
+      _directoryRevision++;
       return result;
+    } on HomeTunnelApiException catch (error) {
+      if (error.outcomeUnknown || error.isConflict) _directoryRevision++;
+      rethrow;
     } finally {
       _mutating.remove(key);
     }
@@ -1575,6 +1838,46 @@ class HomeTunnelApi {
     });
   }
 
+  /// Revokes an owned device through the management-session API. This stops
+  /// its device sessions and leases; it never invokes administrator deletion.
+  /// The server does not accept an optimistic version for this operation.
+  Future<void> deleteDevice(String id) async {
+    _ensureAllowed();
+    final deviceId = _id(id);
+    await _mutate('device:$deviceId', (generation) async {
+      final link = _deviceCapabilities[deviceId];
+      final paths = link == null
+          ? ['/auth/devices/$deviceId']
+          : _capabilityProtocol == true
+              ? ['/auth/device-capabilities/$deviceId']
+              : [
+                  if (link.tunnel != null &&
+                      _rawDeviceIds.contains(link.tunnel))
+                    '/auth/devices/${link.tunnel}',
+                  if (link.remote != null &&
+                      _rawDeviceIds.contains(link.remote))
+                    '/auth/devices/${link.remote}',
+                ];
+      if (paths.isEmpty) throw _invalidInput();
+      var completed = 0;
+      try {
+        for (final path in paths) {
+          final reply = await _authenticated('DELETE', path,
+              generation: generation, mutation: true);
+          if (reply.status < 200 || reply.status >= 300) throw _failure(reply);
+          if (reply.status != 204) throw _unknownMutation();
+          completed++;
+          _directoryRevision++;
+        }
+      } catch (_) {
+        // A partial revocation cannot be reported as a safe, repeatable failure.
+        if (completed > 0) throw _unknownMutation();
+        rethrow;
+      }
+      _knownServices.removeWhere((_, service) => service.deviceId == deviceId);
+    });
+  }
+
   Future<void> updateDevice(String id,
       {required List<String> tags,
       required bool favorite,
@@ -1589,8 +1892,16 @@ class HomeTunnelApi {
             RegExp(r'[\x00-\x1f\x7f]').hasMatch(tag))) throw _invalidInput();
     final normalized = tags.map((tag) => tag.trim()).toSet().toList()..sort();
     await _mutate('device:$deviceId', (generation) async {
+      final link = _deviceCapabilities[deviceId];
+      final subjectId = link == null
+          ? deviceId
+          : _rawDeviceIds.contains(link.remote)
+              ? link.remote!
+              : _rawDeviceIds.contains(link.tunnel)
+                  ? link.tunnel!
+                  : throw _invalidInput();
       final reply =
-          await _authenticated('PATCH', '/client/devices/$deviceId/metadata',
+          await _authenticated('PATCH', '/client/devices/$subjectId/metadata',
               generation: generation,
               body: {
                 'tags': normalized,
@@ -1599,7 +1910,7 @@ class HomeTunnelApi {
               },
               mutation: true);
       final value = _mutationObject(reply);
-      if (value['id'] != deviceId || value['metadata_version'] is! int) {
+      if (value['id'] != subjectId || value['metadata_version'] is! int) {
         throw _unknownMutation();
       }
     });

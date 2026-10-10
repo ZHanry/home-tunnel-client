@@ -10,6 +10,7 @@ class HomeDeskAgentException implements Exception {
   String get message => switch (code) {
     'RUNTIME_MISSING' => '程序包缺少本机接入组件，请使用包含 Agent 的完整包。',
     'INTEGRITY_FAILED' => '本机接入组件摘要不匹配，已拒绝启动。',
+    'RUNTIME_INCOMPATIBLE' => '本机接入组件版本与客户端不兼容，请重新安装完整程序包。',
     'STATE_DAMAGED' => '本机设备状态损坏，已停止自动接入，请核对后恢复。',
     'ENROLLMENT_RESULT_UNKNOWN' => '本机登记结果未知，请先刷新网页设备列表核对，未自动重放。',
     'DEVICE_OUTSIDE_ACCOUNT' => '本机登记已撤销或不属于当前账号，未自动重新登记。',
@@ -87,14 +88,14 @@ class HomeDeskLocalAgent {
     try {
       final inspected = await _command('inspect');
       if (inspected['phase'] == 'registered') {
-        if (!catalog.devices.any((device) => device.id == deviceId)) {
+        if (!catalog.devices.any((device) => device.tunnelDeviceId == deviceId)) {
           throw const HomeDeskAgentException('DEVICE_OUTSIDE_ACCOUNT');
         }
       } else if (inspected['phase'] == 'needs_registration') {
         final registration = await api.registerBackgroundDevice(name, inspected['install_id'] as String, inspected['fingerprint_hash'] as String);
         await _command('register', registration: jsonEncode(registration));
         catalog = await api.catalog();
-        if (!catalog.devices.any((device) => device.id == deviceId)) {
+        if (!catalog.devices.any((device) => device.tunnelDeviceId == deviceId)) {
           throw const HomeDeskAgentException('DEVICE_OUTSIDE_ACCOUNT');
         }
       } else {

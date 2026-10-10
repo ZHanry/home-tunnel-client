@@ -354,6 +354,9 @@ class Harness {
           'native_remote': false,
         });
         break;
+      case '/api/v2/auth/device-capabilities':
+        await jsonResponse(request, {'error_code': 'NOT_FOUND'}, status: 404);
+        break;
       case '/api/v1/client/devices':
         await jsonResponse(request, page([device(1), device(2)]));
         break;

@@ -5,7 +5,7 @@ import 'package:get/get.dart';
 import 'package:flutter/material.dart';
 
 import 'models/platform_model.dart';
-import 'homedesk_theme.dart';
+import 'nestlink_dialog.dart';
 
 const _advancedModeKey = 'homedesk-advanced-mode';
 final RxBool homedeskAdvancedMode = false.obs;
@@ -151,26 +151,29 @@ typedef HomeDeskNetworkSaver = Future<String> Function(
 // Connection settings are issued by the authenticated self-hosted service.
 Future<void> showHomeDeskNetworkSettings(BuildContext context,
     {String Function(String)? readOption,
+    String? serviceAddress,
     HomeDeskNetworkSaver? saveProfile}) async {
   final read = readOption ?? (String key) => bind.mainGetOptionSync(key: key);
   await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => NestLinkDialog(
             title: const Text('自建服务连接'),
-            content: SizedBox(
-                width: 480,
-                child: SingleChildScrollView(
-                    child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      const Text('登录后自动获取远控服务配置。切换服务请先退出当前账号，再登录新的自建服务。'),
-                      const SizedBox(height: 20),
-                      const Text('信令服务器'),
-                      SelectableText(read('custom-rendezvous-server')),
-                      const SizedBox(height: 20),
-                      const Text('远控策略：加密 P2P 直连；直连失败时结束。'),
-                    ]))),
+            content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('服务连接由登录账号自动配置。切换服务请退出后重新登录。'),
+                  if (serviceAddress != null && serviceAddress.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    const Text('自建服务'),
+                    SelectableText(serviceAddress),
+                  ],
+                  const SizedBox(height: 20),
+                  const Text('远控服务器'),
+                  SelectableText(read('custom-rendezvous-server').isEmpty
+                      ? '登录后自动配置'
+                      : read('custom-rendezvous-server')),
+                ]),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context),

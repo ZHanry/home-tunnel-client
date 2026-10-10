@@ -1,6 +1,8 @@
 // HOMEDESK: 受管隧道进程独立于远控；命令不落入普通配置，许可撤销同步终止 Job。
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+#[path = "homedesk_runtime_compatibility.rs"]
+mod runtime_compatibility;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,7 +231,8 @@ mod platform {
         let manifest_path = runtime.join("runtime.json");
         regular(&manifest_path)?;
         let manifest: serde_json::Value = serde_json::from_slice(&fs::read(manifest_path).map_err(|_| "INTEGRITY_FAILED")?).map_err(|_| "INTEGRITY_FAILED")?;
-        if manifest["version"] != env!("CARGO_PKG_VERSION") || manifest["parent_executable"].as_str() != executable.file_name().and_then(|v| v.to_str()) { return Err("INTEGRITY_FAILED"); }
+        let executable_name = executable.file_name().and_then(|v| v.to_str()).ok_or("UNSAFE_PATH")?;
+        runtime_compatibility::validate(&manifest, executable_name)?;
         let helper = runtime.join(if cfg!(windows) { "homedesk-tunnel-helper.exe" } else { "homedesk-tunnel-helper" });
         verify(&helper, manifest["helper_sha256"].as_str().ok_or("INTEGRITY_FAILED")?)?;
         verify(&runtime.join(if cfg!(windows) { "home-tunnel-agent.exe" } else { "home-tunnel-agent" }), manifest["agent_sha256"].as_str().ok_or("INTEGRITY_FAILED")?)?;

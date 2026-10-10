@@ -1,6 +1,50 @@
 // HOMEDESK: Compact navigation shares the desktop tokens without fixed desktop widths.
 import 'package:flutter/material.dart';
 import 'homedesk_theme.dart';
+import 'homedesk_account.dart';
+import 'homedesk_dashboard.dart';
+import 'homedesk_family_devices.dart';
+
+/// The production mobile entry reuses the desktop directory and account owner.
+/// Native screen capture controls remain supplied by the Android host page.
+class NestLinkMobileHome extends StatelessWidget {
+  final HomeDeskAccount account;
+  final String Function(String) readOption;
+  final ValueChanged<String> onConnect;
+  final WidgetBuilder servicesBuilder, recentBuilder;
+  final WidgetBuilder? localBuilder;
+  final VoidCallback? onNetworkSettings;
+  const NestLinkMobileHome({
+    super.key,
+    required this.account,
+    required this.readOption,
+    required this.onConnect,
+    required this.servicesBuilder,
+    required this.recentBuilder,
+    this.localBuilder,
+    this.onNetworkSettings,
+  });
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+      body: SafeArea(
+          child: HomeDeskDashboard(
+              brandName: 'NestLink',
+              initializeAccount: true,
+              mobilePlatform: true,
+              devicesBuilder: (_) => HomeDeskFamilyDevices(
+                  account: account,
+                  listLayout: true,
+                  onLogin: () => HomeDeskDashboard.navigate('account'),
+                  onConnect: onConnect,
+                  readOption: readOption),
+              recentBuilder: recentBuilder,
+              servicesBuilder: servicesBuilder,
+              localBuilder: localBuilder,
+              statusBuilder: (_) => const SizedBox.shrink(),
+              onNetworkSettings: onNetworkSettings,
+              onConnect: onConnect)));
+}
 
 class HomeDeskMobileShell extends StatelessWidget {
   final String title;

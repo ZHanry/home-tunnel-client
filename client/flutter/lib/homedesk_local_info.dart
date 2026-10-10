@@ -12,7 +12,6 @@ class HomeDeskLocalInfo extends StatefulWidget {
   final VoidCallback onCopyId;
   final VoidCallback? onRefreshPassword;
   final VoidCallback? onPasswordSettings;
-  final VoidCallback? onInstall;
   final Widget? warning;
   final Widget? additionalHelp;
   final Widget? pluginEntry;
@@ -29,7 +28,6 @@ class HomeDeskLocalInfo extends StatefulWidget {
       required this.status,
       this.onRefreshPassword,
       this.onPasswordSettings,
-      this.onInstall,
       this.warning,
       this.additionalHelp,
       this.pluginEntry});
@@ -177,49 +175,6 @@ class _HomeDeskLocalInfoState extends State<HomeDeskLocalInfo> {
                   ],
                   const SizedBox(height: 12),
                   widget.status,
-                  if (widget.onInstall != null) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                        key: const ValueKey('local-info-portable'),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                            color: HomeDeskTokens.of(context).accentSoft,
-                            borderRadius: BorderRadius.circular(
-                                HomeDeskTokens.blockRadius),
-                            border: Border.all(color: colors.outlineVariant)),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(children: [
-                                Icon(Icons.info_outline_rounded,
-                                    size: 18, color: colors.primary),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                    child: Text(nl('便携运行', 'Portable app'),
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.w600))),
-                              ]),
-                              const SizedBox(height: 8),
-                              Text(
-                                  widget.incomingEnabled
-                                      ? nl(
-                                          '便携版在系统权限窗口或管理员程序中可能无法操作。长期作为被控端，建议安装到系统。',
-                                          'Install this app for use with system permission windows and administrator apps.')
-                                      : nl('无需安装即可主动连接其他电脑，也可以安装到系统后使用。',
-                                          'You can connect now or install this app.'),
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: colors.onSurfaceVariant)),
-                              const SizedBox(height: 10),
-                              OutlinedButton.icon(
-                                  key: const ValueKey('local-info-install'),
-                                  onPressed: widget.onInstall,
-                                  icon: const Icon(
-                                      Icons.install_desktop_rounded,
-                                      size: 18),
-                                  label: Text(nl('安装到系统', 'Install'))),
-                            ])),
-                  ],
                   if (widget.additionalHelp != null) widget.additionalHelp!,
                   if (widget.pluginEntry != null) widget.pluginEntry!,
                 ])));

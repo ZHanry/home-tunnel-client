@@ -1,7 +1,7 @@
 # Official generic builds contain no server, key or embedded credentials.
 # Sign in to your self-hosted service; signal configuration is retrieved after authentication.
 [brand]
-app_name = "nestlink"
+app_name = "NestLink"
 executable_name = "homedesk"
 package_name = "homedesk"
 config_namespace = "HomeDesk"

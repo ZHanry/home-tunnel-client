@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "13.0.0"
+  #define AppVersion "14.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "."
@@ -10,18 +10,18 @@
 
 [Setup]
 AppId={{8F3C1B2A-7D54-4E19-9A6C-2B0E5D8F4A11}
-AppName=nestlink
+AppName=NestLink
 AppVersion={#AppVersion}
-VersionInfoVersion=13.0.0.0
-AppPublisher=nestlink
+VersionInfoVersion={#AppVersion}.0
+AppPublisher=NestLink
 AppPublisherURL=https://github.com/ZHanry/home-tunnel-client
-DefaultDirName={localappdata}\Home Tunnel
-DefaultGroupName=nestlink
+DefaultDirName={%USERPROFILE}\Applications\NestLink
+DefaultGroupName=NestLink
 DisableProgramGroupPage=yes
 LicenseFile={#SourceDir}\LICENSE-RUSTDESK
 OutputDir={#OutputDir}
 OutputBaseFilename=NestLink-Setup-{#AppVersion}-x64
-SetupIconFile={#SourceDir}\HomeDesk.ico
+SetupIconFile={#SourceDir}\NestLink.ico
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=lowest
@@ -44,9 +44,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\nestlink"; Filename: "{app}\homedesk.exe"
-Name: "{autodesktop}\nestlink"; Filename: "{app}\homedesk.exe"; Tasks: desktopicon
-Name: "{group}\Uninstall nestlink"; Filename: "{uninstallexe}"
+Name: "{group}\NestLink"; Filename: "{app}\homedesk.exe"; IconFilename: "{app}\NestLink.ico"
+Name: "{autodesktop}\NestLink"; Filename: "{app}\homedesk.exe"; IconFilename: "{app}\NestLink.ico"; Tasks: desktopicon
+Name: "{group}\Uninstall NestLink"; Filename: "{uninstallexe}"
 
 [InstallDelete]
 Type: files; Name: "{app}\home-tunnel-gui.exe"
@@ -56,12 +56,12 @@ Type: files; Name: "{app}\home_tunnel_remote_host.exe"
 Type: files; Name: "{app}\home_tunnel_remote_host.dll"
 
 [Registry]
-Root: HKA; Subkey: "Software\Classes\homedesk"; ValueType: string; ValueData: "URL:nestlink"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\homedesk"; ValueType: string; ValueData: "URL:NestLink"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\homedesk"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\homedesk\shell\open\command"; ValueType: string; ValueData: """{app}\homedesk.exe"" ""%1"""
 
 [Run]
-Filename: "{app}\homedesk.exe"; Description: "{cm:LaunchProgram,nestlink}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\homedesk.exe"; Description: "{cm:LaunchProgram,NestLink}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 function OpenUpgradeTarget(FileName: String; DesiredAccess, ShareMode: LongWord;

@@ -9,7 +9,11 @@
 
 class HomeDeskWindowTray {
  public:
-  void Enable(HWND window) { window_ = window; enabled_ = true; }
+  void Enable(HWND window) {
+    window_ = window;
+    enabled_ = true;
+    AddIcon();
+  }
 
   bool Minimize() {
     if (!enabled_ || !window_ || !AddIcon()) return false;
@@ -27,11 +31,10 @@ class HomeDeskWindowTray {
 
   bool Handle(UINT message, WPARAM wparam, LPARAM lparam) {
     if (!enabled_) return false;
-    if (message == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_MINIMIZE) {
-      return Minimize();
-    }
-    if (message == WM_SHOWWINDOW && wparam) Remove();
-    if (message == taskbar_created_ && visible_) {
+    // Taskbar/system minimization must retain the taskbar entry. Only the
+    // explicit homedeskMinimizeToTray request may hide the main window.
+    if (message == WM_SHOWWINDOW && wparam) AddIcon();
+    if (message == taskbar_created_) {
       visible_ = false;
       if (!AddIcon()) Restore();
       return false;
@@ -80,8 +83,7 @@ class HomeDeskWindowTray {
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     data.uCallbackMessage = kMessage;
     data.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APP_ICON));
-    StringCchCopyW(data.szTip, ARRAYSIZE(data.szTip),
-        HOMEDESK_APP_NAME_WIDE L" \u00b7 \u540e\u53f0\u8fd0\u884c");
+    StringCchCopyW(data.szTip, ARRAYSIZE(data.szTip), HOMEDESK_APP_NAME_WIDE);
     if (!data.hIcon || !Shell_NotifyIconW(NIM_ADD, &data)) return false;
     data.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &data);
@@ -90,7 +92,6 @@ class HomeDeskWindowTray {
   }
 
   void Restore() {
-    Remove();
     ShowWindow(window_, IsIconic(window_) ? SW_RESTORE : SW_SHOW);
     SetForegroundWindow(window_);
   }

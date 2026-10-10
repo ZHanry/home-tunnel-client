@@ -77,7 +77,7 @@ else:
         assert (root / "tests/browser/desktop.spec.mjs").exists()
         version = re.search(r'const Version = "([^"]+)"', (root / "internal/model/model.go").read_text(encoding="utf-8")).group(1)
         assert compat['version'] == version, 'Product metadata version drift'
-        if version.startswith(('11.', '12.', '13.')):
+        if int(version.split('.', 1)[0]) >= 11:
             assert f'version = "{version}"' in (root/'client/Cargo.toml').read_text()
             assert f'version: {version}+' in (root/'client/flutter/pubspec.yaml').read_text()
         assert f'HOST_VERSION = "{version}"' in (root / "native/remote/generated/host_version.hpp").read_text(), "Native host version drift"

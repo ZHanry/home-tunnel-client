@@ -1,12 +1,9 @@
-// HOMEDESK: 主界面与设置共享带文字的响应式导航，只分派已有入口。
+// The desktop has three main destinations and a fixed account entry below them.
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'homedesk_account.dart';
 import 'homedesk_theme.dart';
-import 'nestlink_workspace.dart';
 import 'nestlink_locale.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'common.dart' show MyTheme;
 
 class HomeDeskNavigation extends StatelessWidget {
   final String brand, selected;
@@ -21,15 +18,11 @@ class HomeDeskNavigation extends StatelessWidget {
       required this.onSelected,
       this.services = true,
       this.account});
-  Widget _item(BuildContext context, String value, String label, IconData icon,
-      {String? count}) {
+
+  Widget _item(
+      BuildContext context, String value, String label, IconData icon) {
     final t = HomeDeskTokens.of(context);
     final active = selected == value;
-    final text = Text(label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-            fontSize: compact ? HomeDeskTokens.caption : HomeDeskTokens.body));
     return Padding(
         padding: const EdgeInsets.only(bottom: 4),
         child: Tooltip(
@@ -38,159 +31,121 @@ class HomeDeskNavigation extends StatelessWidget {
                 key: ValueKey('nav-$value'),
                 onPressed: () => onSelected(value),
                 style: TextButton.styleFrom(
-                    foregroundColor: active ? t.accentText : t.secondary,
-                    backgroundColor: active ? t.accentSoft : null,
+                    foregroundColor: active ? t.accentText : t.text,
+                    backgroundColor: active ? t.accentSoft : Colors.transparent,
                     padding: EdgeInsets.symmetric(
-                        horizontal: compact ? 2 : 12,
-                        vertical: compact ? 6 : 10)),
+                        horizontal: compact ? 4 : 14,
+                        vertical: compact ? 8 : 10),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6))),
                 child: compact
                     ? Column(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(icon, size: 22),
+                        Icon(icon, size: 21),
                         const SizedBox(height: 4),
-                        text
+                        Text(label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12)),
                       ])
                     : Row(children: [
-                        Icon(icon, size: 20),
+                        Icon(icon,
+                            size: 20, color: active ? t.accentText : t.accent),
                         const SizedBox(width: 12),
-                        Expanded(child: text),
-                        if (count != null)
-                          Text(count,
-                              style: TextStyle(fontSize: 12, color: t.muted))
+                        Expanded(
+                            child: Text(label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: active
+                                        ? FontWeight.w600
+                                        : FontWeight.w400))),
+                      ]))));
+  }
+
+  Widget _accountEntry(BuildContext context) {
+    final t = HomeDeskTokens.of(context);
+    final signedIn = account?.signedIn == true;
+    final name = signedIn
+        ? account!.displayName.trim().isEmpty
+            ? nl('账号', 'Account')
+            : account!.displayName.trim()
+        : nl('未登录', 'Not signed in');
+    final avatar = Container(
+        key: const ValueKey('nav-account-avatar'),
+        width: 32,
+        height: 32,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: t.accentSoft, shape: BoxShape.circle),
+        child: signedIn
+            ? Text(name.characters.first,
+                textScaler: TextScaler.noScaling,
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: t.accentText))
+            : Icon(Icons.person_outline_rounded,
+                size: 20, color: t.accentText));
+    final label = Text(name,
+        key: const ValueKey('nav-account-name'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: compact ? 12 : 15));
+    return Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 12),
+        child: Tooltip(
+            message: nl('账号与设置', 'Account & settings'),
+            child: TextButton(
+                key: const ValueKey('nav-account'),
+                onPressed: () => onSelected('account'),
+                style: TextButton.styleFrom(
+                    foregroundColor: t.text,
+                    backgroundColor: selected == 'account'
+                        ? t.accentSoft
+                        : Colors.transparent,
+                    padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 4 : 10, vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6))),
+                child: compact
+                    ? Column(mainAxisSize: MainAxisSize.min, children: [
+                        avatar,
+                        const SizedBox(height: 6),
+                        label,
+                      ])
+                    : Row(children: [
+                        avatar,
+                        const SizedBox(width: 12),
+                        Expanded(child: label),
                       ]))));
   }
 
   Widget _body(BuildContext context) {
     final t = HomeDeskTokens.of(context);
     final content = <Widget>[
-      Padding(
-          padding: EdgeInsets.symmetric(vertical: compact ? 12 : 16),
-          child: Row(
-              mainAxisAlignment:
-                  compact ? MainAxisAlignment.center : MainAxisAlignment.start,
-              children: [
-                Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                        color: t.accent,
-                        borderRadius:
-                            BorderRadius.circular(HomeDeskTokens.blockRadius)),
-                    child: SvgPicture.asset('assets/icon.svg',
-                        width: 36, height: 36)),
-                if (!compact) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: Text(brand,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: t.sectionStyle))
-                ]
-              ])),
-      const SizedBox(height: 12),
-      _item(context, 'remote', nl('远程控制', 'Remote control'),
-          Icons.desktop_windows_outlined),
+      const SizedBox(height: 16),
+      _item(context, 'devices', nl('设备管理', 'Device management'),
+          Icons.apps_rounded),
+      _item(context, 'remote', nl('远程协助', 'Remote assistance'),
+          Icons.screen_share_outlined),
       if (services)
-        _item(context, 'services', nl('内网穿透', 'Tunnels'), Icons.hub_outlined,
-            count: account?.catalog?.services.length.toString()),
-      _item(context, 'devices', nl('设备', 'Devices'), Icons.devices_rounded,
-          count: account?.catalog?.devices.length.toString()),
-      _item(context, 'settings', nl('设置', 'Settings'), Icons.settings_outlined),
+        _item(context, 'services', nl('内网穿透', 'Tunnels'), Icons.hub_outlined),
+      const SizedBox(height: 14),
     ];
-    final lower = compact
-        ? <Widget>[
-            IconButton(
-                tooltip: nestlinkEnglish ? '简体中文' : 'English',
-                onPressed: () =>
-                    setNestLinkLanguage(nestlinkEnglish ? 'zh-cn' : 'en'),
-                icon: const Icon(Icons.language_outlined)),
-            IconButton(
-                tooltip: nl('切换主题', 'Change theme'),
-                onPressed: () => MyTheme.changeDarkMode(
-                    Theme.of(context).brightness == Brightness.dark
-                        ? ThemeMode.light
-                        : ThemeMode.dark),
-                icon: Icon(Theme.of(context).brightness == Brightness.dark
-                    ? Icons.light_mode_outlined
-                    : Icons.dark_mode_outlined)),
-            const Divider(),
-            _item(context, 'account', nl('账号', 'Account'),
-                Icons.person_outline_rounded),
-            IconButton(
-                tooltip: nestlinkVersion,
-                onPressed: () => showNestLinkVersion(context),
-                icon: const Icon(Icons.info_outline)),
-            const SizedBox(height: 12),
-          ]
-        : <Widget>[
-            SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                    onPressed: () =>
-                        setNestLinkLanguage(nestlinkEnglish ? 'zh-cn' : 'en'),
-                    icon: const Icon(Icons.language_outlined, size: 18),
-                    label: Text(nestlinkEnglish ? '简体中文' : 'English'))),
-            const SizedBox(height: 8),
-            SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                    onPressed: () => MyTheme.changeDarkMode(
-                        Theme.of(context).brightness == Brightness.dark
-                            ? ThemeMode.light
-                            : ThemeMode.dark),
-                    icon: Icon(
-                        Theme.of(context).brightness == Brightness.dark
-                            ? Icons.light_mode_outlined
-                            : Icons.dark_mode_outlined,
-                        size: 18),
-                    label: Text(nl('切换主题', 'Change theme')))),
-            const SizedBox(height: 8),
-            Divider(color: t.border, height: 12),
-            _item(
-                context,
-                'account',
-                compact
-                    ? nl('账号', 'Account')
-                    : account?.signedIn == true
-                        ? account!.displayName
-                        : nl('登录账号', 'Sign in'),
-                Icons.person_outline_rounded),
-            ValueListenableBuilder<Map<String, dynamic>?>(
-                valueListenable: nestlinkRelease,
-                builder: (context, release, _) => SizedBox(
-                    width: double.infinity,
-                    child: TextButton.icon(
-                        onPressed: () => showNestLinkVersion(context),
-                        icon: Icon(
-                            release?['update_available'] == true
-                                ? Icons.system_update_alt
-                                : Icons.info_outline,
-                            size: 18),
-                        label: const Text(nestlinkVersion)))),
-            const SizedBox(height: 12),
-          ];
     return Container(
         width: compact ? 84 : 220,
-        padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 12),
-        decoration: BoxDecoration(
-            color: t.chrome,
-            border: Border(right: BorderSide(color: t.border))),
-        child: LayoutBuilder(builder: (context, c) {
-          // 大字体或矮窗口时允许导航滚动，所有入口仍保留文字。
-          if (c.maxHeight < 480 ||
-              MediaQuery.textScalerOf(context).scale(1) > 1.5) {
-            return SingleChildScrollView(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                  ...content,
-                  const SizedBox(height: 8),
-                  ...lower
-                ]));
-          }
-          return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [...content, const Spacer(), ...lower]);
-        }));
+        padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 10),
+        color: t.chrome,
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Expanded(
+              child: SingleChildScrollView(
+                  key: const ValueKey('nav-main-scroll'),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: content))),
+          _accountEntry(context),
+        ]));
   }
 
   @override
@@ -199,16 +154,17 @@ class HomeDeskNavigation extends StatelessWidget {
       : HomeDeskAccountView(account: account!, builder: _body);
 }
 
-// 首页设备模块通过外壳请求本机信息和最近连接，凭据只在主动查看后展示。
+// Device pages share recent connections and connection status through the shell.
 class HomeDeskHomeActions extends InheritedWidget {
-  final VoidCallback onLocal, onRecent;
+  final VoidCallback onRecent;
+  final VoidCallback? onManualConnect;
   final WidgetBuilder recentSummary;
   final WidgetBuilder status;
   const HomeDeskHomeActions(
       {super.key,
       required super.child,
-      required this.onLocal,
       required this.onRecent,
+      this.onManualConnect,
       required this.recentSummary,
       required this.status});
   static HomeDeskHomeActions? of(BuildContext context) =>
@@ -239,32 +195,10 @@ class HomeDeskHomePanels extends StatelessWidget {
     final recent = panel('最近连接', actions.recentSummary(context),
         action:
             TextButton(onPressed: actions.onRecent, child: const Text('查看全部')));
-    final local = panel(
-        '让家人连接这台电脑',
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('打开连接码，查看设备 ID 和本机允许的连接方式。', style: t.auxiliaryStyle),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-              onPressed: actions.onLocal,
-              icon: const Icon(Icons.key_rounded, size: 18),
-              label: const Text('查看连接码')),
-          const SizedBox(height: 8),
-          Text('固定密码和本机确认可在“设置 · 安全”中管理。', style: t.auxiliaryStyle)
-        ]));
     return Padding(
         padding: const EdgeInsets.only(
             top: HomeDeskTokens.moduleGap, bottom: HomeDeskTokens.moduleGap),
-        child: LayoutBuilder(
-            builder: (context, c) => c.maxWidth >= 760 &&
-                    MediaQuery.textScalerOf(context).scale(1) <= 1.5
-                ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Expanded(child: recent),
-                    const SizedBox(width: 16),
-                    Expanded(child: local)
-                  ])
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [recent, const SizedBox(height: 16), local])));
+        child: recent);
   }
 }
 

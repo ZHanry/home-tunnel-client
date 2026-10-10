@@ -17,8 +17,11 @@ import 'home_page.dart';
 import '../../homedesk_local_info.dart';
 import '../../homedesk_dashboard.dart';
 import '../../nestlink_locale.dart';
+import '../../nestlink_remote_credentials.dart';
+import '../../homedesk_theme.dart';
 
 class ServerPage extends StatefulWidget implements PageShape {
+  final bool embedded;
   @override
   final title = translate("Share screen");
 
@@ -31,7 +34,7 @@ class ServerPage extends StatefulWidget implements PageShape {
       ? [_DropDownAction()]
       : [];
 
-  ServerPage({Key? key}) : super(key: key);
+  ServerPage({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<StatefulWidget> createState() => _ServerPageState();
@@ -205,44 +208,78 @@ class _ServerPageState extends State<ServerPage> {
     checkService();
     return ChangeNotifierProvider.value(
         value: gFFI.serverModel,
-        child: Consumer<ServerModel>(
-            builder: (context, model, child) => HomeDeskLocalInfo(
-                  id: model.serverId,
-                  password: model.serverPasswd,
-                  incomingEnabled: model.isStart,
-                  showTemporaryPassword: model.approveMode != 'click' &&
-                      model.verificationMethod != kUsePermanentPassword,
-                  passwordHint: model.approveMode == 'click'
-                      ? nl('连接时由本机确认', 'Approve connections on this device')
-                      : nl('使用固定密码', 'Use the fixed password'),
-                  onCopyId: () => Clipboard.setData(
-                      ClipboardData(text: model.serverId.text)),
-                  onRefreshPassword: () => bind.mainUpdateTemporaryPassword(),
-                  onPasswordSettings: () {
-                    Navigator.pop(context);
-                    HomeDeskDashboard.navigate('settings');
-                  },
-                  status: Text(model.connectStatus > 0
-                      ? nl('已连接自建服务', 'Connected to your server')
-                      : nl('正在连接自建服务', 'Connecting to your server')),
-                  additionalHelp: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const SizedBox(height: 16),
-                        if (!model.isStart)
-                          FilledButton.icon(
-                              onPressed: model.toggleService,
-                              icon: const Icon(
-                                  Icons.mobile_screen_share_outlined),
-                              label: Text(nl('共享本机屏幕', 'Share this screen'))),
-                        const SizedBox(height: 12),
-                        Text(nl('共享前需确认 Android 系统屏幕录制授权。停止共享后，独立穿透仍可运行。',
-                            'Confirm Android screen capture permission before sharing. Independent tunnels can continue when sharing stops.')),
-                        const SizedBox(height: 16),
-                        const ConnectionManager(),
-                        const PermissionChecker(),
-                      ]),
-                )));
+        child: Consumer<ServerModel>(builder: (context, model, child) {
+          final help =
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const SizedBox(height: 16),
+            if (!model.isStart)
+              FilledButton.icon(
+                  key: const ValueKey('android-share-screen'),
+                  style: FilledButton.styleFrom(
+                      minimumSize: Size.fromHeight(
+                          homeDeskControlHeight(context, minimum: 48))),
+                  onPressed: bind.mainNestlinkAccountReady()
+                      ? model.toggleService
+                      : null,
+                  icon: const Icon(Icons.mobile_screen_share_outlined),
+                  label: Text(nl('共享本机屏幕', 'Share this screen'))),
+            const SizedBox(height: 12),
+            Text(
+                nl('共享前需确认 Android 系统屏幕录制授权。',
+                    'Confirm Android screen capture permission before sharing.'),
+                style: HomeDeskTokens.of(context).auxiliaryStyle),
+            const SizedBox(height: 16),
+            const ConnectionManager(),
+            const PermissionChecker(),
+          ]);
+          final status = Text(model.connectStatus > 0
+              ? nl('已连接自建服务', 'Connected to your server')
+              : nl('正在连接自建服务', 'Connecting to your server'));
+          if (widget.embedded) {
+            return Column(
+                key: const ValueKey('android-local-host'),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  NestLinkRemoteCredentials(
+                      id: model.serverId,
+                      password: model.serverPasswd,
+                      incomingEnabled: !bind.isOutgoingOnly(),
+                      accountReady: bind.mainNestlinkAccountReady(),
+                      serviceStopped: !model.isStart,
+                      showTemporaryPassword: model.approveMode != 'click' &&
+                          model.verificationMethod != kUsePermanentPassword,
+                      passwordHint: model.approveMode == 'click'
+                          ? nl('连接时由本机确认', 'Approve connections on this device')
+                          : nl('使用固定密码', 'Use the fixed password'),
+                      onCopyId: () => Clipboard.setData(
+                          ClipboardData(text: model.serverId.text)),
+                      onRefreshPassword:
+                          bind.mainNestlinkAccountReady() && model.isStart
+                              ? () => bind.mainUpdateTemporaryPassword()
+                              : null,
+                      status: status),
+                  help,
+                ]);
+          }
+          return HomeDeskLocalInfo(
+            id: model.serverId,
+            password: model.serverPasswd,
+            incomingEnabled: model.isStart,
+            showTemporaryPassword: model.approveMode != 'click' &&
+                model.verificationMethod != kUsePermanentPassword,
+            passwordHint: model.approveMode == 'click'
+                ? nl('连接时由本机确认', 'Approve connections on this device')
+                : nl('使用固定密码', 'Use the fixed password'),
+            onCopyId: () =>
+                Clipboard.setData(ClipboardData(text: model.serverId.text)),
+            onRefreshPassword: () => bind.mainUpdateTemporaryPassword(),
+            onPasswordSettings: () {
+              HomeDeskDashboard.active?.showRemoteSettings();
+            },
+            status: status,
+            additionalHelp: help,
+          );
+        }));
   }
 }
 
@@ -622,8 +659,10 @@ class _PermissionCheckerState extends State<PermissionChecker> {
           serverModel.mediaOk && !hideStopService
               ? ElevatedButton.icon(
                       style: ButtonStyle(
-                          backgroundColor:
-                              MaterialStateProperty.all(Colors.red)),
+                          minimumSize: WidgetStatePropertyAll(Size(
+                              0, homeDeskControlHeight(context, minimum: 48))),
+                          backgroundColor: WidgetStatePropertyAll(
+                              HomeDeskTokens.of(context).danger)),
                       icon: const Icon(Icons.stop),
                       onPressed: serverModel.toggleService,
                       label: Text(translate("Stop service")))
@@ -709,8 +748,7 @@ class ConnectionManager extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Expanded(child: ClientInfo(client)),
-                      Expanded(
-                          flex: -1,
+                      SizedBox(
                           child: client.isFileTransfer || !client.authorized
                               ? const SizedBox.shrink()
                               : IconButton(
@@ -734,7 +772,7 @@ class ConnectionManager extends StatelessWidget {
                           style: Theme.of(context).textTheme.bodyMedium,
                         ).marginOnly(bottom: 5),
                   client.authorized
-                      ? _buildDisconnectButton(client)
+                      ? _buildDisconnectButton(context, client)
                       : _buildNewConnectionHint(serverModel, client),
                   if (client.incomingVoiceCall && !client.inVoiceCall)
                     ..._buildNewVoiceCallHint(context, serverModel, client),
@@ -742,9 +780,10 @@ class ConnectionManager extends StatelessWidget {
             .toList());
   }
 
-  Widget _buildDisconnectButton(Client client) {
+  Widget _buildDisconnectButton(BuildContext context, Client client) {
     final disconnectButton = ElevatedButton.icon(
-      style: ButtonStyle(backgroundColor: MaterialStatePropertyAll(Colors.red)),
+      style: ElevatedButton.styleFrom(
+          backgroundColor: HomeDeskTokens.of(context).danger),
       icon: const Icon(Icons.close),
       onPressed: () {
         bind.cmCloseConnection(connId: client.id);
@@ -757,8 +796,8 @@ class ConnectionManager extends StatelessWidget {
       buttons.insert(
         0,
         ElevatedButton.icon(
-          style: ButtonStyle(
-              backgroundColor: MaterialStatePropertyAll(Colors.red)),
+          style: ElevatedButton.styleFrom(
+              backgroundColor: HomeDeskTokens.of(context).danger),
           icon: const Icon(Icons.phone),
           label: Text(translate("Stop")),
           onPressed: () {
@@ -775,28 +814,34 @@ class ConnectionManager extends StatelessWidget {
         child: disconnectButton,
       );
     } else {
-      return Row(
+      return Wrap(
+        spacing: 12,
+        runSpacing: 8,
         children: buttons,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        alignment: WrapAlignment.end,
       );
     }
   }
 
   Widget _buildNewConnectionHint(ServerModel serverModel, Client client) {
-    return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-      TextButton(
-          child: Text(translate("Dismiss")),
-          onPressed: () {
-            serverModel.sendLoginResponse(client, false);
-          }).marginOnly(right: 15),
-      if (serverModel.approveMode != 'password')
-        ElevatedButton.icon(
-            icon: const Icon(Icons.check),
-            label: Text(translate("Accept")),
-            onPressed: () {
-              serverModel.sendLoginResponse(client, true);
-            }),
-    ]);
+    return Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 12,
+        runSpacing: 8,
+        children: [
+          TextButton(
+              child: Text(translate("Dismiss")),
+              onPressed: () {
+                serverModel.sendLoginResponse(client, false);
+              }).marginOnly(right: 15),
+          if (serverModel.approveMode != 'password')
+            ElevatedButton.icon(
+                icon: const Icon(Icons.check),
+                label: Text(translate("Accept")),
+                onPressed: () {
+                  serverModel.sendLoginResponse(client, true);
+                }),
+        ]);
   }
 
   List<Widget> _buildNewVoiceCallHint(
@@ -806,7 +851,7 @@ class ConnectionManager extends StatelessWidget {
         translate("android_new_voice_call_tip"),
         style: Theme.of(context).textTheme.bodyMedium,
       ).marginOnly(bottom: 5),
-      Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+      Wrap(alignment: WrapAlignment.end, spacing: 12, runSpacing: 8, children: [
         TextButton(
             child: Text(translate("Dismiss")),
             onPressed: () {
@@ -845,10 +890,7 @@ class PaddingCard extends StatelessWidget {
                   titleIcon?.marginOnly(right: 10) ?? const SizedBox.shrink(),
                   Expanded(
                     child: Text(title!,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleLarge
-                            ?.merge(TextStyle(fontWeight: FontWeight.bold))),
+                        style: HomeDeskTokens.of(context).sectionStyle),
                   )
                 ],
               )));
@@ -856,13 +898,9 @@ class PaddingCard extends StatelessWidget {
     return SizedBox(
         width: double.maxFinite,
         child: Card(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(13),
-          ),
-          margin: const EdgeInsets.fromLTRB(12.0, 10.0, 12.0, 0),
+          margin: const EdgeInsets.only(top: 12),
           child: Padding(
-            padding:
-                const EdgeInsets.symmetric(vertical: 15.0, horizontal: 20.0),
+            padding: const EdgeInsets.all(16),
             child: Column(
               children: children,
             ),

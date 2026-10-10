@@ -1047,7 +1047,9 @@ _connectDialog(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.password_rounded, color: MyTheme.accent),
-          Text(translate('Password Required')).paddingOnly(left: 10),
+          Expanded(
+            child: Text(translate('Password Required')).paddingOnly(left: 10),
+          ),
         ],
       ),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -1409,7 +1411,9 @@ showSetOSPassword(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.password_rounded, color: MyTheme.accent),
-          Text(translate('OS Password')).paddingOnly(left: 10),
+          Expanded(
+            child: Text(translate('OS Password')).paddingOnly(left: 10),
+          ),
         ],
       ),
       content: Column(
@@ -1500,7 +1504,9 @@ showSetOSAccount(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.password_rounded, color: MyTheme.accent),
-          Text(translate('OS Account')).paddingOnly(left: 10),
+          Expanded(
+            child: Text(translate('OS Account')).paddingOnly(left: 10),
+          ),
         ],
       ),
       content: Column(
@@ -2114,7 +2120,9 @@ void renameDialog(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.edit_rounded, color: MyTheme.accent),
-          Text(translate('Rename')).paddingOnly(left: 10),
+          Expanded(
+            child: Text(translate('Rename')).paddingOnly(left: 10),
+          ),
         ],
       ),
       content: Column(
@@ -2279,7 +2287,9 @@ void addPeersToAbDialog(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(IconFont.addressBook, color: MyTheme.accent),
-          Text(translate('Add to address book')).paddingOnly(left: 10),
+          Expanded(
+            child: Text(translate('Add to address book')).paddingOnly(left: 10),
+          ),
         ],
       ),
       content: Obx(() => Column(
@@ -2354,10 +2364,12 @@ void setSharedAbPasswordDialog(String abName, Peer peer) {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(Icons.key, color: MyTheme.accent),
-          Text(translate(peer.password.isEmpty
-                  ? 'Set shared password'
-                  : 'Change Password'))
-              .paddingOnly(left: 10),
+          Expanded(
+            child: Text(translate(peer.password.isEmpty
+                    ? 'Set shared password'
+                    : 'Change Password'))
+                .paddingOnly(left: 10),
+          ),
         ],
       ),
       content: Obx(() => Column(children: [
