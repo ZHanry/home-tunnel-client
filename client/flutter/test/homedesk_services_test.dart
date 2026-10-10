@@ -1285,7 +1285,7 @@ void main() {
         .ensureVisible(find.byKey(const ValueKey('edit-device-fixture-nas')));
     await tester.tap(find.byKey(const ValueKey('edit-device-fixture-nas')));
     await tester.pumpAndSettle();
-    expect(find.text('设备名称由该设备上的 nestlink 客户端修改。'), findsOneWidget);
+    expect(find.text('设备名称由该设备上的 NestLink 客户端修改。'), findsOneWidget);
     await tester.enterText(
         find.byKey(const ValueKey('device-tags')), '书房, 常开, 书房');
     expect(find.byKey(const ValueKey('device-favorite')), findsNothing);

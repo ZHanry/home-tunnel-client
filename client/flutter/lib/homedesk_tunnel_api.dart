@@ -270,7 +270,7 @@ class HomeTunnelApi {
         _maxResponseBytes = maxResponseBytes {
     if (requestTimeout <= Duration.zero || maxResponseBytes < 1) {
       _http.close(force: true);
-      throw const HomeTunnelApiException('nestlink 请求配置无效。', 'CONFIG_INVALID');
+      throw const HomeTunnelApiException('NestLink 请求配置无效。', 'CONFIG_INVALID');
     }
     _http.findProxy = (_) => 'DIRECT';
     _http.connectionTimeout = requestTimeout;
@@ -285,7 +285,7 @@ class HomeTunnelApi {
         uri.hasFragment ||
         (uri.path.isNotEmpty && uri.path != '/')) {
       throw const HomeTunnelApiException(
-          '请输入不含路径和凭据的 nestlink HTTPS 地址。', 'ORIGIN_INVALID');
+          '请输入不含路径和凭据的 NestLink HTTPS 地址。', 'ORIGIN_INVALID');
     }
     return Uri(
         scheme: 'https',
@@ -322,7 +322,7 @@ class HomeTunnelApi {
       if (!_closed) _revokeSavedLogin();
       close();
       throw const HomeTunnelApiException(
-          'nestlink 连接已关闭或本机授权已撤销。', 'ACCESS_REVOKED');
+          'NestLink 连接已关闭或本机授权已撤销。', 'ACCESS_REVOKED');
     }
   }
 
@@ -352,7 +352,7 @@ class HomeTunnelApi {
     _ensureAllowed();
     if (generation != _generation) {
       throw const HomeTunnelApiException(
-          'nestlink 登录已变更，请重新读取目录。', 'SESSION_CHANGED');
+          'NestLink 登录已变更，请重新读取目录。', 'SESSION_CHANGED');
     }
   }
 
@@ -390,7 +390,7 @@ class HomeTunnelApi {
     _checkGeneration(generation);
     if (operation.cancelled) {
       throw const HomeTunnelApiException(
-          'nestlink 请求已取消。', 'REQUEST_CANCELLED');
+          'NestLink 请求已取消。', 'REQUEST_CANCELLED');
     }
   }
 
@@ -405,7 +405,7 @@ class HomeTunnelApi {
     if (bytes != null &&
         bytes.length > (path.startsWith('/browser/') ? 36 * 1024 : 16 * 1024)) {
       throw const HomeTunnelApiException(
-          'nestlink 请求内容过大。', 'REQUEST_TOO_LARGE');
+          'NestLink 请求内容过大。', 'REQUEST_TOO_LARGE');
     }
     final namespace = path.startsWith('/auth/') ||
             path.startsWith('/remote/') ||
@@ -424,7 +424,7 @@ class HomeTunnelApi {
           .timeout(_requestTimeout, onTimeout: () {
         operation.abort();
         throw const HomeTunnelApiException(
-            'nestlink 请求超时，请稍后重新登录或刷新。', 'REQUEST_TIMEOUT');
+            'NestLink 请求超时，请稍后重新登录或刷新。', 'REQUEST_TIMEOUT');
       });
     } on HomeTunnelApiException catch (error) {
       _checkGeneration(generation);
@@ -441,17 +441,17 @@ class HomeTunnelApi {
       rethrow;
     } on HandshakeException {
       _checkGeneration(generation);
-      throw const HomeTunnelApiException('nestlink HTTPS 证书验证失败。', 'TLS_ERROR');
+      throw const HomeTunnelApiException('NestLink HTTPS 证书验证失败。', 'TLS_ERROR');
     } on FormatException {
       _checkGeneration(generation);
       if (mutation && operation.sent) throw _unknownMutation();
       throw const HomeTunnelApiException(
-          'nestlink 返回的数据格式无效。', 'RESPONSE_INVALID');
+          'NestLink 返回的数据格式无效。', 'RESPONSE_INVALID');
     } catch (_) {
       _checkGeneration(generation);
       if (mutation && operation.sent) throw _unknownMutation();
       throw const HomeTunnelApiException(
-          '无法连接 nestlink，请检查服务器地址和网络。', 'NETWORK_ERROR');
+          '无法连接 NestLink，请检查服务器地址和网络。', 'NETWORK_ERROR');
     } finally {
       operation.abort();
       _operations.remove(operation);
@@ -485,18 +485,18 @@ class HomeTunnelApi {
       _checkOperation(operation, generation);
       if (response.statusCode >= 300 && response.statusCode < 400) {
         throw const HomeTunnelApiException(
-            'nestlink 返回了重定向，请核对原始服务器地址。', 'REDIRECT_BLOCKED');
+            'NestLink 返回了重定向，请核对原始服务器地址。', 'REDIRECT_BLOCKED');
       }
       if (response.contentLength > _maxResponseBytes) {
         throw const HomeTunnelApiException(
-            'nestlink 返回的数据过大。', 'RESPONSE_TOO_LARGE');
+            'NestLink 返回的数据过大。', 'RESPONSE_TOO_LARGE');
       }
       final collected = <int>[];
       await for (final chunk in response) {
         _checkOperation(operation, generation);
         if (collected.length + chunk.length > _maxResponseBytes) {
           throw const HomeTunnelApiException(
-              'nestlink 返回的数据过大。', 'RESPONSE_TOO_LARGE');
+              'NestLink 返回的数据过大。', 'RESPONSE_TOO_LARGE');
         }
         collected.addAll(chunk);
       }
@@ -522,15 +522,15 @@ class HomeTunnelApi {
     final candidate =
         reply.value is Map ? (reply.value as Map)['error_code'] : null;
     const messages = {
-      'AUTH_INVALID': 'nestlink 用户名或密码不正确。',
-      'AUTH_REQUIRED': '请先登录 nestlink。',
-      'SESSION_REVOKED': 'nestlink 登录已过期，请重新登录。',
-      'PASSWORD_CHANGE_REQUIRED': '请先在 nestlink 管理台修改初始密码。',
-      'TEMPORARY_PASSWORD_EXPIRED': 'nestlink 临时密码已过期，请联系管理员。',
-      'USER_DISABLED': 'nestlink 账号已停用。',
-      'RATE_LIMITED': 'nestlink 请求过于频繁，请稍后重试。',
-      'VALIDATION_ERROR': 'nestlink 请求参数无效，请检查输入。',
-      'FORBIDDEN': 'nestlink 拒绝访问，请检查账号权限。',
+      'AUTH_INVALID': 'NestLink 用户名或密码不正确。',
+      'AUTH_REQUIRED': '请先登录 NestLink。',
+      'SESSION_REVOKED': 'NestLink 登录已过期，请重新登录。',
+      'PASSWORD_CHANGE_REQUIRED': '请先在 NestLink 管理台修改初始密码。',
+      'TEMPORARY_PASSWORD_EXPIRED': 'NestLink 临时密码已过期，请联系管理员。',
+      'USER_DISABLED': 'NestLink 账号已停用。',
+      'RATE_LIMITED': 'NestLink 请求过于频繁，请稍后重试。',
+      'VALIDATION_ERROR': 'NestLink 请求参数无效，请检查输入。',
+      'FORBIDDEN': 'NestLink 拒绝访问，请检查账号权限。',
       'VERSION_CONFLICT': '该资源已被其他操作修改，请保留草稿并刷新核对。',
       'METADATA_VERSION_CONFLICT': '设备信息已变更，请保留草稿并刷新核对。',
       'ACCESS_POLICY_VERSION_CONFLICT': '访问策略已变更，请保留草稿并刷新核对。',
@@ -566,16 +566,16 @@ class HomeTunnelApi {
     }
     if (reply.status == 403) {
       return const HomeTunnelApiException(
-          'nestlink 拒绝访问，请检查账号权限。', 'FORBIDDEN');
+          'NestLink 拒绝访问，请检查账号权限。', 'FORBIDDEN');
     }
     return const HomeTunnelApiException(
-        'nestlink 请求失败，请检查服务器和账号权限。', 'HTTP_ERROR');
+        'NestLink 请求失败，请检查服务器和账号权限。', 'HTTP_ERROR');
   }
 
   Map<String, dynamic> _object(Object? value) {
     if (value is Map<String, dynamic>) return value;
     throw const HomeTunnelApiException(
-        'nestlink 返回的数据格式无效。', 'RESPONSE_INVALID');
+        'NestLink 返回的数据格式无效。', 'RESPONSE_INVALID');
   }
 
   Map<String, dynamic> _success(_Reply reply) {
@@ -587,7 +587,7 @@ class HomeTunnelApi {
     if (value is! String ||
         !RegExp(r'^[a-zA-Z0-9_-]{16,1024}$').hasMatch(value)) {
       throw const HomeTunnelApiException(
-          'nestlink 登录响应无效，请重新登录。', 'RESPONSE_INVALID');
+          'NestLink 登录响应无效，请重新登录。', 'RESPONSE_INVALID');
     }
     return value;
   }
@@ -598,7 +598,7 @@ class HomeTunnelApi {
         value.length > maxLength ||
         RegExp(r'[\x00-\x1f\x7f]').hasMatch(value)) {
       throw const HomeTunnelApiException(
-          'nestlink 返回的数据格式无效。', 'RESPONSE_INVALID');
+          'NestLink 返回的数据格式无效。', 'RESPONSE_INVALID');
     }
     return value;
   }
@@ -608,7 +608,7 @@ class HomeTunnelApi {
     if (!RegExp(r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
         .hasMatch(text)) {
       throw const HomeTunnelApiException(
-          'nestlink 设备或服务标识无效。', 'RESPONSE_INVALID');
+          'NestLink 设备或服务标识无效。', 'RESPONSE_INVALID');
     }
     return text;
   }
@@ -616,7 +616,7 @@ class HomeTunnelApi {
   bool _boolean(Object? value) {
     if (value is bool) return value;
     throw const HomeTunnelApiException(
-        'nestlink 返回的数据格式无效。', 'RESPONSE_INVALID');
+        'NestLink 返回的数据格式无效。', 'RESPONSE_INVALID');
   }
 
   String get _clientType => Platform.isAndroid
@@ -634,7 +634,7 @@ class HomeTunnelApi {
       await storage.clear();
     } catch (_) {
       throw const HomeTunnelApiException(
-          '无法清除安全保存的 nestlink 登录，请检查本机凭据存储。', 'SECURE_STORE_ERROR');
+          '无法清除安全保存的 NestLink 登录，请检查本机凭据存储。', 'SECURE_STORE_ERROR');
     }
   }
 
@@ -671,7 +671,7 @@ class HomeTunnelApi {
     final parsed = value is String ? DateTime.tryParse(value) : null;
     if (parsed == null || !parsed.isAfter(DateTime.now())) {
       throw const HomeTunnelApiException(
-          'nestlink 返回的会话有效期无效，请重新登录。', 'SESSION_EXPIRED');
+          'NestLink 返回的会话有效期无效，请重新登录。', 'SESSION_EXPIRED');
     }
     return parsed.toUtc();
   }
@@ -686,16 +686,16 @@ class HomeTunnelApi {
         generation: generation, token: access));
     if (identity['device_id'] != null || identity['native_remote'] == true) {
       throw const HomeTunnelApiException(
-          'nestlink 需要独立的账号管理登录。', 'ACCOUNT_SESSION_REQUIRED');
+          'NestLink 需要独立的账号管理登录。', 'ACCOUNT_SESSION_REQUIRED');
     }
     if (identity['password_state'] == 'must_change') {
       throw const HomeTunnelApiException(
-          '请先在 nestlink 管理台修改初始密码。', 'PASSWORD_CHANGE_REQUIRED');
+          '请先在 NestLink 管理台修改初始密码。', 'PASSWORD_CHANGE_REQUIRED');
     }
     final userId = _id(identity['id']);
     if (expectedUserId != null && userId != expectedUserId) {
       throw const HomeTunnelApiException(
-          'nestlink 恢复的账号身份不匹配，请重新登录。', 'IDENTITY_MISMATCH');
+          'NestLink 恢复的账号身份不匹配，请重新登录。', 'IDENTITY_MISMATCH');
     }
     final record = HomeDeskPortalCredential(
         origin: base.origin,
@@ -760,14 +760,14 @@ class HomeTunnelApi {
     _ensureAllowed();
     if (_loginBusy) {
       throw const HomeTunnelApiException(
-          'nestlink 正在登录，请等待当前请求完成。', 'OPERATION_BUSY');
+          'NestLink 正在登录，请等待当前请求完成。', 'OPERATION_BUSY');
     }
     if (username.trim().isEmpty ||
         username.length > 128 ||
         password.isEmpty ||
         password.length > 256) {
       throw const HomeTunnelApiException(
-          '请输入有效的 nestlink 账号和密码。', 'INPUT_INVALID');
+          '请输入有效的 NestLink 账号和密码。', 'INPUT_INVALID');
     }
     _loginBusy = true;
     _clearSession();
@@ -786,7 +786,7 @@ class HomeTunnelApi {
       if (session['password_change_required'] == true ||
           user['password_state'] == 'must_change') {
         throw const HomeTunnelApiException(
-            '请先在 nestlink 管理台修改初始密码。', 'PASSWORD_CHANGE_REQUIRED');
+            '请先在 NestLink 管理台修改初始密码。', 'PASSWORD_CHANGE_REQUIRED');
       }
       await _acceptSession(session, generation,
           remember: rememberLogin,
@@ -805,7 +805,7 @@ class HomeTunnelApi {
     if (!canRememberLogin) return false;
     if (_loginBusy) {
       throw const HomeTunnelApiException(
-          'nestlink 正在登录，请等待当前请求完成。', 'OPERATION_BUSY');
+          'NestLink 正在登录，请等待当前请求完成。', 'OPERATION_BUSY');
     }
     _loginBusy = true;
     _clearSession();
@@ -817,7 +817,7 @@ class HomeTunnelApi {
         lease = await _credentialStorage!.consume();
       } catch (_) {
         throw const HomeTunnelApiException(
-            '保存的 nestlink 登录无法安全读取，请重新登录。', 'SECURE_STORE_ERROR');
+            '保存的 NestLink 登录无法安全读取，请重新登录。', 'SECURE_STORE_ERROR');
       }
       if (lease == null) return false;
       transaction = lease.transaction;
@@ -825,7 +825,7 @@ class HomeTunnelApi {
       _trackCredential(transaction, generation);
       if (record.origin != base.origin) {
         throw const HomeTunnelApiException(
-            '保存的 nestlink 地址与本机批准地址不匹配，请重新登录。', 'ORIGIN_MISMATCH');
+            '保存的 NestLink 地址与本机批准地址不匹配，请重新登录。', 'ORIGIN_MISMATCH');
       }
       _expiry(record.refreshExpiresAt.toIso8601String());
       final result = _success(await _request('POST', '/auth/refresh',
@@ -851,7 +851,7 @@ class HomeTunnelApi {
     _ensureAllowed();
     if (_loginBusy) {
       throw const HomeTunnelApiException(
-          'nestlink 正在登录，请等待当前请求完成。', 'OPERATION_BUSY');
+          'NestLink 正在登录，请等待当前请求完成。', 'OPERATION_BUSY');
     }
     _loginBusy = true;
     _clearSession();
@@ -883,7 +883,7 @@ class HomeTunnelApi {
     if (refresh == null) {
       _clearSession();
       throw const HomeTunnelApiException(
-          'nestlink 登录已过期，请重新登录。', 'SESSION_EXPIRED');
+          'NestLink 登录已过期，请重新登录。', 'SESSION_EXPIRED');
     }
     // native refresh 严格单次消费；无论失败还是丢失响应，都不再使用旧令牌。
     _refreshToken = null;
@@ -913,7 +913,7 @@ class HomeTunnelApi {
             lease.record.userId != expectedUserId ||
             lease.record.refreshToken != refresh) {
           throw const HomeTunnelApiException(
-              '保存的 nestlink 身份已改变，请重新登录。', 'IDENTITY_MISMATCH');
+              '保存的 NestLink 身份已改变，请重新登录。', 'IDENTITY_MISMATCH');
         }
       }
       _checkGeneration(generation);
@@ -932,7 +932,7 @@ class HomeTunnelApi {
         rethrow;
       }
       throw const HomeTunnelApiException(
-          'nestlink 会话刷新失败，请重新登录。', 'SESSION_EXPIRED');
+          'NestLink 会话刷新失败，请重新登录。', 'SESSION_EXPIRED');
     }
   }
 
@@ -941,7 +941,7 @@ class HomeTunnelApi {
     _checkGeneration(generation);
     final oldAccess = _accessToken;
     if (oldAccess == null) {
-      throw const HomeTunnelApiException('请先登录 nestlink。', 'AUTH_REQUIRED');
+      throw const HomeTunnelApiException('请先登录 NestLink。', 'AUTH_REQUIRED');
     }
     return _success(await _authenticated('GET', path,
         generation: generation, query: query));
@@ -961,7 +961,7 @@ class HomeTunnelApi {
     _checkGeneration(generation);
     final oldAccess = _accessToken;
     if (oldAccess == null) {
-      throw const HomeTunnelApiException('请先登录 nestlink。', 'AUTH_REQUIRED');
+      throw const HomeTunnelApiException('请先登录 NestLink。', 'AUTH_REQUIRED');
     }
     var reply = await _request(method, path,
         generation: generation,
@@ -981,7 +981,7 @@ class HomeTunnelApi {
       if (reply.status == 401) {
         await _failedAuthentication(generation);
         throw const HomeTunnelApiException(
-            'nestlink 登录已过期，请重新登录。', 'SESSION_EXPIRED');
+            'NestLink 登录已过期，请重新登录。', 'SESSION_EXPIRED');
       }
     }
     if (mutation && reply.status >= 500) throw _unknownMutation();
@@ -1003,7 +1003,7 @@ class HomeTunnelApi {
       final pages = value['total_pages'];
       if (total is int && total > 1000) {
         throw const HomeTunnelApiException(
-            'nestlink 目录超过当前支持的 1000 项，未返回截断结果。', 'RESOURCE_LIMIT');
+            'NestLink 目录超过当前支持的 1000 项，未返回截断结果。', 'RESOURCE_LIMIT');
       }
       if (items is! List ||
           items.length > 100 ||
@@ -1016,19 +1016,19 @@ class HomeTunnelApi {
           value['page'] != page ||
           value['page_size'] != 100) {
         throw const HomeTunnelApiException(
-            'nestlink 分页响应无效，未返回部分目录。', 'RESPONSE_INVALID');
+            'NestLink 分页响应无效，未返回部分目录。', 'RESPONSE_INVALID');
       }
       expectedTotal ??= total;
       expectedPages ??= pages;
       if (expectedTotal != total || expectedPages != pages) {
         throw const HomeTunnelApiException(
-            'nestlink 目录在读取时发生变化，请重新刷新。', 'CATALOG_CHANGED');
+            'NestLink 目录在读取时发生变化，请重新刷新。', 'CATALOG_CHANGED');
       }
       for (final item in items) {
         final object = _object(item);
         if (!ids.add(_id(object['id']))) {
           throw const HomeTunnelApiException(
-              'nestlink 目录在读取时发生变化，请重新刷新。', 'CATALOG_CHANGED');
+              'NestLink 目录在读取时发生变化，请重新刷新。', 'CATALOG_CHANGED');
         }
         result.add(object);
       }
@@ -1036,7 +1036,7 @@ class HomeTunnelApi {
     }
     if (result.length != expectedTotal) {
       throw const HomeTunnelApiException(
-          'nestlink 目录不完整，请重新刷新。', 'CATALOG_CHANGED');
+          'NestLink 目录不完整，请重新刷新。', 'CATALOG_CHANGED');
     }
     return result;
   }
@@ -1225,7 +1225,7 @@ class HomeTunnelApi {
   Future<HomeTunnelCatalog> _loadCatalog() async {
     _ensureAllowed();
     if (_accessToken == null) {
-      throw const HomeTunnelApiException('请先登录 nestlink。', 'AUTH_REQUIRED');
+      throw const HomeTunnelApiException('请先登录 NestLink。', 'AUTH_REQUIRED');
     }
     final generation = _generation;
     final revision = _directoryRevision;
@@ -1548,7 +1548,7 @@ class HomeTunnelApi {
     if (value == null) return 1;
     if (value is int && value > 0) return value;
     throw const HomeTunnelApiException(
-        'nestlink 返回的资源版本无效。', 'RESPONSE_INVALID');
+        'NestLink 返回的资源版本无效。', 'RESPONSE_INVALID');
   }
 
   List<String> _tags(Object? value) {
@@ -1709,7 +1709,7 @@ class HomeTunnelApi {
   Future<T> _mutate<T>(String key, Future<T> Function(int) operation) async {
     _ensureAllowed();
     if (_accessToken == null) {
-      throw const HomeTunnelApiException('请先登录 nestlink。', 'AUTH_REQUIRED');
+      throw const HomeTunnelApiException('请先登录 NestLink。', 'AUTH_REQUIRED');
     }
     if (!_mutating.add(key)) {
       throw const HomeTunnelApiException(
