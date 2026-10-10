@@ -208,6 +208,9 @@ void main() {
     account.publish(replacement, replacement.result, '', (_) async {});
     await tester.pumpAndSettle();
     expect(find.byType(NestLinkDialog), findsNothing);
+    expect(editPassword, findsNothing);
+    await tester.tap(find.byKey(const ValueKey('remote-settings-toggle')));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(editPassword);
     await tester.tap(editPassword);
     await tester.pumpAndSettle();

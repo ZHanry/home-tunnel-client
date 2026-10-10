@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -228,12 +229,16 @@ void main() {
       kOptionEnableTunnel,
       kOptionEnableRemoteRestart,
       kOptionEnableRecordSession,
-      kOptionEnableRemotePrinter,
-      kOptionEnableBlockInput,
+      if (Platform.isWindows) kOptionEnableRemotePrinter,
+      if (Platform.isWindows) kOptionEnableBlockInput,
       kOptionEnablePrivacyMode,
       kOptionAllowRemoteConfigModification
     ]) {
       expect(control('settings-$key'), findsOneWidget);
+    }
+    if (!Platform.isWindows) {
+      expect(control('settings-$kOptionEnableRemotePrinter'), findsNothing);
+      expect(control('settings-$kOptionEnableBlockInput'), findsNothing);
     }
     expect(tester.takeException(), isNull);
   });
