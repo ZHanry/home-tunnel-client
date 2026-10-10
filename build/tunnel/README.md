@@ -1,6 +1,6 @@
 # Windows 本机穿透运行时
 
-当前 `build-runtime.py` 从本仓库根 Go 模块的 `cmd/homedesk-tunnel-helper` 构建助手，固定 Go 1.27.2。只提取经过 SHA-256 核验的原始 10.1.0 Windows Agent 与许可证，不使用历史 GUI、服务或远控程序。`helper/` 保留已导入分支的 Windows 模板用于追溯，产品使用 canonical cmd 源码。
+当前 `build-runtime.py` 使用固定 Go 1.27.2，从本仓库的 `agent` 模块构建 NestLink 14.0.0 穿透执行器，从根 Go 模块的 `cmd/homedesk-tunnel-helper` 和 `cmd/nestlink-browser-helper` 构建受管助手。Windows x64、Linux x64／ARM64 均使用当前提交及安全依赖锁；运行时记录来源提交、编译器版本、许可证和各文件 SHA-256。`helper/` 保留已导入分支的 Windows 模板用于追溯，产品使用 canonical cmd 源码。
 
 ```powershell
 python build/tunnel/build-runtime.py --package '<锁定的 HomeTunnel-Windows-10.1.0-x64.zip>'
