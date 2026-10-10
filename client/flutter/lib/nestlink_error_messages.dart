@@ -93,6 +93,18 @@ const _englishErrors = <String, String>{
       'This subdomain does not meet the account naming policy. Check availability and use the required prefix.',
   'ORIGIN_INVALID':
       'Enter a valid HTTPS server address without a path or credentials.',
+  'ORIGIN_NOT_APPROVED':
+      'This device has not approved the server address. Review your network settings before signing in.',
+  'PERMISSION_CHANGED':
+      'Network authorization changed. Review your network settings and sign in again.',
+  'DEVICE_NOT_FOUND':
+      'The device directory changed. Refresh it before trying again.',
+  'OPERATION_BUSY':
+      'This operation is already in progress. Wait for it to finish before trying again.',
+  'CAPABILITY_DISABLED':
+      'The server does not allow this connection type. Refresh to see available capabilities or contact your administrator.',
+  'SUBDOMAIN_UNAVAILABLE':
+      'This public name is unavailable. Choose another name and check availability before saving.',
   'CONFIG_INVALID':
       'The connection configuration is invalid. Check the server address and restart NestLink.',
   'TLS_ERROR':

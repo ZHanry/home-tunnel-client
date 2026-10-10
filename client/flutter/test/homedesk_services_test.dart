@@ -530,6 +530,20 @@ void main() {
         nestlinkErrorMessage(const HomeDeskCredentialException(
             '系统安全存储暂时不可用。', 'STORAGE_UNAVAILABLE')),
         contains('Unlock or repair it'));
+    for (final code in [
+      'ORIGIN_NOT_APPROVED',
+      'PERMISSION_CHANGED',
+      'DEVICE_NOT_FOUND',
+      'OPERATION_BUSY',
+      'CAPABILITY_DISABLED',
+      'SUBDOMAIN_UNAVAILABLE'
+    ]) {
+      final message = nestlinkErrorMessage(
+          HomeTunnelApiException('固定中文错误', code));
+      expect(message, isNot(contains('server is unavailable')),
+          reason: 'Local validation and authorization need actionable guidance');
+      expect(message, isNot(contains('固定中文错误')));
+    }
     const sensitiveMessage = 'response-body-secret';
     final unknown = nestlinkErrorMessage(
         const HomeTunnelApiException(sensitiveMessage, 'FUTURE_POLICY'));
