@@ -117,7 +117,7 @@ void main() {
       final beforeScroll = tester.getRect(header);
       final body = find.descendant(
           of: find.byType(NestLinkDeviceList),
-          matching: find.byType(SingleChildScrollView));
+          matching: control('device-directory-scroll'));
       await tester.drag(body, const Offset(0, -300));
       await tester.pumpAndSettle();
       expect(tester.getRect(header), beforeScroll);

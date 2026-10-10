@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'homedesk_theme.dart';
 import 'nestlink_dialog.dart';
+import 'nestlink_locale.dart';
+import 'nestlink_error_messages.dart';
 
 import 'homedesk_tunnel_api.dart';
 import 'homedesk_device_label.dart';
@@ -48,7 +50,7 @@ class HomeDeskServiceDraft {
 
   String get summary =>
       '$name · ${proxyType.toUpperCase()} · $localScheme://$localHost:$localPort'
-      '${proxyType == 'http' ? ' · $subdomain' : ''} · ${enabled ? '启用' : '暂停'}';
+      '${proxyType == 'http' ? ' · $subdomain' : ''} · ${enabled ? nl('启用', 'Enabled') : nl('暂停', 'Paused')}';
 }
 
 class HomeDeskServiceReview {
@@ -123,7 +125,8 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
     _enabled = initial.enabled;
     _needsReview = widget.needsReview;
     if (_needsReview) {
-      _message = '上次操作结果未确认，请刷新核对。当前草稿已保留，不会自动重试。';
+      _message = nl('上次操作结果未确认，请刷新核对。当前草稿已保留，不会自动重试。',
+          'The previous result is unknown. Refresh and review it before saving. Your draft is retained and will not retry automatically.');
     }
     for (final controller in [_name, _host, _port, _subdomain]) {
       controller.addListener(_draftChanged);
@@ -154,7 +157,8 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
 
   bool _allowed() {
     if (widget.isAllowed()) return true;
-    setState(() => _message = '网络许可已变化，请关闭编辑器并重新登录。草稿已保留。');
+    setState(() => _message = nl('网络许可已变化，请关闭编辑器并重新登录。草稿已保留。',
+        'Network authorization changed. Close this editor and sign in again. Your draft is retained.'));
     return false;
   }
 
@@ -173,19 +177,21 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
       final code = error is HomeTunnelApiException ? error.code : '';
       setState(() {
         if (code == 'MUTATION_UNKNOWN') {
-          _message = '结果未确认，刷新核对后再决定是否保存。当前草稿已保留，不会自动重试。';
+          _message = nl('结果未确认，刷新核对后再决定是否保存。当前草稿已保留，不会自动重试。',
+              'The result is unknown. Refresh and review it before deciding whether to save. Your draft is retained and will not retry automatically.');
           _needsReview = true;
           _reviewLoaded = false;
           _reviewed = false;
         } else if (code.contains('VERSION_CONFLICT')) {
-          _message = '服务器上的设置已经变化，请刷新核对后再保存。当前草稿已保留。';
+          _message = nl('服务器上的设置已经变化，请刷新核对后再保存。当前草稿已保留。',
+              'The server settings changed. Refresh and review them before saving. Your draft is retained.');
           _needsReview = true;
           _reviewLoaded = false;
           _reviewed = false;
         } else {
-          _message = error is HomeTunnelApiException
-              ? error.message
-              : '保存未完成，请检查网络。当前草稿已保留。';
+          _message = nestlinkErrorMessage(error,
+              fallback: nl('保存未完成，请检查网络。当前草稿已保留。',
+                  'Saving failed. Check your connection. Your draft is retained.'));
         }
       });
     } finally {
@@ -206,13 +212,16 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
         _reviewLoaded = true;
         _reviewed = false;
         _message = review.exists
-            ? '已刷新服务器设置。核对后可以继续保存当前草稿。'
-            : '这个服务已被删除，不能覆盖保存。当前草稿仍保留。';
+            ? nl('已刷新服务器设置。核对后可以继续保存当前草稿。',
+                'Server settings refreshed. Review them before saving your current draft.')
+            : nl('这个服务已被删除，不能覆盖保存。当前草稿仍保留。',
+                'This service was deleted and cannot be overwritten. Your draft is retained.');
       });
     } catch (error) {
       if (mounted) {
-        setState(() => _message =
-            error is HomeTunnelApiException ? error.message : '刷新未完成，请稍后再核对。');
+        setState(() => _message = nestlinkErrorMessage(error,
+            fallback: nl('刷新未完成，请稍后再核对。',
+                'Refreshing failed. Try reviewing again later.')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -221,9 +230,10 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
 
   String? _nameError(String? value) {
     final text = value?.trim() ?? '';
-    if (text.isEmpty) return '请输入服务名称。';
+    if (text.isEmpty) return nl('请输入服务名称。', 'Enter a service name.');
     if (text.length > 120 || RegExp(r'[\x00-\x1f\x7f]').hasMatch(text)) {
-      return '名称最多 120 个字符，不能包含控制字符。';
+      return nl('名称最多 120 个字符，不能包含控制字符。',
+          'Use at most 120 characters without control characters.');
     }
     return null;
   }
@@ -236,21 +246,25 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
         !host.split('.').every((part) =>
             RegExp(r'^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$')
                 .hasMatch(part))) {
-      return '请输入主机名或 IP，不包含协议、路径或端口。';
+      return nl('请输入主机名或 IP，不包含协议、路径或端口。',
+          'Enter a hostname or IP without a scheme, path or port.');
     }
     return null;
   }
 
   String? _portError(String? value) {
     final port = int.tryParse(value ?? '');
-    return port == null || port < 1 || port > 65535 ? '端口应为 1 至 65535。' : null;
+    return port == null || port < 1 || port > 65535
+        ? nl('端口应为 1 至 65535。', 'Enter a port from 1 to 65535.')
+        : null;
   }
 
-  String? _subdomainError(String? value) =>
-      RegExp(r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
-              .hasMatch(value?.trim() ?? '')
-          ? null
-          : '请输入小写字母、数字和连字符组成的访问名称。';
+  String? _subdomainError(String? value) => RegExp(
+              r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
+          .hasMatch(value?.trim() ?? '')
+      ? null
+      : nl('请输入小写字母、数字和连字符组成的访问名称。',
+          'Use lowercase letters, numbers and hyphens for the public name.');
 
   @override
   void dispose() {
@@ -296,15 +310,16 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
     final types = <String>{...widget.supportedTypes, _proxyType};
     final saveAllowed =
         !_busy && (!_needsReview || (_reviewLoaded && _reviewed && _exists));
-    final name = HomeDeskFieldLabel('服务名称',
+    final name = HomeDeskFieldLabel(nl('服务名称', 'Service name'),
         child: TextFormField(
             key: const ValueKey('service-name'),
             controller: _name,
             enabled: !_busy,
             validator: _nameError,
             textInputAction: TextInputAction.next,
-            decoration: _decoration(hint: '例如家庭相册')));
-    final type = HomeDeskFieldLabel('连接类型',
+            decoration:
+                _decoration(hint: nl('例如家庭相册', 'For example, photo album'))));
+    final type = HomeDeskFieldLabel(nl('连接类型', 'Connection type'),
         child: DropdownButtonFormField<String>(
             key: const ValueKey('service-type'),
             value: _proxyType,
@@ -316,7 +331,8 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                     value: type,
                     child: Text(
                         type == 'http'
-                            ? '网页服务（HTTP / HTTPS）'
+                            ? nl('网页服务（HTTP / HTTPS）',
+                                'Web service (HTTP / HTTPS)')
                             : type.toUpperCase(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis))
@@ -327,7 +343,7 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                       _proxyType = value ?? _proxyType;
                       if (_proxyType != 'tcp') _applicationProtocol = null;
                     })));
-    final host = HomeDeskFieldLabel('本地主机 / IP',
+    final host = HomeDeskFieldLabel(nl('本地主机 / IP', 'Local host / IP'),
         child: TextFormField(
             key: const ValueKey('service-local-host'),
             controller: _host,
@@ -336,7 +352,7 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
             validator: _hostError,
             textInputAction: TextInputAction.next,
             decoration: _decoration(hint: '127.0.0.1')));
-    final port = HomeDeskFieldLabel('本地端口',
+    final port = HomeDeskFieldLabel(nl('本地端口', 'Local port'),
         child: TextFormField(
             key: const ValueKey('service-local-port'),
             controller: _port,
@@ -348,7 +364,8 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
     return PopScope(
       canPop: !_busy,
       child: NestLinkDialog(
-        title: Text(isNew ? '添加家庭服务' : '编辑家庭服务'),
+        title: Text(
+            isNew ? nl('添加服务', 'Add service') : nl('编辑服务', 'Edit service')),
         width: 680,
         showClose: !_busy,
         onClose: () => Navigator.pop(context, false),
@@ -365,7 +382,8 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (isNew) ...[
-                        HomeDeskFieldLabel('提供服务的设备',
+                        HomeDeskFieldLabel(
+                            nl('提供服务的设备', 'Device hosting the service'),
                             child: DropdownButtonFormField<String>(
                                 key: const ValueKey('service-device'),
                                 value: _deviceId,
@@ -390,7 +408,9 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                       if (!isNew)
                         Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: Text('连接类型不能修改，需要换类型时请新建服务。',
+                            child: Text(
+                                nl('连接类型不能修改，需要换类型时请新建服务。',
+                                    'The connection type cannot be changed. Create a new service to use another type.'),
                                 style: TextStyle(
                                     fontSize: 12,
                                     color: colors.onSurfaceVariant))),
@@ -399,19 +419,21 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                       Padding(
                           padding: const EdgeInsets.only(top: 8, bottom: 8),
                           child: Text(
-                              '填写上方设备能访问的地址，例如本机 127.0.0.1 或 NAS 的内网 IP。',
+                              nl('填写上方设备能访问的地址，例如本机 127.0.0.1 或 NAS 的内网 IP。',
+                                  'Enter an address reachable from the selected device, such as its 127.0.0.1 or a NAS LAN IP.'),
                               style: TextStyle(
                                   fontSize: 12,
                                   color: colors.onSurfaceVariant))),
                       if (_proxyType == 'http')
                         _pair(
-                            HomeDeskFieldLabel('设备上的服务协议',
+                            HomeDeskFieldLabel(
+                                nl('设备上的服务协议', 'Protocol on the device'),
                                 child: DropdownButtonFormField<String>(
                                     key: const ValueKey('service-local-scheme'),
                                     value: _scheme,
                                     isExpanded: true,
                                     decoration: _decoration(),
-                                    items: const [
+                                    items: [
                                       DropdownMenuItem(
                                           value: 'http', child: Text('HTTP')),
                                       DropdownMenuItem(
@@ -421,7 +443,7 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                                         ? null
                                         : (value) => _change(
                                             () => _scheme = value ?? _scheme))),
-                            HomeDeskFieldLabel('公网访问名称',
+                            HomeDeskFieldLabel(nl('公网访问名称', 'Public name'),
                                 child: TextFormField(
                                     key: const ValueKey('service-subdomain'),
                                     controller: _subdomain,
@@ -429,20 +451,23 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                                     autocorrect: false,
                                     validator: _subdomainError,
                                     decoration: _decoration(
-                                        hint: '例如 album',
-                                        helper: '保存前会检查名称是否可用。'))),
+                                        hint: nl(
+                                            '例如 album', 'For example, album'),
+                                        helper: nl('保存前会检查名称是否可用。',
+                                            'Name availability is checked before saving.')))),
                             secondFlex: 2)
                       else ...[
                         if (_proxyType == 'tcp') ...[
-                          HomeDeskFieldLabel('应用类型',
+                          HomeDeskFieldLabel(nl('应用类型', 'Application type'),
                               child: DropdownButtonFormField<String>(
                                   key: const ValueKey('service-application'),
                                   value: _applicationProtocol ?? '',
                                   isExpanded: true,
                                   decoration: _decoration(),
-                                  items: const [
+                                  items: [
                                     DropdownMenuItem(
-                                        value: '', child: Text('未指定')),
+                                        value: '',
+                                        child: Text(nl('未指定', 'Unspecified'))),
                                     DropdownMenuItem(
                                         value: 'ssh', child: Text('SSH')),
                                     DropdownMenuItem(
@@ -459,8 +484,11 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                         ],
                         Text(
                             widget.remoteEndpoint == null
-                                ? '公网端口由服务端自动分配，创建后会显示访问地址。'
-                                : '公网访问地址：${widget.remoteEndpoint}。公网端口不能在这里修改。',
+                                ? nl('公网端口由服务端自动分配，创建后会显示访问地址。',
+                                    'The server assigns the public port automatically. The public address appears after creation.')
+                                : nl(
+                                    '公网访问地址：${widget.remoteEndpoint}。公网端口不能在这里修改。',
+                                    'Public address: ${widget.remoteEndpoint}. The public port cannot be changed here.'),
                             style: TextStyle(
                                 fontSize: 12, color: colors.onSurfaceVariant)),
                       ],
@@ -469,7 +497,7 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                           contentPadding: EdgeInsets.zero,
                           controlAffinity: ListTileControlAffinity.leading,
                           dense: true,
-                          title: const Text('启用服务'),
+                          title: Text(nl('启用服务', 'Enable service')),
                           value: _enabled,
                           onChanged: _busy
                               ? null
@@ -486,17 +514,18 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
                             key: const ValueKey('service-review'),
                             onPressed: _busy ? null : _review,
                             icon: const Icon(Icons.refresh_rounded),
-                            label: const Text('刷新核对')),
+                            label: Text(nl('刷新核对', 'Refresh and review'))),
                         if (_serverSummary.isNotEmpty) ...[
                           const SizedBox(height: 12),
-                          const Text('服务器当前设置：'),
+                          Text(nl('服务器当前设置：', 'Current server settings:')),
                           SelectableText(_serverSummary),
                         ],
                         if (_reviewLoaded && _exists)
                           CheckboxListTile(
                               key: const ValueKey('service-reviewed'),
                               contentPadding: EdgeInsets.zero,
-                              title: const Text('已核对，允许保存当前草稿'),
+                              title: Text(nl('已核对，允许保存当前草稿',
+                                  'Reviewed; allow saving the current draft')),
                               value: _reviewed,
                               onChanged: _busy
                                   ? null
@@ -516,12 +545,12 @@ class _HomeDeskServiceEditorState extends State<HomeDeskServiceEditor> {
         actions: [
           TextButton(
             onPressed: _busy ? null : () => Navigator.pop(context, false),
-            child: const Text('取消'),
+            child: Text(nl('取消', 'Cancel')),
           ),
           FilledButton(
             key: const ValueKey('service-save'),
             onPressed: saveAllowed ? _save : null,
-            child: Text(_busy ? '正在保存…' : '保存'),
+            child: Text(_busy ? nl('正在保存…', 'Saving…') : nl('保存', 'Save')),
           ),
         ],
       ),
@@ -593,7 +622,10 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
     _tags = TextEditingController(text: widget.initial.tags.join(', '));
     _favorite = widget.initial.favorite;
     _needsReview = widget.needsReview;
-    if (_needsReview) _message = '上次操作结果未确认，请刷新核对。当前草稿已保留。';
+    if (_needsReview) {
+      _message = nl('上次操作结果未确认，请刷新核对。当前草稿已保留。',
+          'The previous result is unknown. Refresh and review it before saving. Your draft is retained.');
+    }
     _tags.addListener(() => widget.onDraftChanged?.call(_draft));
   }
 
@@ -616,12 +648,14 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
         _reviewLoaded = false;
         _reviewed = false;
         _message = code == 'MUTATION_UNKNOWN'
-            ? '结果未确认，刷新核对后再决定是否保存。当前草稿已保留，不会自动重试。'
+            ? nl('结果未确认，刷新核对后再决定是否保存。当前草稿已保留，不会自动重试。',
+                'The result is unknown. Refresh and review it before deciding whether to save. Your draft is retained and will not retry automatically.')
             : code.contains('VERSION_CONFLICT')
-                ? '设备设置已经变化，请刷新核对。当前草稿已保留。'
-                : error is HomeTunnelApiException
-                    ? error.message
-                    : '保存未完成，当前草稿已保留。';
+                ? nl('设备设置已经变化，请刷新核对。当前草稿已保留。',
+                    'Device settings changed. Refresh and review them. Your draft is retained.')
+                : nestlinkErrorMessage(error,
+                    fallback: nl('保存未完成，当前草稿已保留。',
+                        'Saving failed. Your draft is retained.'));
       });
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -639,15 +673,17 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
         // The removed favorite control must not overwrite newer server metadata.
         _favorite = current.favorite;
         _serverSummary =
-            '标签：${current.tags.isEmpty ? '无' : current.tags.join('、')}';
+            '${nl('标签', 'Tags')}: ${current.tags.isEmpty ? nl('无', 'None') : current.tags.join(', ')}';
         _reviewLoaded = true;
         _reviewed = false;
-        _message = '已刷新设备设置，请核对后再保存当前草稿。';
+        _message = nl('已刷新设备设置，请核对后再保存当前草稿。',
+            'Device settings refreshed. Review them before saving your current draft.');
       });
     } catch (error) {
       if (mounted) {
-        setState(() => _message =
-            error is HomeTunnelApiException ? error.message : '刷新未完成，请稍后再核对。');
+        setState(() => _message = nestlinkErrorMessage(error,
+            fallback: nl('刷新未完成，请稍后再核对。',
+                'Refreshing failed. Try reviewing again later.')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -664,7 +700,7 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
   Widget build(BuildContext context) => PopScope(
       canPop: !_busy,
       child: NestLinkDialog(
-          title: const Text('管理隧道设备'),
+          title: Text(nl('管理穿透设备', 'Manage tunnel device')),
           width: 520,
           showClose: !_busy,
           onClose: () => Navigator.pop(context, false),
@@ -677,16 +713,19 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
                     Text(homeDeskDeviceLabel(widget.deviceName),
                         style: const TextStyle(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 8),
-                    const Text('设备名称由该设备上的 NestLink 客户端修改。',
+                    Text(
+                        nl('设备名称由该设备上的 NestLink 客户端修改。',
+                            'Change the device name in the NestLink client on that device.'),
                         style: TextStyle(fontSize: 12)),
                     const SizedBox(height: 12),
-                    HomeDeskFieldLabel('标签',
+                    HomeDeskFieldLabel(nl('标签', 'Tags'),
                         child: TextFormField(
                             key: const ValueKey('device-tags'),
                             controller: _tags,
                             enabled: !_busy,
-                            decoration:
-                                const InputDecoration(helperText: '多个标签用逗号分隔。'),
+                            decoration: InputDecoration(
+                                helperText: nl('多个标签用逗号分隔。',
+                                    'Separate multiple tags with commas.')),
                             validator: (_) {
                               final tags = _draft.tags;
                               if (tags.length > 12 ||
@@ -694,7 +733,8 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
                                       tag.length > 32 ||
                                       RegExp(r'[\x00-\x1f\x7f]')
                                           .hasMatch(tag))) {
-                                return '最多 12 个标签，每个最多 32 个字符。';
+                                return nl('最多 12 个标签，每个最多 32 个字符。',
+                                    'Use at most 12 tags, each up to 32 characters.');
                               }
                               return null;
                             })),
@@ -708,13 +748,14 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
                           key: const ValueKey('device-review'),
                           onPressed: _busy ? null : _review,
                           icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('刷新核对')),
+                          label: Text(nl('刷新核对', 'Refresh and review'))),
                       if (_serverSummary.isNotEmpty) Text(_serverSummary),
                       if (_reviewLoaded)
                         CheckboxListTile(
                             key: const ValueKey('device-reviewed'),
                             contentPadding: EdgeInsets.zero,
-                            title: const Text('已核对，允许保存当前草稿'),
+                            title: Text(nl('已核对，允许保存当前草稿',
+                                'Reviewed; allow saving the current draft')),
                             value: _reviewed,
                             onChanged: _busy
                                 ? null
@@ -731,13 +772,13 @@ class _HomeDeskDeviceEditorState extends State<HomeDeskDeviceEditor> {
           actions: [
             TextButton(
                 onPressed: _busy ? null : () => Navigator.pop(context, false),
-                child: const Text('取消')),
+                child: Text(nl('取消', 'Cancel'))),
             FilledButton(
                 key: const ValueKey('device-save'),
                 onPressed:
                     !_busy && (!_needsReview || (_reviewLoaded && _reviewed))
                         ? _save
                         : null,
-                child: Text(_busy ? '正在保存…' : '保存')),
+                child: Text(_busy ? nl('正在保存…', 'Saving…') : nl('保存', 'Save'))),
           ]));
 }

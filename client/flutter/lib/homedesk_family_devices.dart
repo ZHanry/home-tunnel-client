@@ -7,6 +7,7 @@ import 'homedesk_device_label.dart';
 import 'homedesk_theme.dart';
 import 'homedesk_navigation.dart';
 import 'nestlink_device_list.dart';
+import 'nestlink_locale.dart';
 
 class HomeDeskFamilyDevices extends StatefulWidget {
   final HomeDeskAccount account;
@@ -58,8 +59,9 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
     final local = account.localDeviceId == device.id;
     final matching = binding != null && _matching(binding);
     final available = binding != null && !local && matching;
-    final name =
-        device.name.isEmpty ? '未命名设备' : homeDeskDeviceLabel(device.name);
+    final name = device.name.isEmpty
+        ? nl('未命名设备', 'Unnamed device')
+        : homeDeskDeviceLabel(device.name);
     return SizedBox(
         height: height,
         child: Card(
@@ -111,12 +113,12 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                                 color: local ? t.accent : t.secondary));
                         final badge = HomeDeskBadge(
                             local
-                                ? '本机'
+                                ? nl('本机', 'Local')
                                 : binding == null
-                                    ? '待同步'
+                                    ? nl('待同步', 'Pending')
                                     : binding.online
-                                        ? '账号在线'
-                                        : '离线',
+                                        ? nl('账号在线', 'Online')
+                                        : nl('离线', 'Offline'),
                             tone: local
                                 ? HomeDeskTone.accent
                                 : binding == null
@@ -147,9 +149,12 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                       Text(
                           binding == null
                               ? local
-                                  ? '本机设备 ID 尚未同步。'
-                                  : '远控 ID 尚未同步，请在该设备上运行新版客户端。'
-                              : '设备 ID：${binding.remoteId}',
+                                  ? nl('本机设备 ID 尚未同步。',
+                                      'This device ID is not synced yet.')
+                                  : nl('远控 ID 尚未同步，请在该设备上运行新版客户端。',
+                                      'Remote ID is not synced. Run the current app on that device.')
+                              : nl('设备 ID：${binding.remoteId}',
+                                  'Device ID: ${binding.remoteId}'),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -160,7 +165,9 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                       if (account.displayName.isNotEmpty)
                         Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: Text('所属账号：${account.displayName}',
+                            child: Text(
+                                nl('所属账号：${account.displayName}',
+                                    'Account: ${account.displayName}'),
                                 key: ValueKey('family-account-${device.id}'),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -168,7 +175,9 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                       if (binding != null && !matching)
                         Padding(
                             padding: const EdgeInsets.only(top: 4),
-                            child: Text('这台设备使用不同的远控服务器，请核对网络配置。',
+                            child: Text(
+                                nl('这台设备使用不同的远控服务器，请核对网络配置。',
+                                    'This device uses another remote server. Check the network settings.'),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -201,12 +210,12 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                                           }
                                         },
                                   child: Text(binding != null && !binding.online
-                                      ? '尝试连接'
-                                      : '连接电脑'))),
+                                      ? nl('尝试连接', 'Try to connect')
+                                      : nl('连接电脑', 'Connect')))),
                         const SizedBox(width: 8),
                         IconButton(
                             key: ValueKey('family-manage-${device.id}'),
-                            tooltip: '管理设备',
+                            tooltip: nl('管理设备', 'Manage device'),
                             onPressed: account.editDevice == null
                                 ? null
                                 : () {
@@ -244,16 +253,19 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                           Icon(Icons.devices_rounded,
                               size: 40, color: t.accent),
                           const SizedBox(height: 16),
-                          Text('登录账号，查看家庭设备', style: t.sectionStyle),
+                          Text(nl('登录账号，查看设备', 'Sign in to view devices'),
+                              style: t.sectionStyle),
                           const SizedBox(height: 12),
-                          Text('同一账号登录的电脑会自动出现在这里，登录一次即可使用家庭设备和家庭服务。',
+                          Text(
+                              nl('同一账号登录的电脑会自动出现在这里，登录一次即可管理设备和服务。',
+                                  'Computers signed in to the same account appear here. Sign in once to manage devices and services.'),
                               style: t.auxiliaryStyle),
                           const SizedBox(height: 20),
                           FilledButton.icon(
                               key: const ValueKey('family-login'),
                               onPressed: widget.onLogin,
                               icon: const Icon(Icons.login_rounded),
-                              label: const Text('登录账号'))
+                              label: Text(nl('登录账号', 'Sign in')))
                         ]))),
             const HomeDeskHomePanels(),
           ]);
@@ -318,26 +330,36 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                               spacing: 12,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                Text('部分设备尚未同步远控 ID。',
+                                Text(
+                                    nl('部分设备尚未同步远控 ID。',
+                                        'Some remote IDs are not synced yet.'),
                                     style: TextStyle(
                                         color: t.warning,
                                         fontSize: HomeDeskTokens.auxiliary)),
                                 TextButton(
                                     onPressed: () =>
                                         setState(() => _filter = 3),
-                                    child: const Text('查看需处理设备'))
+                                    child:
+                                        Text(nl('查看需处理设备', 'Review devices')))
                               ]))),
                 LayoutBuilder(builder: (context, c) {
-                  final heading =
-                      Text('我的设备 · ${devices.length} 台', style: t.sectionStyle);
+                  final heading = Text(
+                      nl('设备管理 · ${devices.length} 台',
+                          'Device management · ${devices.length}'),
+                      style: t.sectionStyle);
                   final filters = HomeDeskSegments(
-                      labels: const ['全部', '在线', '离线', '需处理'],
+                      labels: [
+                        nl('全部', 'All'),
+                        nl('在线', 'Online'),
+                        nl('离线', 'Offline'),
+                        nl('需处理', 'Review')
+                      ],
                       selected: _filter,
                       onSelected: (i) => setState(() => _filter = i),
                       keyPrefix: 'family-filter');
                   final refresh = IconButton(
                       key: const ValueKey('family-refresh'),
-                      tooltip: '刷新家庭设备',
+                      tooltip: nl('刷新设备', 'Refresh devices'),
                       onPressed: account.loading ? null : account.refresh,
                       icon: account.loading
                           ? const SizedBox.square(
@@ -368,12 +390,16 @@ class _HomeDeskFamilyDevicesState extends State<HomeDeskFamilyDevices> {
                 if (devices.isEmpty)
                   Padding(
                       padding: const EdgeInsets.all(20),
-                      child: Text('正在接入本机…\n其他电脑登录同一账号后会自动加入。',
+                      child: Text(
+                          nl('正在接入本机…\n其他电脑登录同一账号后会自动加入。',
+                              'Registering this device…\nOther computers join when signed in to the same account.'),
                           style: t.auxiliaryStyle))
                 else if (visible.isEmpty)
                   Padding(
                       padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: Text('这个筛选下暂无设备。', style: t.auxiliaryStyle))
+                      child: Text(
+                          nl('这个筛选下暂无设备。', 'No devices match this filter.'),
+                          style: t.auxiliaryStyle))
                 else
                   Wrap(
                       spacing: HomeDeskTokens.gap,

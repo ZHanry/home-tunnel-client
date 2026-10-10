@@ -51,16 +51,20 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
   final Future<Directory> Function() _applicationSupportDirectory;
   final Uint8List _entropy;
   final DateTime Function() _clock;
+  final String Function() _secretServiceRecordId;
   Future<Directory>? _directoryFuture;
 
   HomeDeskCredentialStore(
       {required Future<Directory> Function() applicationSupportDirectory,
       List<int>? entropy,
-      DateTime Function()? clock})
+      DateTime Function()? clock,
+      String Function()? secretServiceRecordId})
       : _applicationSupportDirectory = applicationSupportDirectory,
         _entropy = Uint8List.fromList(entropy ??
             utf8.encode('HomeDesk.HomeTunnel.Portal.Credentials.v1')),
-        _clock = clock ?? (() => DateTime.now().toUtc()) {
+        _clock = clock ?? (() => DateTime.now().toUtc()),
+        // Non-secret IDs can be injected to exercise command-line boundary cases.
+        _secretServiceRecordId = secretServiceRecordId ?? _newGeneration {
     if (_entropy.isEmpty || _entropy.length > 1024) {
       throw const HomeDeskCredentialException('系统安全存储参数无效。', 'STORAGE_INVALID');
     }
@@ -184,7 +188,7 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
           final blob = await _readBlob(directory);
           final handle = ascii.decode(blob);
           if (RegExp(r'^nlss:[A-Za-z0-9_-]{43}$').hasMatch(handle)) {
-            await _secretTool(['clear', 'application', 'HomeDesk', 'portal-record', handle.substring(5)], allowMissing: true);
+            await _secretTool(['clear', '--', 'application', 'HomeDesk', 'portal-record', handle.substring(5)], allowMissing: true);
           }
         } on HomeDeskCredentialException catch (error) {
           if (error.code != 'STORAGE_INVALID') rethrow;
@@ -245,13 +249,15 @@ class HomeDeskCredentialStore implements HomeDeskCredentialStorage {
   Future<Uint8List> _crypt(Uint8List bytes, {required bool encrypt}) async {
     if (Platform.isLinux) {
       if (encrypt) {
-        final id = _newGeneration();
-        await _secretTool(['store', '--label=NestLink account', 'application', 'HomeDesk', 'portal-record', id], secret: base64Encode(bytes));
+        final id = _secretServiceRecordId();
+        if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(id)) throw _storageFailure();
+        // Base64URL IDs may start with '-'; terminate options before attributes.
+        await _secretTool(['store', '--label=NestLink account', '--', 'application', 'HomeDesk', 'portal-record', id], secret: base64Encode(bytes));
         return Uint8List.fromList(ascii.encode('nlss:$id'));
       }
       final handle = ascii.decode(bytes);
       if (!RegExp(r'^nlss:[A-Za-z0-9_-]{43}$').hasMatch(handle)) throw _storageFailure();
-      return Uint8List.fromList(base64Decode(await _secretTool(['lookup', 'application', 'HomeDesk', 'portal-record', handle.substring(5)])));
+      return Uint8List.fromList(base64Decode(await _secretTool(['lookup', '--', 'application', 'HomeDesk', 'portal-record', handle.substring(5)])));
     }
     if (Platform.isAndroid || Platform.isMacOS) {
       // HOMEDESK: Non-exportable AES-GCM key remains in AndroidKeyStore.

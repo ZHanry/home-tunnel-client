@@ -8,6 +8,7 @@ import 'package:flutter_hbb/homedesk_dashboard.dart';
 import 'package:flutter_hbb/homedesk_family_devices.dart';
 import 'package:flutter_hbb/homedesk_services.dart';
 import 'package:flutter_hbb/homedesk_tunnel_api.dart';
+import 'package:flutter_hbb/nestlink_locale.dart';
 import 'homedesk_services_test.dart' as portal;
 
 const one = '20000000-0000-4000-8000-000000000001';
@@ -166,35 +167,40 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('不同服务器配置禁止直接连接，窄窗口双倍字体不溢出', (tester) async {
+  testWidgets('不同服务器配置禁止直接连接，中英文窄窗口双倍字体不溢出', (tester) async {
     tester.view.physicalSize = const Size(360, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final state = HomeDeskAccount(), api = FamilyApi()..signedIn = true;
-    api.bindings = [
-      const HomeDeskRemoteBinding(
-          deviceId: two,
-          remoteId: '987654321',
-          server: 'other.example.com:21116',
-          keySHA256:
-              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          platform: 'windows',
-          online: true)
-    ];
-    state.publish(api, catalog(), one, (_) async {});
-    await tester.pumpWidget(familyHost(state, (_) {}, scale: 2));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('family-connect-$two')), 160,
-        scrollable: find.byType(Scrollable).first);
-    final button = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('family-connect-$two')));
-    expect(button.onPressed, isNull);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    state.dispose();
-    api.close();
+    final previousLanguage = nestlinkLanguage.value;
+    addTearDown(() => nestlinkLanguage.value = previousLanguage);
+    for (final language in ['zh-cn', 'en']) {
+      nestlinkLanguage.value = language;
+      final state = HomeDeskAccount(), api = FamilyApi()..signedIn = true;
+      api.bindings = [
+        const HomeDeskRemoteBinding(
+            deviceId: two,
+            remoteId: '987654321',
+            server: 'other.example.com:21116',
+            keySHA256:
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            platform: 'windows',
+            online: true)
+      ];
+      state.publish(api, catalog(), one, (_) async {});
+      await tester.pumpWidget(familyHost(state, (_) {}, scale: 2));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('family-connect-$two')), 160,
+          scrollable: find.byType(Scrollable).first);
+      final button = tester.widget<FilledButton>(
+          find.byKey(const ValueKey('family-connect-$two')));
+      expect(button.onPressed, isNull);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+      api.close();
+    }
   });
 
   testWidgets('首页只恢复已记住的账号，恢复后自动显示家庭设备', (tester) async {

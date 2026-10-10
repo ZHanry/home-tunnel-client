@@ -15,6 +15,9 @@ import 'package:flutter_hbb/homedesk_theme.dart';
 import 'package:flutter_hbb/homedesk_service_editor.dart';
 import 'package:flutter_hbb/homedesk_tunnel_api.dart';
 import 'package:flutter_hbb/homedesk_tunnel_session.dart';
+import 'package:flutter_hbb/nestlink_locale.dart';
+import 'package:flutter_hbb/nestlink_error_messages.dart';
+import 'package:flutter_hbb/homedesk_credentials.dart';
 
 String portalOption(String key,
     {bool allowed = true,
@@ -145,6 +148,7 @@ class PortalFixtureApi extends HomeTunnelApi {
   bool remembered = false;
   bool restoreFails = false;
   HomeTunnelApiException? mutationError;
+  HomeTunnelApiException? loginError;
   HomeTunnelApiException? logoutError;
   Completer<HomeTunnelService>? pendingMutation;
   Map<String, dynamic>? lastValues;
@@ -185,6 +189,7 @@ class PortalFixtureApi extends HomeTunnelApi {
       required String password,
       bool rememberLogin = false}) async {
     logins++;
+    if (loginError != null) throw loginError!;
     if (rejectPassword) {
       throw const HomeTunnelApiException('账号或密码错误。', 'INVALID_CREDENTIALS');
     }
@@ -446,6 +451,216 @@ class LocalDeviceFixtureApi extends PortalFixtureApi {
 }
 
 void main() {
+  testWidgets('英文真实认证错误显示处理建议并清除错密码', (tester) async {
+    final previousLanguage = nestlinkLanguage.value;
+    nestlinkLanguage.value = 'en';
+    addTearDown(() => nestlinkLanguage.value = previousLanguage);
+    final api = PortalFixtureApi()
+      ..loginError =
+          const HomeTunnelApiException('NestLink 用户名或密码不正确。', 'AUTH_INVALID');
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await enterCredentials(tester);
+    expect(api.logins, 1);
+    expect(api.signedIn, isFalse);
+    expect(find.textContaining('The username or password is incorrect.'),
+        findsOneWidget);
+    expect(find.textContaining('用户名或密码'), findsNothing);
+    expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('tunnel-password')))
+            .controller!
+            .text,
+        isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('英文编辑权限和连接错误给出具体建议，保留草稿且不自动重试', (tester) async {
+    final previousLanguage = nestlinkLanguage.value;
+    nestlinkLanguage.value = 'en';
+    addTearDown(() => nestlinkLanguage.value = previousLanguage);
+    final api = PortalFixtureApi();
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await enterCredentials(tester);
+    final edit = find.byKey(const ValueKey('edit-service-fixture-web'));
+    await tester.ensureVisible(edit);
+    await tester.pumpAndSettle();
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('service-name')), 'Retained error draft');
+    final failures = {
+      'FORBIDDEN': 'Check your account permissions',
+      'NETWORK_ERROR': 'Check the server address and your network',
+      'TLS_ERROR':
+          'Check the server hostname, certificate trust and device date',
+    };
+    var attempts = 0;
+    for (final failure in failures.entries) {
+      api.mutationError = HomeTunnelApiException('固定中文服务错误', failure.key);
+      await tester.tap(find.byKey(const ValueKey('service-save')));
+      await tester.pumpAndSettle();
+      attempts++;
+      expect(api.updates, attempts);
+      expect(
+          find.descendant(
+              of: find.byType(HomeDeskServiceEditor),
+              matching: find.textContaining(failure.value)),
+          findsOneWidget);
+      expect(find.textContaining('固定中文'), findsNothing);
+      expect(find.byType(HomeDeskServiceEditor), findsOneWidget);
+      expect(
+          tester
+              .widget<TextFormField>(find.byKey(const ValueKey('service-name')))
+              .controller!
+              .text,
+          'Retained error draft');
+      await tester.pump(const Duration(seconds: 2));
+      expect(api.updates, attempts);
+    }
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  test('英文安全存储与未知错误不展示响应正文，中文保留既有细节', () {
+    final previousLanguage = nestlinkLanguage.value;
+    addTearDown(() => nestlinkLanguage.value = previousLanguage);
+    nestlinkLanguage.value = 'en';
+    expect(
+        nestlinkErrorMessage(const HomeDeskCredentialException(
+            '系统安全存储暂时不可用。', 'STORAGE_UNAVAILABLE')),
+        contains('Unlock or repair it'));
+    const sensitiveMessage = 'response-body-secret';
+    final unknown = nestlinkErrorMessage(
+        const HomeTunnelApiException(sensitiveMessage, 'FUTURE_POLICY'));
+    expect(unknown, contains('(FUTURE_POLICY)'));
+    expect(unknown, isNot(contains(sensitiveMessage)));
+    expect(
+        nestlinkErrorMessage(const HomeTunnelApiException(
+            sensitiveMessage, 'BAD\nresponse-body-secret')),
+        isNot(contains(sensitiveMessage)));
+    expect(
+        nestlinkErrorMessage(
+            HomeTunnelApiException(sensitiveMessage, 'A' * 100)),
+        isNot(contains('A' * 100)));
+    nestlinkLanguage.value = 'zh-cn';
+    expect(
+        nestlinkErrorMessage(
+            const HomeTunnelApiException('管理员尚未允许该账号创建服务。', 'FUTURE_POLICY')),
+        '管理员尚未允许该账号创建服务。');
+  });
+
+  testWidgets('英文穿透编辑保留校验、原始协议值和设备主体', (tester) async {
+    final previousLanguage = nestlinkLanguage.value;
+    nestlinkLanguage.value = 'en';
+    addTearDown(() => nestlinkLanguage.value = previousLanguage);
+    final api = PortalFixtureApi();
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await enterCredentials(tester);
+    expect(find.text('All devices'), findsOneWidget);
+    expect(find.text('Add service'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('tunnel-add-service')));
+    await tester.pumpAndSettle();
+    expect(find.text('Add service'), findsWidgets);
+    expect(find.text('Service name'), findsOneWidget);
+    expect(find.text('Connection type'), findsOneWidget);
+    expect(find.text('本地端口'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('service-save')));
+    await tester.pumpAndSettle();
+    expect(api.creates, 0);
+    expect(find.text('Enter a service name.'), findsOneWidget);
+    await tester.enterText(
+        find.byKey(const ValueKey('service-name')), 'Photo album');
+    await tester.enterText(
+        find.byKey(const ValueKey('service-local-port')), '8096');
+    await tester.enterText(
+        find.byKey(const ValueKey('service-subdomain')), 'photos');
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('service-local-scheme')));
+    await tester.tap(find.byKey(const ValueKey('service-local-scheme')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('HTTPS').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('service-save')));
+    await tester.pumpAndSettle();
+    expect(api.creates, 1);
+    expect(api.lastValues!['proxy_type'], 'http');
+    expect(api.lastValues!['local_scheme'], 'https');
+    expect(api.lastValues!['device_id'], 'fixture-nas');
+    expect(api.lastValues!['local_port'], 8096);
+    expect(api.lastValues!.containsKey('remote_port'), isFalse);
+    expect(find.text('Photo album'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('英文冲突核对保留草稿和新版本，删除仍须单独确认', (tester) async {
+    final previousLanguage = nestlinkLanguage.value;
+    nestlinkLanguage.value = 'en';
+    addTearDown(() => nestlinkLanguage.value = previousLanguage);
+    final api = PortalFixtureApi();
+    api.mutationError =
+        const HomeTunnelApiException('Changed', 'VERSION_CONFLICT');
+    await tester.pumpWidget(portalHost(page: fixturePage(api)));
+    await enterCredentials(tester);
+    final edit = find.byKey(const ValueKey('edit-service-fixture-web'));
+    await tester.ensureVisible(edit);
+    await tester.pumpAndSettle();
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+    expect(find.text('Edit service'), findsOneWidget);
+    await tester.enterText(
+        find.byKey(const ValueKey('service-name')), 'Retained draft');
+    await tester.tap(find.byKey(const ValueKey('service-save')));
+    await tester.pumpAndSettle();
+    expect(api.updates, 1);
+    expect(find.textContaining('The server settings changed.'), findsOneWidget);
+    expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('service-save')))
+            .onPressed,
+        isNull);
+    api.mutationError = null;
+    api.result = HomeTunnelCatalog(devices: api.result.devices, services: [
+      api._service({'name': 'Server revision'}, id: 'fixture-web', version: 3)
+    ]);
+    await tester.ensureVisible(find.byKey(const ValueKey('service-review')));
+    await tester.tap(find.byKey(const ValueKey('service-review')));
+    await tester.pumpAndSettle();
+    expect(api.updates, 1);
+    expect(
+        tester
+            .widget<TextFormField>(find.byKey(const ValueKey('service-name')))
+            .controller!
+            .text,
+        'Retained draft');
+    expect(find.text('Current server settings:'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('service-reviewed')));
+    await tester.tap(find.byKey(const ValueKey('service-reviewed')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('service-save')));
+    await tester.pumpAndSettle();
+    expect(api.updates, 2);
+    expect(api.lastVersion, 3);
+    final more = find.byKey(const ValueKey('more-service-fixture-web'));
+    await tester.ensureVisible(more);
+    await tester.pumpAndSettle();
+    await tester.tap(more);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('delete-service-fixture-web')));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete service?'), findsOneWidget);
+    expect(find.textContaining('will stop its public address from working'),
+        findsOneWidget);
+    expect(api.deletes, 0);
+    await tester.tap(find.text('Cancel').last);
+    await tester.pumpAndSettle();
+    expect(api.deletes, 0);
+    expect(find.text('Retained draft'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('穿透标题保留刷新，正常状态不显示角标或重复状态条', (tester) async {
     final api = PortalFixtureApi(), agent = FixtureLocalAgent();
     await tester

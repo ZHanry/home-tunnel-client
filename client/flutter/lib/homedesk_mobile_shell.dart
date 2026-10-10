@@ -1,5 +1,6 @@
 // HOMEDESK: Compact navigation shares the desktop tokens without fixed desktop widths.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'homedesk_theme.dart';
 import 'homedesk_account.dart';
 import 'homedesk_dashboard.dart';
@@ -34,28 +35,41 @@ class NestLinkMobileHome extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-      body: SafeArea(
-          child: HomeDeskDashboard(
-              brandName: 'NestLink',
-              initializeAccount: true,
-              mobilePlatform: true,
-              devicesBuilder: (_) => HomeDeskFamilyDevices(
-                  account: account,
-                  listLayout: true,
-                  onLogin: () => HomeDeskDashboard.navigate('account'),
-                  onConnect: onConnect,
-                  readOption: readOption),
-              recentBuilder: recentBuilder,
-              servicesBuilder: servicesBuilder,
-              localBuilder: localBuilder,
-              devicePreferencesBuilder: devicePreferencesBuilder,
-              statusBuilder: (_) => const SizedBox.shrink(),
-              onNetworkSettings: onNetworkSettings,
-              onTheme: onTheme,
-              onLanguage: onLanguage,
-              onVersion: onVersion,
-              onConnect: onConnect)));
+  Widget build(BuildContext context) {
+    final tokens = HomeDeskTokens.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle(
+            statusBarColor: tokens.background,
+            statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+            statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+            systemNavigationBarColor: tokens.background,
+            systemNavigationBarIconBrightness:
+                dark ? Brightness.light : Brightness.dark),
+        child: Scaffold(
+            backgroundColor: tokens.background,
+            body: SafeArea(
+                child: HomeDeskDashboard(
+                    brandName: 'NestLink',
+                    initializeAccount: true,
+                    mobilePlatform: true,
+                    devicesBuilder: (_) => HomeDeskFamilyDevices(
+                        account: account,
+                        listLayout: true,
+                        onLogin: () => HomeDeskDashboard.navigate('account'),
+                        onConnect: onConnect,
+                        readOption: readOption),
+                    recentBuilder: recentBuilder,
+                    servicesBuilder: servicesBuilder,
+                    localBuilder: localBuilder,
+                    devicePreferencesBuilder: devicePreferencesBuilder,
+                    statusBuilder: (_) => const SizedBox.shrink(),
+                    onNetworkSettings: onNetworkSettings,
+                    onTheme: onTheme,
+                    onLanguage: onLanguage,
+                    onVersion: onVersion,
+                    onConnect: onConnect))));
+  }
 }
 
 class HomeDeskMobileShell extends StatelessWidget {

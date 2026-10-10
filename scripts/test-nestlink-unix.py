@@ -27,9 +27,9 @@ def main():
         package=ROOT/f'products/NestLink-Linux-{version}-{arch}.deb'
         run('sudo','dpkg','--install',str(package))
         executable=Path('/usr/share/homedesk/homedesk')
-        run('dart','--packages='+str(ROOT/'client/flutter/.dart_tool/package_config.json'),str(ROOT/'tests/dart/unix_credentials_test.dart'))
-        record['credentials']='real Secret Service protected record, cross-process consume, logout, corruption recovery'
         try:
+            run('dart','--packages='+str(ROOT/'client/flutter/.dart_tool/package_config.json'),str(ROOT/'tests/dart/unix_credentials_test.dart'))
+            record['credentials']='real Secret Service leading-dash record IDs, protected record, cross-process consume, logout, corruption recovery, unavailable-backend rejection'
             with (directory/'startup.log').open('w') as log:
                 process=subprocess.Popen([str(executable)],stdout=log,stderr=subprocess.STDOUT,cwd=executable.parent)
                 try:

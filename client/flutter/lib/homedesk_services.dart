@@ -18,6 +18,7 @@ import 'homedesk_tunnel_api.dart';
 import 'homedesk_tunnel_session.dart';
 import 'nestlink_native_session.dart';
 import 'nestlink_locale.dart';
+import 'nestlink_error_messages.dart';
 import 'nestlink_login.dart';
 import 'nestlink_dialog.dart';
 import 'models/platform_model.dart';
@@ -201,7 +202,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     _entityBusy.clear();
     _clearSecrets();
     _origin.text = _approvedOrigin() ?? '';
-    _message = '管理台授权地址已变化，请确认地址后重新登录。';
+    _message = nl('管理台授权地址已变化，请确认地址后重新登录。',
+        'The authorized server address changed. Confirm the address and sign in again.');
   }
 
   Future<void> _revokeApi(HomeTunnelApi api, int generation) async {
@@ -209,7 +211,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       await api.revoke();
     } catch (_) {
       if (mounted && generation == _generation) {
-        _changeState(() => _message = '网络会话已关闭，但无法确认清除该会话保存的登录。请检查本机安全存储。');
+        _changeState(() => _message = nl('网络会话已关闭，但无法确认清除该会话保存的登录。请检查本机安全存储。',
+            'The network session was closed, but erasing its saved login could not be confirmed. Check secure storage on this device.'));
       }
     }
   }
@@ -277,7 +280,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       final approved = _approvedOrigin();
       if (approved == null || homeTunnelOrigin(account.origin) != approved) {
         if (mounted) {
-          _changeState(() => _message = '保存的账号与本机批准地址不一致，未恢复登录。请手动登录。');
+          _changeState(() => _message = nl('保存的账号与本机批准地址不一致，未恢复登录。请手动登录。',
+              'The saved account does not match the approved address. Sign in manually.'));
         }
         return;
       }
@@ -289,13 +293,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _apiPermission = permission;
       generation = ++_generation;
       _changeState(() {
-        _message = '正在恢复记住的登录…';
+        _message = nl('正在恢复记住的登录…', 'Restoring saved login…');
       });
       final restored = await api.restore();
       if (!_current(api, generation)) return;
       if (!restored) {
         _changeState(() {
-          _message = '没有可以恢复的登录，请重新输入密码。';
+          _message = nl('没有可以恢复的登录，请重新输入密码。',
+              'No saved login is available. Enter your password again.');
         });
         return;
       }
@@ -303,7 +308,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       if (!_current(api, generation)) return;
       _changeState(() {
         _applyCatalog(catalog);
-        _message = '已恢复记住的登录。';
+        _message = nl('已恢复记住的登录。', 'Saved login restored.');
       });
       await _attachLocal(api, generation);
     } catch (error) {
@@ -313,7 +318,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       _apiPermission = null;
       if (mounted && generation == _generation) {
         _changeState(() {
-          _message = '保存的登录未能恢复，请重新登录。${_errorMessage(error)}';
+          _message = nl('保存的登录未能恢复，请重新登录。${_errorMessage(error)}',
+              'Saved login could not be restored. Sign in again. ${_errorMessage(error)}');
         });
       }
     } finally {
@@ -355,14 +361,16 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   Future<void> _login() async {
     if (_busy || !_ensureAllowed()) return;
     if (_username.text.trim().isEmpty || _password.text.isEmpty) {
-      _changeState(() => _message = '请输入账号和密码。');
+      _changeState(() =>
+          _message = nl('请输入账号和密码。', 'Enter your username and password.'));
       return;
     }
     String origin;
     try {
       origin = homeTunnelOrigin(_origin.text.trim());
     } catch (_) {
-      _changeState(() => _message = '请输入有效的 HTTPS 服务端地址，不包含路径或账号信息。');
+      _changeState(() => _message = nl('请输入有效的 HTTPS 服务端地址，不包含路径或账号信息。',
+          'Enter a valid HTTPS server address without a path or account information.'));
       return;
     }
     _selectDraftOwner(origin, _username.text.trim());
@@ -391,13 +399,17 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
               key: 'homedesk-home-tunnel-origin', value: origin));
       if (!mounted || generation != _generation) return;
       if (!_readAllowed() || _approvedOrigin() != origin) {
-        throw const HomeTunnelApiException(
-            '本机尚未确认这个服务端地址，请重新核对网络设置。', 'ORIGIN_NOT_APPROVED');
+        throw HomeTunnelApiException(
+            nl('本机尚未确认这个服务端地址，请重新核对网络设置。',
+                'This device has not approved the server address. Review your network settings.'),
+            'ORIGIN_NOT_APPROVED');
       }
       final permission = _readPermission();
       if (permission.isEmpty) {
-        throw const HomeTunnelApiException(
-            '网络许可尚未确认，请稍后重新登录。', 'PERMISSION_CHANGED');
+        throw HomeTunnelApiException(
+            nl('网络许可尚未确认，请稍后重新登录。',
+                'Network authorization is not confirmed. Try signing in again later.'),
+            'PERMISSION_CHANGED');
       }
       api = _createApi(permission: permission, origin: origin);
       _api = api;
@@ -427,11 +439,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     }
   }
 
-  String _errorMessage(Object error) => error is HomeTunnelApiException
-      ? error.message
-      : error is HomeDeskCredentialException
-          ? error.message
-          : '服务暂时无法连接，请检查地址、证书和网络后重试。';
+  String _errorMessage(Object error) => nestlinkErrorMessage(error);
 
   Future<void> _attachLocal(HomeTunnelApi api, int generation) async {
     if (_localDeviceRevoked) return;
@@ -448,7 +456,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         try {
           await native.start();
         } catch (_) {
-          _message = '设备登记未完成，请稍后重试。';
+          _message = nl('设备登记未完成，请稍后重试。',
+              'Device registration did not finish. Try again later.');
         }
       }
     }
@@ -478,7 +487,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       if (mounted && _current(api, generation)) _changeState(() {});
     } on HomeTunnelApiException catch (error) {
       if (mounted && _current(api, generation)) {
-        _changeState(() => _message = error.message);
+        _changeState(() => _message = _errorMessage(error));
       }
     } catch (_) {
       if (_current(api, generation) && identical(_localAgent, attachingAgent)) {
@@ -533,9 +542,11 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     try {
       var catalog = await api.catalog();
       final agent = _localAgent;
-      if (_current(api, generation) && agent?.phase == 'running' &&
+      if (_current(api, generation) &&
+          agent?.phase == 'running' &&
           api.guiDeviceId.isNotEmpty &&
-          !catalog.devices.any((device) => device.id == api.guiDeviceId &&
+          !catalog.devices.any((device) =>
+              device.id == api.guiDeviceId &&
               device.tunnelDeviceId == agent!.deviceId)) {
         catalog = await api.associateLocalDevice(agent!.deviceId);
       }
@@ -599,7 +610,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         await _credentialStore.clear();
       } catch (_) {
         if (mounted && generation == _generation) {
-          _changeState(() => _message = '本次会话已关闭，但无法确认清除保存的登录。请检查本机安全存储后再试。');
+          _changeState(() => _message = nl('本次会话已关闭，但无法确认清除保存的登录。请检查本机安全存储后再试。',
+              'The session was closed, but erasing the saved login could not be confirmed. Check secure storage on this device and retry.'));
         }
         return;
       }
@@ -609,7 +621,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           logoutError is! HomeDeskCredentialException &&
           mounted &&
           generation == _generation) {
-        _changeState(() => _message = '已退出本机登录，但服务端会话暂未能关闭。');
+        _changeState(() => _message = nl('已退出本机登录，但服务端会话暂未能关闭。',
+            'Signed out on this device, but the server session could not be closed yet.'));
       }
     } finally {
       api.close();
@@ -624,7 +637,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     if (!_current(api, generation) ||
         _catalog == null ||
         !_catalog!.devices.any((entry) => entry.id == device.id)) {
-      throw const HomeTunnelApiException('设备目录已变化，请刷新后重试。', 'DEVICE_NOT_FOUND');
+      throw HomeTunnelApiException(
+          nl('设备目录已变化，请刷新后重试。',
+              'The device directory changed. Refresh it and retry.'),
+          'DEVICE_NOT_FOUND');
     }
     _changeState(() {
       _deviceId = device.id;
@@ -638,7 +654,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     if (!_current(api, generation) ||
         _catalog == null ||
         !_catalog!.devices.any((entry) => entry.id == device.id)) {
-      throw const HomeTunnelApiException('设备目录已变化，请刷新后重试。', 'DEVICE_NOT_FOUND');
+      throw HomeTunnelApiException(
+          nl('设备目录已变化，请刷新后重试。',
+              'The device directory changed. Refresh it and retry.'),
+          'DEVICE_NOT_FOUND');
     }
     await _operate(device.id, api, generation, () async {
       await api.deleteDevice(device.id);
@@ -673,11 +692,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   Future<T> _operate<T>(String key, HomeTunnelApi api, int generation,
       Future<T> Function() action) async {
     if (_busy || _entityBusy.contains(key)) {
-      throw const HomeTunnelApiException('这项操作正在进行，请稍候。', 'OPERATION_BUSY');
+      throw HomeTunnelApiException(
+          nl('这项操作正在进行，请稍候。', 'This operation is in progress. Please wait.'),
+          'OPERATION_BUSY');
     }
     if (!_current(api, generation)) {
-      throw const HomeTunnelApiException(
-          '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
+      throw HomeTunnelApiException(
+          nl('网络许可已变化，请重新登录。', 'Network authorization changed. Sign in again.'),
+          'PERMISSION_CHANGED');
     }
     _changeState(() => _entityBusy.add(key));
     try {
@@ -695,13 +717,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       if (_current(api, generation)) {
         _changeState(() {
           _applyCatalog(catalog);
-          _message = '操作已完成。';
+          _message = nl('操作已完成。', 'Operation completed.');
         });
       }
     } catch (error) {
       if (_current(api, generation)) {
         _changeState(() {
-          _message = '操作已完成，但列表暂未刷新。请刷新查看当前设置。';
+          _message = nl('操作已完成，但列表暂未刷新。请刷新查看当前设置。',
+              'The operation completed, but refreshing the list failed. Refresh to see the current settings.');
           if (!api.isSignedIn) {
             _catalog = null;
           }
@@ -718,9 +741,11 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         _needsReview.add(key);
       }
       _message = code == 'MUTATION_UNKNOWN'
-          ? '结果未确认，刷新核对后再操作，不会自动重试。'
+          ? nl('结果未确认，刷新核对后再操作，不会自动重试。',
+              'The result is unknown. Refresh and review it before proceeding. This operation will not retry automatically.')
           : code.contains('VERSION_CONFLICT')
-              ? '服务器上的设置已经变化，请刷新核对后再操作。'
+              ? nl('服务器上的设置已经变化，请刷新核对后再操作。',
+                  'Server settings changed. Refresh and review them before proceeding.')
               : _errorMessage(error);
     });
   }
@@ -791,8 +816,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
             onReview: () => _operate(key, api, generation, () async {
                   final latest = await api.catalog();
                   if (!_current(api, generation)) {
-                    throw const HomeTunnelApiException(
-                        '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
+                    throw HomeTunnelApiException(
+                        nl('网络许可已变化，请重新登录。',
+                            'Network authorization changed. Sign in again.'),
+                        'PERMISSION_CHANGED');
                   }
                   _changeState(() => _applyCatalog(latest));
                   if (service == null) {
@@ -803,13 +830,17 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                         .map((item) => _draftOf(item).summary)
                         .join('\n');
                     return HomeDeskServiceReview(
-                        summary: summary.isEmpty ? '这台设备目前没有服务。' : summary);
+                        summary: summary.isEmpty
+                            ? nl('这台设备目前没有服务。', 'This device has no services.')
+                            : summary);
                   }
                   final matches =
                       latest.services.where((item) => item.id == service.id);
                   return matches.isEmpty
-                      ? const HomeDeskServiceReview(
-                          summary: '服务已不存在。', exists: false)
+                      ? HomeDeskServiceReview(
+                          summary:
+                              nl('服务已不存在。', 'The service no longer exists.'),
+                          exists: false)
                       : HomeDeskServiceReview(
                           summary: _draftOf(matches.first).summary,
                           version: matches.first.version);
@@ -819,8 +850,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                   try {
                     if (draft.serviceId == null &&
                         !_creatableTypes.contains(draft.proxyType)) {
-                      throw const HomeTunnelApiException(
-                          '服务端暂不允许创建这种连接，请刷新查看可用能力。', 'CAPABILITY_DISABLED');
+                      throw HomeTunnelApiException(
+                          nl('服务端暂不允许创建这种连接，请刷新查看可用能力。',
+                              'The server does not allow this connection type currently. Refresh to see available capabilities.'),
+                          'CAPABILITY_DISABLED');
                     }
                     if (draft.proxyType == 'http') {
                       final available = await api.checkSubdomain(
@@ -828,7 +861,13 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                           connectionId: draft.serviceId);
                       if (!available.available) {
                         throw HomeTunnelApiException(
-                            '这个访问名称不可用。${available.suggestions.isEmpty ? '' : '可尝试：${available.suggestions.join('、')}。'}',
+                            nl('这个访问名称不可用。',
+                                    'This public name is unavailable.') +
+                                (available.suggestions.isEmpty
+                                    ? ''
+                                    : nl(
+                                        '可尝试：${available.suggestions.join('、')}。',
+                                        'Try: ${available.suggestions.join(', ')}.')),
                             'SUBDOMAIN_UNAVAILABLE');
                       }
                     }
@@ -840,8 +879,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                           expectedVersion: draft.expectedVersion!);
                     }
                     if (!_current(api, generation)) {
-                      throw const HomeTunnelApiException(
-                          '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
+                      throw HomeTunnelApiException(
+                          nl('网络许可已变化，请重新登录。',
+                              'Network authorization changed. Sign in again.'),
+                          'PERMISSION_CHANGED');
                     }
                     _serviceDrafts.remove(key);
                     _needsReview.remove(key);
@@ -882,16 +923,17 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
     final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => NestLinkDialog(
-                title: const Text('删除内网穿透？'),
-                content: Text('删除“${service.name}”后，其访问地址将停止工作。可以随后重新创建服务。'),
+                title: Text(nl('删除服务？', 'Delete service?')),
+                content: Text(nl('删除“${service.name}”后，其访问地址将停止工作。可以随后重新创建服务。',
+                    'Deleting “${service.name}” will stop its public address from working. You can create the service again later.')),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: const Text('取消')),
+                      child: Text(nl('取消', 'Cancel'))),
                   FilledButton(
                       key: ValueKey('confirm-delete-${service.id}'),
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('删除')),
+                      child: Text(nl('删除', 'Delete'))),
                 ]));
     if (confirmed != true || !_current(api, generation)) return;
     try {
@@ -935,15 +977,19 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
             onReview: () => _operate(device.id, api, generation, () async {
                   final latest = await api.catalog();
                   if (!_current(api, generation)) {
-                    throw const HomeTunnelApiException(
-                        '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
+                    throw HomeTunnelApiException(
+                        nl('网络许可已变化，请重新登录。',
+                            'Network authorization changed. Sign in again.'),
+                        'PERMISSION_CHANGED');
                   }
                   _changeState(() => _applyCatalog(latest));
                   final matches =
                       latest.devices.where((item) => item.id == device.id);
                   if (matches.isEmpty) {
-                    throw const HomeTunnelApiException(
-                        '这台设备已不在账号中，不能覆盖保存。', 'NOT_FOUND');
+                    throw HomeTunnelApiException(
+                        nl('这台设备已不在账号中，不能覆盖保存。',
+                            'This device is no longer in the account and cannot be overwritten.'),
+                        'NOT_FOUND');
                   }
                   final current = matches.first;
                   return HomeDeskDeviceDraft(
@@ -959,8 +1005,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                         favorite: draft.favorite,
                         expectedMetadataVersion: draft.expectedMetadataVersion);
                     if (!_current(api, generation)) {
-                      throw const HomeTunnelApiException(
-                          '网络许可已变化，请重新登录。', 'PERMISSION_CHANGED');
+                      throw HomeTunnelApiException(
+                          nl('网络许可已变化，请重新登录。',
+                              'Network authorization changed. Sign in again.'),
+                          'PERMISSION_CHANGED');
                     }
                     _deviceDrafts.remove(device.id);
                     _needsReview.remove(device.id);
@@ -977,7 +1025,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   Future<void> _open(Uri uri) async {
     if (!_ensureAllowed()) return;
     if (homeTunnelWebUrl(uri.toString()) == null) {
-      _changeState(() => _message = '这个服务没有可打开的网页地址。');
+      _changeState(() => _message =
+          nl('这个服务没有可打开的网页地址。', 'This service has no web address to open.'));
       return;
     }
     final generation = _generation;
@@ -986,10 +1035,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       final opened = await (widget.onOpenUrl?.call(uri) ??
           launchUrl(uri, mode: LaunchMode.externalApplication));
       if (!mounted || !_ensureAllowed() || generation != _generation) return;
-      if (!opened) _changeState(() => _message = '浏览器未能打开地址，请稍后重试。');
+      if (!opened) {
+        _changeState(() => _message = nl('浏览器未能打开地址，请稍后重试。',
+            'The browser could not open the address. Try again later.'));
+      }
     } catch (_) {
       if (mounted && _ensureAllowed() && generation == _generation) {
-        _changeState(() => _message = '浏览器未能打开地址，请稍后重试。');
+        _changeState(() => _message = nl('浏览器未能打开地址，请稍后重试。',
+            'The browser could not open the address. Try again later.'));
       }
     }
   }
@@ -1001,11 +1054,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       await (widget.onCopy?.call(endpoint) ??
           Clipboard.setData(ClipboardData(text: endpoint)));
       if (mounted && _ensureAllowed() && generation == _generation) {
-        _changeState(() => _message = '访问地址已复制。');
+        _changeState(() => _message = nl('访问地址已复制。', 'Public address copied.'));
       }
     } catch (_) {
       if (mounted && _ensureAllowed() && generation == _generation) {
-        _changeState(() => _message = '无法写入剪贴板，可以手动选择并复制访问地址。');
+        _changeState(() => _message = nl('无法写入剪贴板，可以手动选择并复制访问地址。',
+            'The clipboard is unavailable. Select and copy the public address manually.'));
       }
     }
   }
@@ -1036,10 +1090,11 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
 
   Widget _messageBox() {
     final colors = Theme.of(context).colorScheme;
-    final informational = _message == '访问地址已复制。' ||
-        _message == '操作已完成。' ||
-        _message == '已恢复记住的登录。' ||
-        _message.startsWith('已退出本机登录');
+    final informational =
+        _message == nl('访问地址已复制。', 'Public address copied.') ||
+            _message == nl('操作已完成。', 'Operation completed.') ||
+            _message == nl('已恢复记住的登录。', 'Saved login restored.') ||
+            _message.startsWith(nl('已退出本机登录', 'Signed out on this device'));
     return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: Text(_message,
@@ -1065,15 +1120,16 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                           color: t.text)),
                   const SizedBox(height: 32),
                   if (!_allowed) ...[
-                    const Text(
-                        '请确认内网穿透的 HTTPS 地址和账号授权。同一台设备支持远程协助和内网穿透，登录一次即可使用。'),
+                    Text(nl('请确认内网穿透的 HTTPS 地址和账号授权。同一台设备支持远程协助和内网穿透，登录一次即可使用。',
+                        'Confirm your HTTPS server address and account authorization. One sign-in enables remote assistance and tunnels on the same device.')),
                     if (widget.onNetworkSettings != null)
                       Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton.icon(
                               onPressed: widget.onNetworkSettings,
                               icon: const Icon(Icons.tune_rounded),
-                              label: const Text('打开网络设置'))),
+                              label:
+                                  Text(nl('打开网络设置', 'Open network settings')))),
                     const SizedBox(height: 12),
                   ],
                   HomeDeskFieldLabel(
@@ -1089,7 +1145,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                               keyboardType: TextInputType.url,
                               textInputAction: TextInputAction.next,
                               autocorrect: false,
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                   prefixIcon:
                                       Icon(Icons.link_rounded, size: 20),
                                   hintText: 'https://console.example.com',
@@ -1183,24 +1239,24 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   }
 
   String _status(HomeTunnelService service) {
-    if (!service.enabled) return '已暂停';
+    if (!service.enabled) return nl('已暂停', 'Paused');
     switch (service.status) {
       case 'Online':
-        return '服务在线';
+        return nl('服务在线', 'Service online');
       case 'Pending':
-        return '等待配置';
+        return nl('等待配置', 'Pending configuration');
       case 'Applying':
-        return '正在配置';
+        return nl('正在配置', 'Applying configuration');
       case 'Degraded':
-        return '连接异常';
+        return nl('连接异常', 'Connection degraded');
       case 'Offline':
-        return '服务离线';
+        return nl('服务离线', 'Service offline');
       case 'Error':
-        return '连接失败';
+        return nl('连接失败', 'Connection failed');
       case 'Disabled':
-        return '已暂停';
+        return nl('已暂停', 'Paused');
       default:
-        return '状态未知';
+        return nl('状态未知', 'Status unknown');
     }
   }
 
@@ -1237,18 +1293,21 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text(service.name.isEmpty ? '未命名服务' : service.name,
+                  Text(
+                      service.name.isEmpty
+                          ? nl('未命名服务', 'Unnamed service')
+                          : service.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: t.sectionStyle),
                   Text(
                       web
-                          ? '网页服务'
+                          ? nl('网页服务', 'Web service')
                           : service.proxyType == 'tcp'
-                              ? 'TCP 端口'
+                              ? nl('TCP 端口', 'TCP port')
                               : service.proxyType == 'udp'
-                                  ? 'UDP 端口'
-                                  : '其他服务',
+                                  ? nl('UDP 端口', 'UDP port')
+                                  : nl('其他服务', 'Other service'),
                       style: t.auxiliaryStyle),
                 ])),
             const SizedBox(width: 8),
@@ -1276,15 +1335,16 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                         color: attention ? t.danger : t.warning,
                         fontSize: HomeDeskTokens.auxiliary)))
           else
-            SelectableText(address ?? '访问地址尚未分配',
+            SelectableText(
+                address ?? nl('访问地址尚未分配', 'Public address not assigned'),
                 maxLines: 2,
                 style: TextStyle(
                     color: t.accentText, fontSize: HomeDeskTokens.auxiliary)),
           const SizedBox(height: 8),
           Text(
               service.localHost.isEmpty || service.localPort == 0
-                  ? '本地目标未返回'
-                  : '本地：${web ? '${service.localScheme}://' : ''}${service.localHost}:${service.localPort}',
+                  ? nl('本地目标未返回', 'Local target unavailable')
+                  : '${nl('本地', 'Local')}: ${web ? '${service.localScheme}://' : ''}${service.localHost}:${service.localPort}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: t.auxiliaryStyle),
@@ -1298,26 +1358,26 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                   FilledButton.icon(
                       onPressed: _allowed ? () => _open(service.webUrl!) : null,
                       icon: const Icon(Icons.open_in_new_rounded, size: 16),
-                      label: const Text('打开'))
+                      label: Text(nl('打开', 'Open')))
                 else if (service.endpoint != null)
                   FilledButton(
                       onPressed:
                           _allowed ? () => _copy(service.endpoint!) : null,
-                      child: const Text('复制地址')),
+                      child: Text(nl('复制地址', 'Copy address'))),
                 if (address != null)
                   IconButton(
-                      tooltip: '复制地址',
+                      tooltip: nl('复制地址', 'Copy address'),
                       onPressed: _allowed ? () => _copy(address) : null,
                       icon: const Icon(Icons.copy_rounded, size: 18)),
                 IconButton(
                     key: ValueKey('edit-service-${service.id}'),
-                    tooltip: '编辑服务',
+                    tooltip: nl('编辑服务', 'Edit service'),
                     onPressed:
                         disabled ? null : () => _editService(service: service),
                     icon: const Icon(Icons.edit_outlined, size: 18)),
                 PopupMenuButton<String>(
                     key: ValueKey('more-service-${service.id}'),
-                    tooltip: '更多服务操作',
+                    tooltip: nl('更多服务操作', 'More service actions'),
                     enabled: !disabled,
                     onSelected: (action) {
                       if (action == 'toggle') _toggleService(service);
@@ -1328,12 +1388,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                               key: ValueKey('toggle-service-${service.id}'),
                               value: 'toggle',
                               enabled: !guarded,
-                              child: Text(service.enabled ? '暂停' : '恢复')),
+                              child: Text(service.enabled
+                                  ? nl('暂停', 'Pause')
+                                  : nl('恢复', 'Resume'))),
                           PopupMenuItem(
                               key: ValueKey('delete-service-${service.id}'),
                               value: 'delete',
                               enabled: !guarded,
-                              child: const Text('删除')),
+                              child: Text(nl('删除', 'Delete'))),
                         ],
                     child: const SizedBox(
                         width: 40,
@@ -1374,7 +1436,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                     Icon(Icons.dns_outlined, size: 22, color: t.accent),
                     const SizedBox(width: 10),
                     Expanded(
-                        child: Text(group.name.isEmpty ? '未命名设备' : group.name,
+                        child: Text(
+                            group.name.isEmpty
+                                ? nl('未命名设备', 'Unnamed device')
+                                : group.name,
                             maxLines: 1,
                             softWrap: false,
                             overflow: TextOverflow.ellipsis,
@@ -1390,17 +1455,19 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                   ]),
                   Wrap(spacing: 8, runSpacing: 6, children: [
                     if (local)
-                      const HomeDeskBadge('本机', tone: HomeDeskTone.accent),
+                      HomeDeskBadge(nl('本机', 'This device'),
+                          tone: HomeDeskTone.accent),
                     HomeDeskBadge(
                         group.online == null
-                            ? '心跳未知'
+                            ? nl('心跳未知', 'Heartbeat unknown')
                             : group.online!
-                                ? '设备心跳在线'
-                                : '设备心跳离线',
+                                ? nl('设备心跳在线', 'Device heartbeat online')
+                                : nl('设备心跳离线', 'Device heartbeat offline'),
                         tone: group.online == true
                             ? HomeDeskTone.success
                             : HomeDeskTone.neutral),
-                    _badge('${group.services.length} 项服务'),
+                    _badge(nl('${group.services.length} 项服务',
+                        '${group.services.length} services')),
                     for (final tag in group.device?.tags ?? <String>[])
                       _badge(tag),
                   ]),
@@ -1470,11 +1537,13 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
       return;
     }
     if (_busy) {
-      _noticeMessage('已有操作正在进行，请稍后重试。');
+      _noticeMessage(nl('已有操作正在进行，请稍后重试。',
+          'An operation is already in progress. Try again later.'));
       return;
     }
     if (_localDeviceRevoked) {
-      _noticeMessage('本机设备已删除，请重新登录后再登记。');
+      _noticeMessage(nl('本机设备已删除，请重新登录后再登记。',
+          'This device was deleted. Sign in again to register it.'));
       return;
     }
     final api = _api, generation = _generation;
@@ -1482,7 +1551,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         !identical(api, owner) ||
         generation != openedGeneration ||
         !_current(api, generation)) {
-      _noticeMessage('本机接入信息已失效，请重新登录后打开。');
+      _noticeMessage(nl('本机接入信息已失效，请重新登录后打开。',
+          'Local registration details expired. Sign in again to open them.'));
       _queueNoticeUpdate();
       return;
     }
@@ -1493,7 +1563,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
           _attachLocal(api, generation));
     } catch (_) {
       if (mounted && identical(_api, api) && _generation == generation) {
-        _noticeMessage('本机接入未完成，请检查后重试。');
+        _noticeMessage(nl('本机接入未完成，请检查后重试。',
+            'Local registration did not finish. Check it and retry.'));
       }
     } finally {
       // 只复位本次操作拥有的忙状态；撤权已复位，新的登录代次由新操作负责。
@@ -1504,12 +1575,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
   }
 
   String _noticeTitle(HomeDeskLocalAgent agent) => agent.error != null
-      ? '本机接入未完成'
+      ? nl('本机接入未完成', 'Local registration incomplete')
       : agent.agentState == 'Degraded' || agent.agentState == 'Error'
-          ? '服务隧道待连接'
+          ? nl('内网穿透待连接', 'Tunnel connection pending')
           : agent.isAttaching
-              ? '正在接入本机…'
-              : '本机已登记';
+              ? nl('正在接入本机…', 'Registering this device…')
+              : nl('本机已登记', 'This device is registered');
   Future<void> _showConnectionNotice() async {
     final api = _api, generation = _generation;
     if (api == null || !_current(api, generation) || _noticeRoute != null) {
@@ -1529,19 +1600,23 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
               final pending = agent?.agentState == 'Degraded' ||
                   agent?.agentState == 'Error';
               return NestLinkDialog(
-                  title: Text(agent == null ? '本机接入信息' : _noticeTitle(agent)),
+                  title: Text(agent == null
+                      ? nl('本机接入信息', 'Local registration details')
+                      : _noticeTitle(agent)),
                   content: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(valid && agent != null
                             ? agent.description
-                            : '当前账号或网络许可已变化，请重新登录。'),
+                            : nl('当前账号或网络许可已变化，请重新登录。',
+                                'The account or network authorization changed. Sign in again.')),
                         if (pending)
-                          const Padding(
-                              padding: EdgeInsets.only(top: 8),
-                              child: Text(
-                                  '请确认服务器的 FRPS 入站端口已开放。设备心跳在线仅代表管理连接可用。')),
+                          Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(nl(
+                                  '请确认服务器的 FRPS 入站端口已开放。设备心跳在线仅代表管理连接可用。',
+                                  'Confirm that the server allows inbound traffic to its FRPS port. An online device heartbeat only confirms the management connection.'))),
                         if (_noticeHint.isNotEmpty)
                           Padding(
                               padding: const EdgeInsets.only(top: 8),
@@ -1552,12 +1627,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                               onPressed: !valid || _busy
                                   ? null
                                   : () => _retryLocal(api, generation),
-                              child: Text(_busy ? '正在接入…' : '重试本机接入')),
+                              child: Text(_busy
+                                  ? nl('正在接入…', 'Registering…')
+                                  : nl('重试本机接入', 'Retry local registration'))),
                       ]),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(dialogContext),
-                        child: const Text('关闭'))
+                        child: Text(nl('关闭', 'Close')))
                   ]);
             }));
     _noticeNavigator = navigator;
@@ -1614,7 +1691,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         dimension: controlHeight,
         child: IconButton(
             key: const ValueKey('tunnel-refresh'),
-            tooltip: _busy ? '正在刷新…' : '刷新',
+            tooltip: _busy ? nl('正在刷新…', 'Refreshing…') : nl('刷新', 'Refresh'),
             onPressed: _busy ? null : _refresh,
             icon: _busy || _entityBusy.isNotEmpty
                 ? const SizedBox.square(
@@ -1634,13 +1711,14 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                         horizontal: 12,
                         vertical: (controlHeight - dropdownTextHeight) / 2)),
                 items: [
-                  const DropdownMenuItem(value: '', child: Text('全部设备')),
+                  DropdownMenuItem(
+                      value: '', child: Text(nl('全部设备', 'All devices'))),
                   for (final device in catalog.devices)
                     DropdownMenuItem(
                         value: device.id,
                         child: Text(
                             device.name.isEmpty
-                                ? '未命名设备'
+                                ? nl('未命名设备', 'Unnamed device')
                                 : homeDeskDeviceLabel(device.name),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis))
@@ -1659,7 +1737,7 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                     : () => _editService(
                         deviceId: _deviceId.isEmpty ? null : _deviceId),
                 icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('添加服务')));
+                label: Text(nl('添加服务', 'Add service'))));
     return LayoutBuilder(builder: (context, c) {
       final controls = Wrap(
           spacing: 12,
@@ -1707,7 +1785,12 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           HomeDeskSegments(
-                              labels: const ['全部', '网页', 'TCP 端口', 'UDP 端口'],
+                              labels: [
+                                nl('全部', 'All'),
+                                nl('网页', 'Web'),
+                                nl('TCP 端口', 'TCP port'),
+                                nl('UDP 端口', 'UDP port')
+                              ],
                               selected: _serviceType,
                               onSelected: (i) =>
                                   setState(() => _serviceType = i),
@@ -1721,7 +1804,8 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                       Padding(
                           padding: const EdgeInsets.only(top: 20),
                           child: Text(
-                              '当前账号尚无接入设备。登录后会自动接入本机；其他设备使用自己的账号登录。默认不发布服务。',
+                              nl('当前账号尚无接入设备。登录后会自动接入本机；其他设备使用自己的账号登录。默认不发布服务。',
+                                  'This account has no registered devices. Signing in registers this device; other devices use their own accounts. No services are published by default.'),
                               style: t.auxiliaryStyle)),
                   ]))),
       SliverList(

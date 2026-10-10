@@ -108,8 +108,13 @@ jobs:
         New-Item -ItemType Directory -Force .downloads | Out-Null
         python build/tunnel/build-runtime.py --target win-x64
         if ($LASTEXITCODE -ne 0) { throw 'Managed helper failed' }
-        cargo test --manifest-path client/Cargo.toml --release --locked --features flutter,hwcodec --test nestlink-runtime-manifest -- (Resolve-Path client/target/tunnel-runtime/runtime.json).Path
-        if ($LASTEXITCODE -ne 0) { throw 'Runtime version and identity gate failed' }
+        $runtimeManifest = (Resolve-Path client/target/tunnel-runtime/runtime.json).Path
+        # Cargo only discovers client/.cargo/config.toml from the client directory.
+        Push-Location client
+        try {
+          cargo test --release --locked --features flutter,hwcodec --test nestlink-runtime-manifest -- $runtimeManifest
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime version and identity gate failed' }
+        } finally { Pop-Location }
         $compilerLines = .\packaging\windows\install-inno-setup.ps1
         $compiler = ($compilerLines | Where-Object { $_ -like 'ISCC=*' }) -replace '^ISCC=', ''
         python scripts/test-homedesk-upgrade.py --iscc $compiler --evidence material-input/windows-upgrade.json
@@ -247,7 +252,8 @@ jobs:
     - name: Package current Agent and native GUI
       run: |-
         python3 scripts/package-nestlink-unix.py --target "${{ matrix.target }}"
-        cargo test --manifest-path client/Cargo.toml --release --locked --features flutter,hwcodec --test nestlink-runtime-manifest -- "$PWD/outputs/${{ matrix.target }}/deb/usr/share/homedesk/tunnel-runtime/runtime.json"
+        runtime_manifest="$PWD/outputs/${{ matrix.target }}/deb/usr/share/homedesk/tunnel-runtime/runtime.json"
+        (cd client && cargo test --release --locked --features flutter,hwcodec --test nestlink-runtime-manifest -- "$runtime_manifest")
         python3 scripts/collect-native-materials.py
     - name: Install, start and remove the actual DEB with Secret Service regression
       if: startsWith(matrix.target, 'linux-')

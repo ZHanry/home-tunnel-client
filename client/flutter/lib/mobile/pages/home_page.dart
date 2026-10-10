@@ -123,7 +123,7 @@ class HomePageState extends State<HomePage> {
               appBar: AppBar(
                   title: Text(nl('设备偏好', 'Device preferences')),
                   actions: preferences.appBarActions),
-              body: preferences);
+              body: SafeArea(top: false, child: preferences));
         },
         onNetworkSettings: () => showHomeDeskNetworkSettings(context));
   }

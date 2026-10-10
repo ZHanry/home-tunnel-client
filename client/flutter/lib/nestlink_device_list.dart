@@ -724,46 +724,61 @@ class _NestLinkDeviceListState extends State<NestLinkDeviceList> {
         if (b.id == account.localDeviceId) return 1;
         return _name(a).compareTo(_name(b));
       });
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      _header(context),
-      Expanded(
-          child: SingleChildScrollView(
+    final directory =
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (account.message.isNotEmpty)
+        Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(account.message, style: t.auxiliaryStyle)),
+      for (final group in [
+        ('computer', nl('电脑', 'Computers')),
+        ('mobile', nl('手机 / 平板', 'Phones / tablets')),
+        ('other', nl('其他设备', 'Other devices'))
+      ])
+        if (devices.any((d) => _group(d) == group.$1))
+          _section(context, group.$1, group.$2,
+              devices.where((d) => _group(d) == group.$1).toList()),
+      if (devices.isEmpty)
+        Padding(
+            padding: const EdgeInsets.symmetric(vertical: 72, horizontal: 24),
+            child: Column(children: [
+              Icon(Icons.devices_outlined, size: 40, color: t.accentText),
+              const SizedBox(height: 16),
+              Text(
+                  query.isNotEmpty || _filter != 0
+                      ? nl('没有找到匹配的设备', 'No matching devices')
+                      : nl('等待设备加入', 'Waiting for devices'),
+                  style: t.sectionStyle),
+              const SizedBox(height: 8),
+              Text(
+                  nl('其他设备登录同一账号后，会自动出现在这里。',
+                      'Devices appear here after signing in to the same account.'),
+                  textAlign: TextAlign.center,
+                  style: t.auxiliaryStyle)
+            ])),
+      const SizedBox(height: 24),
+    ]);
+    return LayoutBuilder(builder: (context, constraints) {
+      // Keep the search element in the same tree when the keyboard opens.
+      // In short viewports the outer scroll view includes the page header;
+      // otherwise the directory scrolls below the stationary header.
+      final short = constraints.maxHeight < 420;
+      return SingleChildScrollView(
+          key: const ValueKey('device-page-scroll'),
+          child: SizedBox(
+              height: short ? null : constraints.maxHeight,
               child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-            if (account.message.isNotEmpty)
-              Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(account.message, style: t.auxiliaryStyle)),
-            for (final group in [
-              ('computer', nl('电脑', 'Computers')),
-              ('mobile', nl('手机 / 平板', 'Phones / tablets')),
-              ('other', nl('其他设备', 'Other devices'))
-            ])
-              if (devices.any((d) => _group(d) == group.$1))
-                _section(context, group.$1, group.$2,
-                    devices.where((d) => _group(d) == group.$1).toList()),
-            if (devices.isEmpty)
-              Padding(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 72, horizontal: 24),
-                  child: Column(children: [
-                    Icon(Icons.devices_outlined, size: 40, color: t.accentText),
-                    const SizedBox(height: 16),
-                    Text(
-                        query.isNotEmpty || _filter != 0
-                            ? nl('没有找到匹配的设备', 'No matching devices')
-                            : nl('等待设备加入', 'Waiting for devices'),
-                        style: t.sectionStyle),
-                    const SizedBox(height: 8),
-                    Text(
-                        nl('其他设备登录同一账号后，会自动出现在这里。',
-                            'Devices appear here after signing in to the same account.'),
-                        textAlign: TextAlign.center,
-                        style: t.auxiliaryStyle)
-                  ])),
-            const SizedBox(height: 24),
-          ]))),
-    ]);
+                    _header(context),
+                    Flexible(
+                        flex: short ? 0 : 1,
+                        fit: FlexFit.loose,
+                        child: SingleChildScrollView(
+                            key: const ValueKey('device-directory-scroll'),
+                            child: directory)),
+                  ])));
+    });
   }
 }

@@ -13,6 +13,7 @@ import 'package:flutter_hbb/homedesk_services.dart';
 import 'package:flutter_hbb/homedesk_theme.dart';
 import 'package:flutter_hbb/nestlink_remote_credentials.dart';
 import 'package:flutter_hbb/nestlink_remote_settings.dart';
+import 'package:flutter_hbb/nestlink_device_list.dart';
 import 'package:flutter_hbb/nestlink_locale.dart';
 import 'package:flutter_hbb/nestlink_workspace.dart' show nestlinkRelease;
 import 'package:flutter_hbb/mobile/pages/settings_page.dart'
@@ -46,7 +47,7 @@ Widget mobileHome(
   ValueChanged<String>? onLanguage,
   VoidCallback? onVersion,
   double scale = 1,
-  double keyboard = 0,
+  double? keyboard,
   bool dark = false,
 }) =>
     MaterialApp(
@@ -59,7 +60,9 @@ Widget mobileHome(
         builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context).copyWith(
                 textScaler: TextScaler.linear(scale),
-                viewInsets: EdgeInsets.only(bottom: keyboard)),
+                viewInsets: keyboard == null
+                    ? MediaQuery.viewInsetsOf(context)
+                    : EdgeInsets.only(bottom: keyboard)),
             child: child!),
         home: RepaintBoundary(
             key: paint,
@@ -120,6 +123,78 @@ Future<void> press(WidgetTester tester, String key) async {
 }
 
 void main() {
+  testWidgets(
+      'device search keeps focus and text when the phone keyboard opens',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    final account = HomeDeskAccount(), api = MobileApi();
+    final id = TextEditingController(), otp = TextEditingController();
+    account.publish(api, family.catalog(), family.one, (_) async {});
+    await tester.pumpWidget(mobileHome(account, id: id, password: otp));
+    await tester.pumpAndSettle();
+    final search = find.byKey(const ValueKey('device-search'));
+    await tester.tap(search);
+    await tester.enterText(search, '设备');
+    final input = tester.element(search);
+    final focus = FocusManager.instance.primaryFocus;
+    expect(focus, isNotNull);
+    expect(tester.getSize(find.byType(NestLinkDeviceList)).height,
+        greaterThan(420));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 360);
+    await tester.pumpAndSettle();
+    expect(
+        tester.getSize(find.byType(NestLinkDeviceList)).height, lessThan(420));
+    expect(tester.element(search), same(input));
+    expect(FocusManager.instance.primaryFocus, same(focus));
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tester.enterText(search, '另一台设备');
+    expect(tester.widget<TextField>(search).controller!.text, '另一台设备');
+    tester.view.viewInsets = const FakeViewPadding();
+    await tester.pumpAndSettle();
+    expect(tester.element(search), same(input));
+    expect(FocusManager.instance.primaryFocus, same(focus));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    account.dispose();
+    api.close();
+    id.dispose();
+    otp.dispose();
+  });
+
+  testWidgets('landscape phones can scroll to device actions with large text',
+      (tester) async {
+    tester.view.physicalSize = const Size(640, 360);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    for (final scale in [1.0, 2.0]) {
+      final account = HomeDeskAccount(), api = MobileApi();
+      final id = TextEditingController(), otp = TextEditingController();
+      account.publish(api, family.catalog(), family.one, (_) async {});
+      await tester
+          .pumpWidget(mobileHome(account, id: id, password: otp, scale: scale));
+      await tester.pumpAndSettle();
+      final row = find.byKey(ValueKey('device-row-${family.two}'));
+      await tester.ensureVisible(row);
+      await tester.pumpAndSettle();
+      final rowRect = tester.getRect(row);
+      final navigationRect =
+          tester.getRect(find.byKey(const ValueKey('mobile-navigation')));
+      expect(rowRect.top, lessThan(navigationRect.top - 80));
+      expect(rowRect.bottom, greaterThan(80));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      account.dispose();
+      api.close();
+      id.dispose();
+      otp.dispose();
+    }
+  });
+
   testWidgets(
       'NestLink device preferences retain identity information and hide legacy external links',
       (tester) async {
