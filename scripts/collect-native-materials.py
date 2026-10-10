@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import shutil
 import subprocess
 from urllib.parse import unquote, urlparse
@@ -19,11 +20,45 @@ if not target:
     target = next(line.split(': ', 1)[1] for line in
                   subprocess.check_output(['rustc', '-vV'], text=True).splitlines()
                   if line.startswith('host: '))
-features = os.environ.get('FEATURES') or 'flutter,hwcodec'
+features = os.environ.get('FEATURES') or (
+    'flutter,hwcodec,unix-file-copy-paste'
+    if '-unknown-linux-' in target else 'flutter,hwcodec'
+)
 tree = subprocess.check_output(['cargo', 'tree', '--locked', '--target', target,
                                 '--features', features, '-e', 'normal,build'],
                                cwd=ROOT / 'client', text=True)
 (destination / ('cargo-tree-' + target + '.txt')).write_text(tree, encoding='utf8')
+# Preserve a machine-readable graph with the same selected target and features.
+# Cargo's depth output omits presentation headings and keeps repeated edges.
+graph_tree = subprocess.check_output(
+    ['cargo', 'tree', '--locked', '--target', target, '--features', features,
+     '-e', 'normal,build', '--prefix', 'depth', '--format', '{p}|{f}'],
+    cwd=ROOT / 'client', text=True)
+nodes, edges, stack = {}, set(), []
+for line in graph_tree.splitlines():
+    match = re.fullmatch(r'(\d+)(.+)\|(.*)', line)
+    if not match:
+        raise ValueError('Unexpected cargo graph line: ' + line)
+    depth, package, selected = int(match[1]), match[2], match[3]
+    selected = selected.removesuffix(' (*)')
+    name, version = package.split(' v', 1)
+    node = nodes.setdefault(package, {
+        'id': package, 'name': name, 'version': version.split(' ', 1)[0],
+        'features': [],
+    })
+    node['features'] = sorted(set(node['features']) | set(filter(None, selected.split(','))))
+    stack = stack[:depth]
+    if depth:
+        if len(stack) != depth:
+            raise ValueError('Unexpected cargo graph depth')
+        edges.add((stack[-1], package))
+    stack.append(package)
+graph = {'target': target, 'features': features.split(','),
+         'dependency_kinds': ['normal', 'build'],
+         'nodes': [nodes[key] for key in sorted(nodes)],
+         'edges': [{'from': parent, 'to': child} for parent, child in sorted(edges)]}
+(destination / ('cargo-tree-' + target + '.json')).write_text(
+    json.dumps(graph, indent=2) + '\n', encoding='utf8')
 vcpkg = Path(os.environ['VCPKG_ROOT'])
 for port in sorted((vcpkg / 'buildtrees').iterdir()):
     source = port / 'src'

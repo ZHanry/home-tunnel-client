@@ -978,6 +978,7 @@ void showLanguageSettings(OverlayDialogManager dialogManager) async {
             lang = v;
           });
           await bind.mainSetLocalOption(key: kCommConfKeyLang, value: v);
+          loadNestLinkLanguage();
           HomePage.homeKey.currentState?.refreshPages();
           Future.delayed(Duration(milliseconds: 200), close);
         }

@@ -29,7 +29,7 @@ jobs:
     - &id002
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.0
+        go-version: 1.27.2
         cache-dependency-path: go.sum
     - &id003
       uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
@@ -141,12 +141,14 @@ jobs:
         fetch-depth: 0
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.0
+        go-version: 1.27.2
         cache-dependency-path: go.sum
     - name: Test preserved tunneling and helper boundaries
       run: |-
         go test ./...
         python3 scripts/verify-frp-security.py
+        go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+        (cd agent && go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...)
   policy:
     name: P2P source and contract checks
     runs-on: ubuntu-24.04
@@ -234,6 +236,7 @@ jobs:
           ${{ runner.temp }}/vcpkg/buildtrees
           ${{ runner.temp }}/vcpkg/downloads
         key: nestlink-native-${{ matrix.target }}-llvm18-120deac-${{ hashFiles('client/Cargo.lock', 'client/vcpkg.json') }}
+        restore-keys: nestlink-native-${{ matrix.target }}-llvm18-120deac-
     - name: Prepare pinned native toolchain
       run: bash build/ci/setup-unix.sh "${{ matrix.target }}"
     - name: Build shared GUI from current source

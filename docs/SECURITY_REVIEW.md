@@ -2,8 +2,10 @@
 
 ## Managed dependencies
 
-Both the development Agent module and the FRP build locks select `go-ntlmssp v0.1.1`
-and `golang.org/x/crypto v0.56.0`. These address CVE-2026-32952 and the SSH findings
+The 14.0.0 desktop helper and browser P2P module select `golang.org/x/crypto v0.57.0`,
+`golang.org/x/net v0.60.0` and their required `golang.org/x/sys v0.48.0`.
+The independent Agent module and FRP build locks also select `go-ntlmssp v0.1.1`
+and `golang.org/x/crypto v0.57.0`. These address CVE-2026-32952 and the SSH findings
 GO-2026-6355, GO-2026-6354 and GO-2026-6303. The package scripts inspect the compiled
 module versions and the Windows Agent hash is reproduced in CI.
 
@@ -11,6 +13,15 @@ The Go vulnerability database also identifies the discontinued OpenPGP package
 inside the crypto module (GO-2026-5932, no fixed version). The client does not import
 or link that package. Builds explicitly reject an OpenPGP dependency. An informational
 module-level result must not be confused with a reachable package or symbol finding.
+
+The browser-test dependency lock selects `brace-expansion 5.0.12`, which repairs
+GHSA-q2hr-2g5m-vwhr. This tooling is excluded from installed client packages.
+
+The build and CodeQL workflows select Go 1.27.2. Its standard-library repairs and
+the `x/net v0.60.0` HTTP/2 repairs cover the October 2026 advisory set
+GO-2026-6599 through GO-2026-6617. Symbol-level `govulncheck` is run against the
+actual helper and Agent packages; module-only OpenPGP findings remain subject to
+the excluded-package check above.
 
 ## Local management boundary
 
