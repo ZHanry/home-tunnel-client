@@ -15,6 +15,7 @@ import '../../common.dart';
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
 import '../../consts.dart';
+import '../../homedesk_theme.dart';
 import '../../nestlink_locale.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
@@ -22,6 +23,21 @@ import '../widgets/deploy_dialog.dart';
 import '../widgets/dialog.dart';
 import 'home_page.dart';
 import 'scan_page.dart';
+
+SettingsThemeData _mobileSettingsTheme(HomeDeskTokens tokens) =>
+    SettingsThemeData(
+      settingsListBackground: tokens.background,
+      settingsSectionBackground: tokens.surface,
+      dividerColor: tokens.border,
+      tileHighlightColor: tokens.accentSoft,
+      titleTextColor: tokens.accentText,
+      leadingIconsColor: tokens.secondary,
+      tileDescriptionTextColor: tokens.secondary,
+      settingsTileTextColor: tokens.text,
+      trailingTextColor: tokens.secondary,
+      inactiveTitleColor: tokens.muted,
+      inactiveSubtitleColor: tokens.muted,
+    );
 
 class SettingsPage extends StatefulWidget implements PageShape {
   final bool showAbout;
@@ -658,6 +674,8 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     final hideSecuritySettings =
         bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) == 'Y';
     final settings = SettingsList(
+      lightTheme: _mobileSettingsTheme(HomeDeskTokens.light),
+      darkTheme: _mobileSettingsTheme(HomeDeskTokens.dark),
       sections: [
         customClientSection,
         if (!bind.isDisableAccount())
@@ -1105,70 +1123,74 @@ class __DisplayPageState extends State<_DisplayPage> {
         title: Text(translate('Display Settings')),
         centerTitle: true,
       ),
-      body: SettingsList(sections: [
-        SettingsSection(
-          tiles: [
-            _getPopupDialogRadioEntry(
-              title: 'Default View Style',
-              list: [
-                _RadioEntry('Scale original', kRemoteViewStyleOriginal),
-                _RadioEntry('Scale adaptive', kRemoteViewStyleAdaptive)
-              ],
-              getter: () =>
-                  bind.mainGetUserDefaultOption(key: kOptionViewStyle),
-              asyncSetter: isOptionFixed(kOptionViewStyle)
-                  ? null
-                  : (value) async {
-                      await bind.mainSetUserDefaultOption(
-                          key: kOptionViewStyle, value: value);
-                    },
-            ),
-            _getPopupDialogRadioEntry(
-              title: 'Default Image Quality',
-              list: [
-                _RadioEntry('Good image quality', kRemoteImageQualityBest),
-                _RadioEntry('Balanced', kRemoteImageQualityBalanced),
-                _RadioEntry('Optimize reaction time', kRemoteImageQualityLow),
-                _RadioEntry('Custom', kRemoteImageQualityCustom),
-              ],
-              getter: () {
-                final v =
-                    bind.mainGetUserDefaultOption(key: kOptionImageQuality);
-                showCustomImageQuality.value = v == kRemoteImageQualityCustom;
-                return v;
-              },
-              asyncSetter: isOptionFixed(kOptionImageQuality)
-                  ? null
-                  : (value) async {
-                      await bind.mainSetUserDefaultOption(
-                          key: kOptionImageQuality, value: value);
-                      showCustomImageQuality.value =
-                          value == kRemoteImageQualityCustom;
-                    },
-              tail: customImageQualitySetting(),
-              showTail: showCustomImageQuality,
-              notCloseValue: kRemoteImageQualityCustom,
-            ),
-            _getPopupDialogRadioEntry(
-              title: 'Default Codec',
-              list: codecList,
-              getter: () =>
-                  bind.mainGetUserDefaultOption(key: kOptionCodecPreference),
-              asyncSetter: isOptionFixed(kOptionCodecPreference)
-                  ? null
-                  : (value) async {
-                      await bind.mainSetUserDefaultOption(
-                          key: kOptionCodecPreference, value: value);
-                    },
-            ),
-          ],
-        ),
-        SettingsSection(
-          title: Text(translate('Other Default Options')),
-          tiles:
-              otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)).toList(),
-        ),
-      ]),
+      body: SettingsList(
+        lightTheme: _mobileSettingsTheme(HomeDeskTokens.light),
+        darkTheme: _mobileSettingsTheme(HomeDeskTokens.dark),
+        sections: [
+          SettingsSection(
+            tiles: [
+              _getPopupDialogRadioEntry(
+                title: 'Default View Style',
+                list: [
+                  _RadioEntry('Scale original', kRemoteViewStyleOriginal),
+                  _RadioEntry('Scale adaptive', kRemoteViewStyleAdaptive)
+                ],
+                getter: () =>
+                    bind.mainGetUserDefaultOption(key: kOptionViewStyle),
+                asyncSetter: isOptionFixed(kOptionViewStyle)
+                    ? null
+                    : (value) async {
+                        await bind.mainSetUserDefaultOption(
+                            key: kOptionViewStyle, value: value);
+                      },
+              ),
+              _getPopupDialogRadioEntry(
+                title: 'Default Image Quality',
+                list: [
+                  _RadioEntry('Good image quality', kRemoteImageQualityBest),
+                  _RadioEntry('Balanced', kRemoteImageQualityBalanced),
+                  _RadioEntry('Optimize reaction time', kRemoteImageQualityLow),
+                  _RadioEntry('Custom', kRemoteImageQualityCustom),
+                ],
+                getter: () {
+                  final v =
+                      bind.mainGetUserDefaultOption(key: kOptionImageQuality);
+                  showCustomImageQuality.value = v == kRemoteImageQualityCustom;
+                  return v;
+                },
+                asyncSetter: isOptionFixed(kOptionImageQuality)
+                    ? null
+                    : (value) async {
+                        await bind.mainSetUserDefaultOption(
+                            key: kOptionImageQuality, value: value);
+                        showCustomImageQuality.value =
+                            value == kRemoteImageQualityCustom;
+                      },
+                tail: customImageQualitySetting(),
+                showTail: showCustomImageQuality,
+                notCloseValue: kRemoteImageQualityCustom,
+              ),
+              _getPopupDialogRadioEntry(
+                title: 'Default Codec',
+                list: codecList,
+                getter: () =>
+                    bind.mainGetUserDefaultOption(key: kOptionCodecPreference),
+                asyncSetter: isOptionFixed(kOptionCodecPreference)
+                    ? null
+                    : (value) async {
+                        await bind.mainSetUserDefaultOption(
+                            key: kOptionCodecPreference, value: value);
+                      },
+              ),
+            ],
+          ),
+          SettingsSection(
+            title: Text(translate('Other Default Options')),
+            tiles:
+                otherDefaultSettings().map((e) => otherRow(e.$1, e.$2)).toList(),
+          ),
+        ],
+      ),
     );
   }
 

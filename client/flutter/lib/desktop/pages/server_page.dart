@@ -18,6 +18,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../common.dart';
 import '../../common/widgets/chat_page.dart';
+import '../../homedesk_theme.dart';
 import '../../models/file_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
@@ -447,8 +448,8 @@ class _CmHeaderState extends State<_CmHeader>
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
           colors: [
-            Color(0xff00bfe1),
-            Color(0xff0071ff),
+            HomeDeskTokens.light.accentText,
+            HomeDeskTokens.light.accent,
           ],
         ),
       ),
