@@ -65,7 +65,7 @@ try {
         # .NET MainWindowHandle excludes windows intentionally started hidden in CI.
         # Enumerate this exact process and require its real first Flutter frame.
         $windows = @([NestLinkWindowProbe]::Inspect([uint32]$gui.Id))
-        $windowReady = $windows -ccontains 'nestlink|rendered=True|resizable=False'
+        $windowReady = $windows -ccontains 'NestLink|rendered=True|resizable=False'
     } while (-not $windowReady -and [DateTime]::UtcNow -lt $deadline)
     [ordered]@{process=$gui.Id;windows=$windows;first_frame_and_fixed_window=$windowReady} | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $EvidenceDirectory 'windows-startup.json')
     if (-not $windowReady) { throw "Installed GUI did not render its branded fixed window: $($windows -join ', ')" }

@@ -13,6 +13,7 @@ import '../../homedesk_family_devices.dart';
 import '../../homedesk_advanced.dart';
 import '../../homedesk_mobile_shell.dart';
 import '../../homedesk_recent.dart';
+import '../../nestlink_locale.dart';
 
 abstract class PageShape extends Widget {
   final String title = "";
@@ -116,6 +117,14 @@ class HomePageState extends State<HomePage> {
         servicesBuilder: (_) => HomeDeskServices(account: _account),
         localBuilder:
             bind.isOutgoingOnly() ? null : (_) => ServerPage(embedded: true),
+        devicePreferencesBuilder: (context) {
+          final preferences = SettingsPage(showAbout: false);
+          return Scaffold(
+              appBar: AppBar(
+                  title: Text(nl('设备偏好', 'Device preferences')),
+                  actions: preferences.appBarActions),
+              body: preferences);
+        },
         onNetworkSettings: () => showHomeDeskNetworkSettings(context));
   }
 

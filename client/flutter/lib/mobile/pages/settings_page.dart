@@ -15,6 +15,7 @@ import '../../common.dart';
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
 import '../../consts.dart';
+import '../../nestlink_locale.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../widgets/deploy_dialog.dart';
@@ -23,6 +24,9 @@ import 'home_page.dart';
 import 'scan_page.dart';
 
 class SettingsPage extends StatefulWidget implements PageShape {
+  final bool showAbout;
+  SettingsPage({super.key, this.showAbout = true});
+
   @override
   final title = translate("Settings");
 
@@ -35,6 +39,49 @@ class SettingsPage extends StatefulWidget implements PageShape {
   @override
   State<SettingsPage> createState() => _SettingsState();
 }
+
+// The NestLink route replaces legacy external links with its shared version dialog.
+// Build metadata and the device fingerprint remain available in both routes.
+SettingsSection mobileDeviceInformation({
+  required bool showAbout,
+  required bool android,
+  required String version,
+  required String buildDate,
+  required String fingerprint,
+  required VoidCallback onVersion,
+  required VoidCallback onFingerprint,
+  required VoidCallback onPrivacy,
+}) =>
+    SettingsSection(
+        title: Text(
+            showAbout ? nl('关于', 'About') : nl('设备信息', 'Device information')),
+        tiles: [
+          if (showAbout)
+            SettingsTile(
+                onPressed: (_) => onVersion(),
+                title: Text('${nl('版本: ', 'Version: ')}$version'),
+                value: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('rustdesk.com',
+                        style:
+                            TextStyle(decoration: TextDecoration.underline))),
+                leading: const Icon(Icons.info_outline)),
+          SettingsTile(
+              title: Text(nl('构建日期', 'Build date')),
+              description: Text(buildDate),
+              leading: const Icon(Icons.query_builder)),
+          if (android)
+            SettingsTile(
+                onPressed: (_) => onFingerprint(),
+                title: Text(nl('设备指纹', 'Fingerprint')),
+                description: Text(fingerprint),
+                leading: const Icon(Icons.fingerprint)),
+          if (showAbout)
+            SettingsTile(
+                title: Text(nl('隐私声明', 'Privacy Statement')),
+                onPressed: (_) => onPrivacy(),
+                leading: const Icon(Icons.privacy_tip_outlined)),
+        ]);
 
 const url = 'https://rustdesk.com/';
 
@@ -863,10 +910,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             !disabledSettings &&
             !outgoingOnly &&
             !hideSecuritySettings)
-        if (isAndroid &&
-            !disabledSettings &&
-            !outgoingOnly &&
-            !hideSecuritySettings)
           SettingsSection(
             title: Text(translate("Share screen")),
             tiles: shareScreenTiles,
@@ -880,46 +923,16 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             title: Text(translate("Enhancements")),
             tiles: enhancementsTiles,
           ),
-        SettingsSection(
-          title: Text(translate("About")),
-          tiles: [
-            SettingsTile(
-                onPressed: (context) async {
-                  await launchUrl(Uri.parse(url));
-                },
-                title: Text(translate("Version: ") + version),
-                value: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text('rustdesk.com',
-                      style: TextStyle(
-                        decoration: TextDecoration.underline,
-                      )),
-                ),
-                leading: Icon(Icons.info)),
-            SettingsTile(
-                title: Text(translate("Build Date")),
-                value: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text(_buildDate),
-                ),
-                leading: Icon(Icons.query_builder)),
-            if (isAndroid)
-              SettingsTile(
-                  onPressed: (context) => onCopyFingerprint(_fingerprint),
-                  title: Text(translate("Fingerprint")),
-                  value: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: Text(_fingerprint),
-                  ),
-                  leading: Icon(Icons.fingerprint)),
-            SettingsTile(
-              title: Text(translate("Privacy Statement")),
-              onPressed: (context) =>
-                  launchUrlString('https://rustdesk.com/privacy.html'),
-              leading: Icon(Icons.privacy_tip),
-            )
-          ],
-        ),
+        mobileDeviceInformation(
+            showAbout: widget.showAbout,
+            android: isAndroid,
+            version: version,
+            buildDate: _buildDate,
+            fingerprint: _fingerprint,
+            onVersion: () => launchUrl(Uri.parse(url)),
+            onFingerprint: () => onCopyFingerprint(_fingerprint),
+            onPrivacy: () =>
+                launchUrlString('https://rustdesk.com/privacy.html')),
       ],
     );
     return settings;

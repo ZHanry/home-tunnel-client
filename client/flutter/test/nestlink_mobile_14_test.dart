@@ -13,6 +13,11 @@ import 'package:flutter_hbb/homedesk_services.dart';
 import 'package:flutter_hbb/homedesk_theme.dart';
 import 'package:flutter_hbb/nestlink_remote_credentials.dart';
 import 'package:flutter_hbb/nestlink_remote_settings.dart';
+import 'package:flutter_hbb/nestlink_locale.dart';
+import 'package:flutter_hbb/nestlink_workspace.dart' show nestlinkRelease;
+import 'package:flutter_hbb/mobile/pages/settings_page.dart'
+    show mobileDeviceInformation;
+import 'package:settings_ui/settings_ui.dart';
 
 import 'homedesk_family_devices_test.dart' as family;
 import 'homedesk_services_test.dart' as portal;
@@ -36,6 +41,10 @@ Widget mobileHome(
   GlobalKey? paint,
   ValueChanged<String>? onConnect,
   WidgetBuilder? services,
+  WidgetBuilder? devicePreferences,
+  ValueChanged<ThemeMode>? onTheme,
+  ValueChanged<String>? onLanguage,
+  VoidCallback? onVersion,
   double scale = 1,
   double keyboard = 0,
   bool dark = false,
@@ -61,6 +70,10 @@ Widget mobileHome(
               servicesBuilder:
                   services ?? (_) => const Center(child: Text('测试设备上的穿透服务')),
               recentBuilder: (_) => const Text('最近连接：书房电脑'),
+              devicePreferencesBuilder: devicePreferences,
+              onTheme: onTheme,
+              onLanguage: onLanguage,
+              onVersion: onVersion,
               localBuilder: (_) => Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -107,6 +120,161 @@ Future<void> press(WidgetTester tester, String key) async {
 }
 
 void main() {
+  testWidgets(
+      'NestLink device preferences retain identity information and hide legacy external links',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var copied = 0, externalLinks = 0;
+    const fingerprint =
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    await tester.pumpWidget(MaterialApp(
+        theme: homeDeskTheme(ThemeData(platform: TargetPlatform.android)),
+        home: Scaffold(
+            body: MediaQuery(
+                data: const MediaQueryData(
+                    size: Size(320, 800), textScaler: TextScaler.linear(2)),
+                child: SettingsList(sections: [
+                  mobileDeviceInformation(
+                      showAbout: false,
+                      android: true,
+                      version: 'legacy-product-version',
+                      buildDate: '2026-10-10',
+                      fingerprint: fingerprint,
+                      onVersion: () => externalLinks++,
+                      onFingerprint: () => copied++,
+                      onPrivacy: () => externalLinks++)
+                ])))));
+    await tester.pumpAndSettle();
+    expect(find.text('2026-10-10'), findsOneWidget);
+    expect(find.text(fingerprint), findsOneWidget);
+    expect(find.textContaining('legacy-product-version'), findsNothing);
+    expect(find.text('rustdesk.com'), findsNothing);
+    expect(find.text('隐私声明'), findsNothing);
+    await tester.ensureVisible(find.text(fingerprint));
+    await tester.tap(find.text(fingerprint));
+    await tester.pumpAndSettle();
+    expect(copied, 1);
+    expect(externalLinks, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+      'production mobile preferences remain usable before login and on phones and tablets',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(() => nestlinkLanguage.value = 'zh-cn');
+    for (final signedIn in [false, true]) {
+      for (final size in [
+        const Size(320, 800),
+        const Size(760, 1024),
+        const Size(1024, 768)
+      ]) {
+        tester.view.physicalSize = size;
+        final account = HomeDeskAccount(),
+            api = MobileApi()..signedIn = signedIn;
+        final id = TextEditingController(), otp = TextEditingController();
+        if (signedIn) {
+          account.publish(api, family.catalog(), family.one, (_) async {});
+        }
+        final themes = <ThemeMode>[], languages = <String>[];
+        var versions = 0, preferences = 0, nativeToggle = false;
+        await tester.pumpWidget(mobileHome(account,
+            id: id,
+            password: otp,
+            scale: 2,
+            onTheme: themes.add,
+            onLanguage: languages.add,
+            onVersion: () => versions++,
+            devicePreferences: (context) {
+              preferences++;
+              return Scaffold(
+                  appBar: AppBar(title: const Text('设备偏好')),
+                  body: StatefulBuilder(
+                      builder: (context, update) => SwitchListTile(
+                          key: const ValueKey('native-preference-toggle'),
+                          title: const Text('自动录制传入会话'),
+                          value: nativeToggle,
+                          onChanged: (value) =>
+                              update(() => nativeToggle = value))));
+            }));
+        await tester.pumpAndSettle();
+        final menu = find.byKey(const ValueKey('mobile-preferences'));
+        expect(menu, findsOneWidget);
+        expect(tester.getSize(menu).width, greaterThanOrEqualTo(44));
+        expect(tester.getSize(menu).height, greaterThanOrEqualTo(44));
+        for (final choice in [
+          'theme-light',
+          'theme-dark',
+          'theme-system',
+          'language-en',
+          'language-zh-cn',
+          'version'
+        ]) {
+          await press(tester, 'mobile-preferences');
+          await press(tester, 'mobile-preference-$choice');
+          expect(tester.takeException(), isNull);
+        }
+        expect(themes, [ThemeMode.light, ThemeMode.dark, ThemeMode.system]);
+        expect(languages, ['en', 'zh-cn']);
+        expect(versions, 1);
+        expect(preferences, 0);
+        await press(tester, 'mobile-preferences');
+        await press(tester, 'mobile-preference-device');
+        expect(preferences, 1);
+        expect(find.byKey(const ValueKey('native-preference-toggle')),
+            findsOneWidget);
+        await press(tester, 'native-preference-toggle');
+        expect(nativeToggle, isTrue);
+        await tester.tap(find.byType(BackButton));
+        await tester.pumpAndSettle();
+        expect(menu, findsOneWidget);
+        expect(find.byKey(const ValueKey('mobile-navigation')),
+            signedIn && size.width < 760 ? findsOneWidget : findsNothing);
+        expect(find.byKey(const ValueKey('nav-account')),
+            signedIn && size.width >= 760 ? findsOneWidget : findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        account.dispose();
+        api.close();
+        id.dispose();
+        otp.dispose();
+      }
+    }
+  });
+
+  testWidgets(
+      'signed-out phone opens the current version dialog from its real preferences menu',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 800);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final account = HomeDeskAccount();
+    final id = TextEditingController(), otp = TextEditingController();
+    nestlinkRelease.value = null;
+    await tester
+        .pumpWidget(mobileHome(account, id: id, password: otp, scale: 2));
+    await tester.pumpAndSettle();
+    await press(tester, 'mobile-preferences');
+    await press(tester, 'mobile-preference-version');
+    expect(find.text('14.0.0'), findsOneWidget);
+    await tester.ensureVisible(find.text('关闭'));
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mobile-preferences')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    account.dispose();
+    id.dispose();
+    otp.dispose();
+  });
+
   testWidgets(
       'production mobile home keeps device directory, account and native controls across widths',
       (tester) async {

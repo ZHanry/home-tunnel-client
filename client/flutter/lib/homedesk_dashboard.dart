@@ -11,6 +11,7 @@ import 'nestlink_workspace.dart';
 import 'nestlink_locale.dart';
 import 'nestlink_account_page.dart';
 import 'nestlink_dialog.dart';
+import 'common.dart' show MyTheme;
 
 enum _DashboardPage { remote, services, devices, account }
 
@@ -21,9 +22,13 @@ class HomeDeskDashboard extends StatefulWidget {
       recentSummaryBuilder,
       remoteCredentialsBuilder,
       remoteSettingsBuilder,
-      localBuilder;
+      localBuilder,
+      devicePreferencesBuilder;
   final VoidCallback? onSettings;
   final VoidCallback? onNetworkSettings;
+  final ValueChanged<ThemeMode>? onTheme;
+  final ValueChanged<String>? onLanguage;
+  final VoidCallback? onVersion;
   final ValueChanged<String> onConnect;
   final bool initializeAccount;
   final bool mobilePlatform;
@@ -40,8 +45,12 @@ class HomeDeskDashboard extends StatefulWidget {
       this.onSettings,
       required this.onConnect,
       this.onNetworkSettings,
+      this.onTheme,
+      this.onLanguage,
+      this.onVersion,
       this.remoteCredentialsBuilder,
       this.remoteSettingsBuilder,
+      this.devicePreferencesBuilder,
       this.servicesBuilder,
       this.initializeAccount = false,
       this.mobilePlatform = false,
@@ -112,6 +121,78 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
             !identical(owner, account.api) ||
             !account.signedIn)) return;
     widget.onConnect(id);
+  }
+
+  Widget _mobilePreferences(BuildContext context, double availableWidth) {
+    PopupMenuItem<String> choice(String value, String label, IconData icon) =>
+        PopupMenuItem<String>(
+            key: ValueKey('mobile-preference-$value'),
+            value: value,
+            height: 48,
+            child: Row(children: [
+              Icon(icon, size: 20),
+              const SizedBox(width: 12),
+              Expanded(child: Text(label)),
+            ]));
+    return SizedBox(
+        width: 48,
+        height: 48,
+        child: PopupMenuButton<String>(
+            key: const ValueKey('mobile-preferences'),
+            tooltip: nl('偏好与版本', 'Preferences and version'),
+            icon: const Icon(Icons.more_horiz_rounded),
+            constraints: BoxConstraints(
+                minWidth: 200, maxWidth: (availableWidth - 32).clamp(200, 320)),
+            itemBuilder: (_) => [
+                  choice('theme-light', nl('浅色主题', 'Light theme'),
+                      Icons.light_mode_outlined),
+                  choice('theme-dark', nl('深色主题', 'Dark theme'),
+                      Icons.dark_mode_outlined),
+                  choice('theme-system', nl('跟随系统主题', 'System theme'),
+                      Icons.brightness_auto_outlined),
+                  const PopupMenuDivider(),
+                  choice('language-zh-cn', '简体中文', Icons.language_outlined),
+                  choice('language-en', 'English', Icons.language_outlined),
+                  const PopupMenuDivider(),
+                  if (widget.devicePreferencesBuilder != null)
+                    choice('device', nl('设备偏好', 'Device preferences'),
+                        Icons.tune_rounded),
+                  choice('version', nl('版本与下载', 'Version and downloads'),
+                      Icons.info_outline_rounded),
+                ],
+            onSelected: (value) {
+              if (value.startsWith('theme-')) {
+                final theme = switch (value) {
+                  'theme-light' => ThemeMode.light,
+                  'theme-dark' => ThemeMode.dark,
+                  _ => ThemeMode.system,
+                };
+                if (widget.onTheme != null) {
+                  widget.onTheme!(theme);
+                } else {
+                  unawaited(MyTheme.changeDarkMode(theme));
+                }
+              } else if (value.startsWith('language-')) {
+                final language = value.substring('language-'.length);
+                if (widget.onLanguage != null) {
+                  widget.onLanguage!(language);
+                } else {
+                  unawaited(setNestLinkLanguage(language));
+                }
+              } else if (value == 'device') {
+                unawaited(Navigator.of(context).push<void>(MaterialPageRoute(
+                    builder: (context) => Theme(
+                        data: homeDeskTheme(Theme.of(context)),
+                        child: Builder(
+                            builder: widget.devicePreferencesBuilder!)))));
+              } else if (value == 'version') {
+                if (widget.onVersion != null) {
+                  widget.onVersion!();
+                } else {
+                  unawaited(showNestLinkVersion(context));
+                }
+              }
+            }));
   }
 
   Widget _body(BuildContext context, Widget devices, HomeDeskAccount? account) {
@@ -206,7 +287,7 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.stretch,
                                       children: [
-                                        if (signedIn && phone)
+                                        if (mobile)
                                           Padding(
                                               padding:
                                                   const EdgeInsets.fromLTRB(
@@ -219,34 +300,41 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                                 const SizedBox(width: 10),
                                                 Expanded(
                                                     child: Text('NestLink',
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
                                                         style: t.sectionStyle)),
-                                                IconButton(
-                                                    key: const ValueKey(
-                                                        'mobile-account'),
-                                                    tooltip: nl(
-                                                        '账号与设置', 'Account and settings'),
-                                                    onPressed: showAccount,
-                                                    icon: CircleAvatar(
-                                                        radius: 16,
-                                                        backgroundColor:
-                                                            t.accentSoft,
-                                                        child: account?.displayName.trim().isNotEmpty == true
-                                                            ? Text(
-                                                                account!.displayName
-                                                                    .trim()
-                                                                    .characters
-                                                                    .first,
-                                                                textScaler: TextScaler
-                                                                    .noScaling,
-                                                                style: TextStyle(
-                                                                    color: t
-                                                                        .accentText,
-                                                                    fontWeight:
-                                                                        FontWeight
-                                                                            .w600))
-                                                            : Icon(Icons.person_outline_rounded,
-                                                                size: 20,
-                                                                color: t.accentText))),
+                                                _mobilePreferences(context,
+                                                    constraints.maxWidth),
+                                                if (signedIn && phone)
+                                                  IconButton(
+                                                      key: const ValueKey(
+                                                          'mobile-account'),
+                                                      tooltip: nl('账号与设置',
+                                                          'Account and settings'),
+                                                      onPressed: showAccount,
+                                                      icon: CircleAvatar(
+                                                          radius: 16,
+                                                          backgroundColor:
+                                                              t.accentSoft,
+                                                          child: account
+                                                                      ?.displayName
+                                                                      .trim()
+                                                                      .isNotEmpty ==
+                                                                  true
+                                                              ? Text(
+                                                                  account!
+                                                                      .displayName
+                                                                      .trim()
+                                                                      .characters
+                                                                      .first,
+                                                                  textScaler:
+                                                                      TextScaler
+                                                                          .noScaling,
+                                                                  style: TextStyle(
+                                                                      color: t.accentText,
+                                                                      fontWeight: FontWeight.w600))
+                                                              : Icon(Icons.person_outline_rounded, size: 20, color: t.accentText))),
                                               ])),
                                         if ((signedIn ||
                                                 index ==

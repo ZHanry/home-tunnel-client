@@ -13,7 +13,11 @@ class NestLinkMobileHome extends StatelessWidget {
   final ValueChanged<String> onConnect;
   final WidgetBuilder servicesBuilder, recentBuilder;
   final WidgetBuilder? localBuilder;
+  final WidgetBuilder? devicePreferencesBuilder;
   final VoidCallback? onNetworkSettings;
+  final ValueChanged<ThemeMode>? onTheme;
+  final ValueChanged<String>? onLanguage;
+  final VoidCallback? onVersion;
   const NestLinkMobileHome({
     super.key,
     required this.account,
@@ -22,7 +26,11 @@ class NestLinkMobileHome extends StatelessWidget {
     required this.servicesBuilder,
     required this.recentBuilder,
     this.localBuilder,
+    this.devicePreferencesBuilder,
     this.onNetworkSettings,
+    this.onTheme,
+    this.onLanguage,
+    this.onVersion,
   });
 
   @override
@@ -41,8 +49,12 @@ class NestLinkMobileHome extends StatelessWidget {
               recentBuilder: recentBuilder,
               servicesBuilder: servicesBuilder,
               localBuilder: localBuilder,
+              devicePreferencesBuilder: devicePreferencesBuilder,
               statusBuilder: (_) => const SizedBox.shrink(),
               onNetworkSettings: onNetworkSettings,
+              onTheme: onTheme,
+              onLanguage: onLanguage,
+              onVersion: onVersion,
               onConnect: onConnect)));
 }
 
