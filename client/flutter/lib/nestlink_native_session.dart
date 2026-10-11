@@ -5,15 +5,17 @@ import 'homedesk_tunnel_api.dart';
 import 'models/platform_model.dart';
 import 'nestlink_browser_host.dart';
 import 'nestlink_native_authorization.dart';
+import 'nestlink_native_status.dart';
 
 /// One foreground account owns native remote authorization. Tunnel Agents have their own credentials.
 class NestLinkNativeSession {
   final HomeTunnelApi api;
+  final void Function(NestLinkNativeStatus)? onStatus;
   Timer? _timer;
   WebSocket? _socket;
   bool _closed = false, _busy = false;
   DateTime _lastBinding = DateTime.fromMillisecondsSinceEpoch(0);
-  String message = '';
+  NestLinkNativeStatus status = NestLinkNativeStatus.idle;
   NestLinkBrowserHost? _browser;
   late final _authorization = NestLinkNativeAuthorization(
       ready: bind.mainNestlinkAccountReady,
@@ -21,9 +23,18 @@ class NestLinkNativeSession {
           origin: auth['origin']!,
           deviceId: auth['device_id']!,
           accessToken: auth['access_token']!),
-      clear: bind.mainNestlinkAccountClear);
+      clear: bind.mainNestlinkAccountClear,
+      onStatus: _publishStatus);
   late final _authorizationChanged = _authorization.synchronize;
-  NestLinkNativeSession(this.api);
+  NestLinkNativeSession(this.api, {this.onStatus});
+
+  void _publishStatus(NestLinkNativeStatus value) {
+    if (_closed || !api.isSignedIn || status == value) return;
+    status = value;
+    try {
+      onStatus?.call(value);
+    } catch (_) {/* Presentation observers cannot change authorization. */}
+  }
 
   Future<void> start() async {
     api.onGuiAuthorizationChanged = _authorizationChanged;
@@ -35,6 +46,9 @@ class NestLinkNativeSession {
   Future<void> _sync() async {
     if (_closed || _busy || !api.isSignedIn) return;
     _busy = true;
+    if (status == NestLinkNativeStatus.idle) {
+      _publishStatus(NestLinkNativeStatus.connecting);
+    }
     try {
       if (api.guiDeviceId.isEmpty) {
         final identity = jsonDecode(await bind.mainNestlinkInstallation())
@@ -51,9 +65,10 @@ class NestLinkNativeSession {
           const Duration(seconds: 30)) {
         final binding = jsonDecode(await bind.mainNestlinkBindingProof())
             as Map<String, dynamic>;
-        if (binding['error'] != null)
-          throw HomeTunnelApiException(
-              binding['error'] as String, 'REMOTE_NOT_READY');
+        if (binding['error'] != null) {
+          throw NestLinkNativeException(
+              classifyNestLinkNativeError(binding['error'] as String));
+        }
         if (_closed) return;
         await api.publishNativeBinding(binding);
         _lastBinding = DateTime.now();
@@ -101,11 +116,11 @@ class NestLinkNativeSession {
           _browser = null;
         }
       }
-      message = '';
-    } on HomeTunnelApiException catch (error) {
-      message = error.message;
-    } catch (_) {
-      message = '远控服务暂时未就绪，请检查服务配置和网络。';
+      _publishStatus(bind.mainNestlinkAccountReady()
+          ? NestLinkNativeStatus.ready
+          : NestLinkNativeStatus.connecting);
+    } catch (error) {
+      _publishStatus(classifyNestLinkNativeFailure(error));
     } finally {
       _busy = false;
     }
@@ -113,9 +128,12 @@ class NestLinkNativeSession {
 
   void close() {
     if (_closed) return;
+    _publishStatus(NestLinkNativeStatus.idle);
+    status = NestLinkNativeStatus.idle;
     _closed = true;
-    if (identical(api.onGuiAuthorizationChanged, _authorizationChanged))
+    if (identical(api.onGuiAuthorizationChanged, _authorizationChanged)) {
       api.onGuiAuthorizationChanged = null;
+    }
     _timer?.cancel();
     _browser?.close();
     _browser = null;

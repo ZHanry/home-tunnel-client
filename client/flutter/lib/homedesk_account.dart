@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'homedesk_tunnel_api.dart';
+import 'nestlink_native_status.dart';
 
 class HomeDeskAccount extends ChangeNotifier {
   HomeTunnelApi? _api;
@@ -13,6 +14,7 @@ class HomeDeskAccount extends ChangeNotifier {
   bool _loading = false;
   bool _queued = false;
   String _message = '';
+  NestLinkNativeStatus _nativeStatus = NestLinkNativeStatus.idle;
   int _generation = 0;
   Timer? _timer;
   Future<void> Function(HomeTunnelDevice)? editDevice;
@@ -31,6 +33,14 @@ class HomeDeskAccount extends ChangeNotifier {
       signedIn ? Map.unmodifiable(_bindings) : const {};
   bool get loading => _loading;
   String get message => _message;
+  NestLinkNativeStatus get nativeStatus =>
+      signedIn ? _nativeStatus : NestLinkNativeStatus.idle;
+
+  void publishNativeStatus(HomeTunnelApi owner, NestLinkNativeStatus status) {
+    if (!signedIn || !identical(_api, owner) || _nativeStatus == status) return;
+    _nativeStatus = status;
+    notifyListeners();
+  }
 
   bool needsDeviceDeletionReview(HomeTunnelApi? owner, String id) =>
       signedIn && identical(_api, owner) && _deviceDeletionReviews.contains(id);
@@ -63,6 +73,7 @@ class HomeDeskAccount extends ChangeNotifier {
       _bindings = {};
       _deviceDeletionReviews.clear();
       _message = '';
+      _nativeStatus = NestLinkNativeStatus.idle;
       _loading = false;
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(seconds: 10), (_) => refresh());
@@ -102,6 +113,7 @@ class HomeDeskAccount extends ChangeNotifier {
     _deviceDeletionReviews.clear();
     _localDeviceId = '';
     _message = '';
+    _nativeStatus = NestLinkNativeStatus.idle;
     _loading = false;
     editDevice = null;
     acceptCatalog = null;
@@ -202,6 +214,7 @@ class HomeDeskAccount extends ChangeNotifier {
     _bindings = {};
     _deviceDeletionReviews.clear();
     _onSignOut = null;
+    _nativeStatus = NestLinkNativeStatus.idle;
     manageDeviceServices = null;
     deleteDevice = null;
     super.dispose();

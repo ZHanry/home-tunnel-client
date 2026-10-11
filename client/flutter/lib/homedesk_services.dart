@@ -89,6 +89,10 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
                 _changeState(() => _applyCatalog(value));
               }
             });
+        final native = _nativeSession;
+        if (native != null && identical(native.api, api)) {
+          widget.account!.publishNativeStatus(api, native.status);
+        }
       } else {
         widget.account!.clear(_publishedApi);
         _publishedApi = null;
@@ -447,7 +451,11 @@ class _HomeDeskServicesState extends State<HomeDeskServices> {
         widget.readOption == null &&
         _current(api, generation)) {
       if (_nativeSession == null) {
-        final native = NestLinkNativeSession(api);
+        final native = NestLinkNativeSession(api, onStatus: (status) {
+          if (_current(api, generation)) {
+            widget.account?.publishNativeStatus(api, status);
+          }
+        });
         _nativeSession = native;
         api.onSessionClosed = () {
           native.close();

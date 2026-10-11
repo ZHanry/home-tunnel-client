@@ -2393,7 +2393,7 @@ pub(super) mod async_tasks {
                             "binding" => crate::nestlink_auth::binding_proof().await,
                             _ => hbb_common::bail!("账号授权操作无效"),
                         }
-                    }.await.map_err(|error: hbb_common::anyhow::Error| error.to_string());
+                    }.await.map_err(|error: hbb_common::anyhow::Error| crate::nestlink_auth::native_failure_code(&error).to_owned());
                     let _ = response.send(result);
                 }
                 Some(FlutterAsyncTask::QueryOnlines(ids)) => {

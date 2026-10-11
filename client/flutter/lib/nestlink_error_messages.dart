@@ -1,9 +1,13 @@
 import 'homedesk_credentials.dart';
 import 'homedesk_tunnel_api.dart';
 import 'nestlink_locale.dart';
+import 'nestlink_native_status.dart';
 
 // Presentation only: protocol exceptions and their wire codes stay unchanged.
 String nestlinkErrorMessage(Object error, {String? fallback}) {
+  if (error is NestLinkNativeException) {
+    return '${error.status.title(nestlinkEnglish)}. ${error.status.advice(nestlinkEnglish)}';
+  }
   String? code;
   String? message;
   if (error is HomeTunnelApiException) {

@@ -10,6 +10,7 @@ import 'nestlink_locale.dart';
 import 'nestlink_browser_host.dart';
 import 'nestlink_dialog.dart';
 import 'nestlink_remote_settings.dart';
+import 'nestlink_native_status.dart';
 
 export 'nestlink_remote_settings.dart' show NestLinkRemoteSettings;
 
@@ -141,10 +142,24 @@ class NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Expanded(child: Text(title, style: t.sectionStyle)),
-                      if (trailing != null) trailing,
-                    ]),
+                    LayoutBuilder(builder: (context, constraints) {
+                      final heading = Text(title, style: t.sectionStyle);
+                      if (trailing == null) return heading;
+                      if (constraints.maxWidth < 500 ||
+                          MediaQuery.textScalerOf(context).scale(1) > 1.35) {
+                        return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              heading,
+                              const SizedBox(height: 8),
+                              trailing,
+                            ]);
+                      }
+                      return Row(children: [
+                        Expanded(child: heading),
+                        trailing,
+                      ]);
+                    }),
                     if (description != null) ...[
                       const SizedBox(height: 6),
                       Text(description, style: t.auxiliaryStyle),
@@ -238,7 +253,8 @@ class NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
     final local = _panel(context,
         key: const ValueKey('remote-local-panel'),
         title: nl('本设备', 'This device'),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        trailing:
+            Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
           HomeDeskBadge(
               localBinding?.online == true
                   ? nl('在线', 'Online')
@@ -351,6 +367,44 @@ class NestLinkRemoteWorkspaceState extends State<NestLinkRemoteWorkspace> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                  if (widget.account?.nativeStatus.isFailure == true ||
+                      widget.account?.nativeStatus ==
+                          NestLinkNativeStatus.connecting) ...[
+                    Container(
+                        key: const ValueKey('remote-native-status'),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                            color: t.sunken,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: t.border)),
+                        child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                  widget.account!.nativeStatus.isFailure
+                                      ? Icons.warning_amber_rounded
+                                      : Icons.sync_rounded,
+                                  size: 20,
+                                  color: widget.account!.nativeStatus.isFailure
+                                      ? t.warning
+                                      : t.secondary),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                    Text(widget.account!.nativeStatus
+                                        .title(nestlinkEnglish)),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                        widget.account!.nativeStatus
+                                            .advice(nestlinkEnglish),
+                                        style: t.auxiliaryStyle),
+                                  ])),
+                            ])),
+                    const SizedBox(height: 16),
+                  ],
                   if (!mobile || widget.localHost != null) ...[
                     local,
                     const SizedBox(height: 16),

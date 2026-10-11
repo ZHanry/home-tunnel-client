@@ -48,6 +48,50 @@ impl fmt::Display for AuthorizationHttpError {
 }
 impl std::error::Error for AuthorizationHttpError {}
 
+/// Internal Flutter bridge diagnostics. Only fixed codes leave the native
+/// account task; reqwest URLs and error-chain contents stay in memory.
+pub fn native_failure_code(error: &hbb_common::anyhow::Error) -> &'static str {
+    if let Some(http) = error.downcast_ref::<AuthorizationHttpError>() {
+        return match http.0 {
+            401 => "NESTLINK_NATIVE_AUTH_V1:HTTP_401",
+            403 => "NESTLINK_NATIVE_AUTH_V1:HTTP_403",
+            _ => "NESTLINK_NATIVE_AUTH_V1:HTTP_OTHER",
+        };
+    }
+    if let Some(request) = error.downcast_ref::<reqwest::Error>() {
+        if request.is_timeout() { return "NESTLINK_NATIVE_AUTH_V1:TIMEOUT"; }
+        if request.is_decode() { return "NESTLINK_NATIVE_AUTH_V1:INVALID_RESPONSE"; }
+    }
+    if error.downcast_ref::<serde_json::Error>().is_some() {
+        return "NESTLINK_NATIVE_AUTH_V1:INVALID_RESPONSE";
+    }
+    // reqwest's top-level Display omits TLS causes. Inspect its source chain
+    // without exporting any text; only explicit known failures have a category.
+    for cause in error.chain() {
+        let message = cause.to_string();
+        if message.contains("Unknown TLS backend passed to `use_preconfigured_tls`")
+            || message.contains("Unknown TLS backend passed to use_preconfigured_tls") {
+            return "NESTLINK_NATIVE_AUTH_V1:TLS_CONFIGURATION";
+        }
+        if message.contains("rustls-platform-verifier not initialized") {
+            return "NESTLINK_NATIVE_AUTH_V1:PLATFORM_VERIFIER";
+        }
+        if message.contains("invalid peer certificate") || message.contains("certificate verify failed") {
+            return "NESTLINK_NATIVE_AUTH_V1:CERTIFICATE_REJECTED";
+        }
+        if matches!(message.as_str(), "自建服务登录信息无效" | "自建服务没有返回有效的设备授权" | "服务返回了超出限制的数据") {
+            return "NESTLINK_NATIVE_AUTH_V1:INVALID_RESPONSE";
+        }
+        if matches!(message.as_str(), "请先登录自建服务" | "账号授权已被更新或退出" | "账号授权已结束") {
+            return "NESTLINK_NATIVE_AUTH_V1:AUTH_REQUIRED";
+        }
+    }
+    if error.downcast_ref::<reqwest::Error>().is_some() {
+        return "NESTLINK_NATIVE_AUTH_V1:NETWORK";
+    }
+    "NESTLINK_NATIVE_AUTH_V1:UNKNOWN"
+}
+
 fn http_client() -> ResultType<reqwest::Client> {
     let builder = reqwest::Client::builder().https_only(true).no_proxy()
         .redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(5));
@@ -485,6 +529,57 @@ pub async fn accept(login: &hbb_common::message_proto::LoginRequest) -> ResultTy
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_diagnostics_preserve_http_and_typed_response_categories() {
+        for (status, code) in [(401, "HTTP_401"), (403, "HTTP_403"), (503, "HTTP_OTHER")] {
+            let error = hbb_common::anyhow::Error::from(AuthorizationHttpError(status))
+                .context("fake-token https://fixture.invalid/private");
+            assert_eq!(native_failure_code(&error), format!("NESTLINK_NATIVE_AUTH_V1:{code}"));
+        }
+        let json = serde_json::from_slice::<Presence>(b"invalid fake-token").err().unwrap();
+        assert_eq!(native_failure_code(&json.into()), "NESTLINK_NATIVE_AUTH_V1:INVALID_RESPONSE");
+        let builder = reqwest::Client::builder().use_preconfigured_tls(()).build().unwrap_err();
+        assert_eq!(native_failure_code(&builder.into()), "NESTLINK_NATIVE_AUTH_V1:TLS_CONFIGURATION");
+    }
+
+    #[test]
+    fn native_diagnostics_inspect_explicit_causes_without_exporting_chain_text() {
+        for (cause, code) in [
+            ("invalid peer certificate: UnknownIssuer", "CERTIFICATE_REJECTED"),
+            ("rustls-platform-verifier not initialized", "PLATFORM_VERIFIER"),
+            ("unrecognized private failure fake-token", "UNKNOWN"),
+        ] {
+            let error = hbb_common::anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::Other, cause))
+                .context("error sending request for url https://fixture.invalid?token=fake-token");
+            let actual = native_failure_code(&error);
+            assert_eq!(actual, format!("NESTLINK_NATIVE_AUTH_V1:{code}"));
+            assert!(!actual.contains("fixture.invalid") && !actual.contains("fake-token"));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_diagnostics_classify_real_reqwest_timeout_and_connection_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_millis(40)).build().unwrap();
+        let timeout = client.get(format!("http://{address}/?token=fake-token")).send().await.unwrap_err();
+        assert_eq!(native_failure_code(&timeout.into()), "NESTLINK_NATIVE_AUTH_V1:TIMEOUT");
+        drop(listener);
+        // Windows may retry closed-port connections longer than a short
+        // timeout. Accept then drop a fresh loopback connection instead.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let reset = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            drop(stream);
+        });
+        let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+        let disconnected = client.get(format!("http://{address}/?token=fake-token")).send().await.unwrap_err();
+        reset.await.unwrap();
+        assert!(!disconnected.is_timeout());
+        assert_eq!(native_failure_code(&disconnected.into()), "NESTLINK_NATIVE_AUTH_V1:NETWORK");
+    }
 
     static AUTH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     struct AuthTest(std::sync::MutexGuard<'static, ()>);
