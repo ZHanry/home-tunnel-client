@@ -1350,12 +1350,10 @@ class HomeTunnelApi {
     // Every native/browser caller shares the refresh AND native installation.
     // The new token must not escape while its replacement is still in IPC.
     final pending = _guiRefreshing ??= () async {
-      var rotating = false;
-      try {
-        if (_guiAccessExpires == null ||
-            _guiAccessExpires!.isBefore(
-                DateTime.now().toUtc().add(const Duration(seconds: 30)))) {
-          rotating = true;
+      if (_guiAccessExpires == null ||
+          _guiAccessExpires!.isBefore(
+              DateTime.now().toUtc().add(const Duration(seconds: 30)))) {
+        try {
           final refresh = _guiRefresh;
           _guiRefresh = null;
           if (refresh == null)
@@ -1365,19 +1363,22 @@ class HomeTunnelApi {
               body: {'refresh_token': refresh, 'client_type': _clientType}));
           _checkGeneration(generation);
           _setGuiSession(value);
+        } catch (_) {
+          // A failed refresh cannot reuse its consumed token. A late failure
+          // from the previous account cannot revoke a new login.
+          if (generation == _generation) await revoke();
+          rethrow;
         }
-        _checkGeneration(generation);
-        await onGuiAuthorizationChanged?.call({
-          'origin': base.origin,
-          'device_id': _guiDeviceId,
-          'access_token': _guiAccess!
-        });
-        _checkGeneration(generation);
-      } catch (_) {
-        // A late callback from the previous account cannot revoke a new login.
-        if (rotating && generation == _generation) await revoke();
-        rethrow;
       }
+      _checkGeneration(generation);
+      // Native confirmation can fail after the server committed rotation.
+      // Keep that new pair for retry, while the error still blocks consumers.
+      await onGuiAuthorizationChanged?.call({
+        'origin': base.origin,
+        'device_id': _guiDeviceId,
+        'access_token': _guiAccess!
+      });
+      _checkGeneration(generation);
     }();
     try {
       await pending;

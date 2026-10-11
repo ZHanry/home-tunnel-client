@@ -94,21 +94,186 @@ Future<void> main() async {
     await native.close();
   });
 
-  for (final code in ['REMOTE_NOT_READY', 'REQUEST_TIMEOUT']) {
+  for (final code in [
+    'REMOTE_NOT_READY',
+    'REQUEST_TIMEOUT',
+    'NETWORK_ERROR',
+    'TLS_ERROR'
+  ]) {
     await test(
-        'failed native synchronization after refresh is fail closed: $code',
+        'failed native synchronization preserves committed GUI rotation: $code',
         (h) async {
       final api = await signedInGui(h);
-      api.onGuiAuthorizationChanged = (_) async {
+      final attempted = <String>[];
+      api.onGuiAuthorizationChanged = (auth) async {
+        attempted.add(auth['access_token']!);
         throw HomeTunnelApiException('fixture failure', code);
       };
       await fixture.rejects(() async => api.browserHostInbox(), code);
       fixture.expect(
-          !api.isSignedIn &&
+          api.isSignedIn &&
+              api.guiDeviceId == fixture.uuid(17) &&
               !h.seen.any((row) => row['path'] == '/api/v2/browser/hosts/poll'),
-          'a failed rotated authorization never escapes to the browser');
+          'native failure blocks the browser while keeping the management login');
+      api.onGuiAuthorizationChanged = (auth) async {
+        attempted.add(auth['access_token']!);
+      };
+      await api.browserHostInbox();
+      final refreshes =
+          h.seen.where((row) => row['path'] == '/api/v2/auth/refresh').toList();
+      fixture.expect(
+          api.isSignedIn &&
+              attempted.length == 2 &&
+              attempted.every((token) => token == fixture.nextAccess) &&
+              refreshes.length == 1 &&
+              (refreshes.single['body'] as Map)['refresh_token'] ==
+                  fixture.oldRefresh &&
+              h.seen.last['token'] == 'Bearer ${fixture.nextAccess}',
+          'retry installs the committed new access token without consuming refresh again');
     });
   }
+
+  await test('native retains an old ready token but retry confirms the new one',
+      (h) async {
+    final api = await signedInGui(h);
+    var active = fixture.oldAccess, installs = 0;
+    final retryStarted = Completer<void>(), retryFinished = Completer<void>();
+    final native = NestLinkNativeAuthorization(
+        ready: () => active.isNotEmpty,
+        install: (auth) async {
+          installs++;
+          if (installs == 1) return 'fixture temporary native failure';
+          retryStarted.complete();
+          await retryFinished.future;
+          active = auth['access_token']!;
+          return '';
+        },
+        clear: () async {
+          active = '';
+          return '';
+        });
+    api.onGuiAuthorizationChanged = native.synchronize;
+    await fixture.rejects(
+        () async => api.browserHostInbox(), 'REMOTE_NOT_READY');
+    fixture.expect(
+        api.isSignedIn &&
+            active == fixture.oldAccess &&
+            !h.seen.any((row) => row['path'] == '/api/v2/browser/hosts/poll'),
+        'old native readiness does not authorize the unconfirmed new GUI token');
+    final browser = api.browserHostInbox();
+    await retryStarted.future;
+    var delivered = false;
+    final other = api.nativeAuthorization().then((auth) {
+      delivered = true;
+      return auth;
+    });
+    await Future<void>.delayed(Duration.zero);
+    fixture.expect(
+        !delivered &&
+            installs == 2 &&
+            !h.seen.any((row) => row['path'] == '/api/v2/browser/hosts/poll'),
+        'concurrent retry consumers still wait for one native confirmation');
+    retryFinished.complete();
+    await browser;
+    fixture.expect((await other)['access_token'] == fixture.nextAccess,
+        'the shared retry releases only the confirmed replacement');
+    fixture.expect(
+        installs == 2 &&
+            active == fixture.nextAccess &&
+            h.seen
+                    .where((row) => row['path'] == '/api/v2/auth/refresh')
+                    .length ==
+                1,
+        'the failed install is not cached and the same replacement is retried');
+    await native.close();
+  });
+
+  await test(
+      'a later GUI rotation uses the new refresh pair retained on failure',
+      (h) async {
+    final api = await signedInGui(h);
+    var rotations = 0;
+    h.overrides['/api/v2/auth/refresh'] = (request, _) {
+      rotations++;
+      return fixture.jsonResponse(request, {
+        'access_token':
+            rotations == 1 ? fixture.nextAccess : 'fixture-third-access-token',
+        'refresh_token': rotations == 1
+            ? fixture.nextRefresh
+            : 'fixture-third-refresh-token',
+        'access_expires_at': rotations == 1
+            ? DateTime.now()
+                .toUtc()
+                .add(const Duration(seconds: 5))
+                .toIso8601String()
+            : '2030-01-01T00:00:00Z',
+      });
+    };
+    api.onGuiAuthorizationChanged = (_) async {
+      throw const HomeTunnelApiException(
+          'fixture temporary failure', 'REMOTE_NOT_READY');
+    };
+    await fixture.rejects(
+        () async => api.browserHostInbox(), 'REMOTE_NOT_READY');
+    api.onGuiAuthorizationChanged = (auth) async {
+      fixture.expect(auth['access_token'] == 'fixture-third-access-token',
+          'only the newest committed replacement reaches native');
+    };
+    await api.browserHostInbox();
+    final refreshes =
+        h.seen.where((row) => row['path'] == '/api/v2/auth/refresh').toList();
+    fixture.expect(
+        api.isSignedIn &&
+            rotations == 2 &&
+            (refreshes[0]['body'] as Map)['refresh_token'] ==
+                fixture.oldRefresh &&
+            (refreshes[1]['body'] as Map)['refresh_token'] ==
+                fixture.nextRefresh &&
+            h.seen.last['token'] == 'Bearer fixture-third-access-token',
+        'the retained new refresh token rotates again without reusing its predecessor');
+  });
+
+  for (final status in [401, 503]) {
+    await test('failed GUI refresh still closes its current login: $status',
+        (h) async {
+      final api = await signedInGui(h);
+      h.overrides['/api/v2/auth/refresh'] = (request, _) =>
+          fixture.jsonResponse(request,
+              {'error_code': status == 401 ? 'SESSION_REVOKED' : 'UNAVAILABLE'},
+              status: status);
+      var installs = 0;
+      api.onGuiAuthorizationChanged = (_) async {
+        installs++;
+      };
+      await fixture.rejects(() async => api.browserHostInbox(),
+          status == 401 ? 'SESSION_REVOKED' : 'HTTP_ERROR');
+      fixture.expect(
+          !api.isSignedIn &&
+              api.guiDeviceId.isEmpty &&
+              installs == 0 &&
+              !h.seen.any((row) => row['path'] == '/api/v2/browser/hosts/poll'),
+          'uncommitted or revoked GUI refresh remains fail closed');
+    });
+  }
+
+  await test('a malformed GUI refresh cannot preserve a partial new pair',
+      (h) async {
+    final api = await signedInGui(h);
+    h.overrides['/api/v2/auth/refresh'] =
+        (request, _) => fixture.jsonResponse(request, {
+              'access_token': fixture.nextAccess,
+              'refresh_token': 'invalid',
+              'access_expires_at': '2030-01-01T00:00:00Z'
+            });
+    var installs = 0;
+    api.onGuiAuthorizationChanged = (_) async {
+      installs++;
+    };
+    await fixture.rejects(
+        () async => api.browserHostInbox(), 'RESPONSE_INVALID');
+    fixture.expect(!api.isSignedIn && installs == 0,
+        'all GUI session fields must be accepted before native recovery applies');
+  });
 
   await test('late old callback failure cannot revoke a new management login',
       (h) async {
