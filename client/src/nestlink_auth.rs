@@ -39,6 +39,15 @@ struct Presence {
 #[derive(Clone)]
 struct ValidatedAuth { request: AuthRequest, presence: Presence, valid_until: Instant, revision: u64, epoch: u64 }
 
+#[derive(Debug)]
+struct AuthorizationHttpError(u16);
+impl fmt::Display for AuthorizationHttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "账号或远控许可已失效（HTTP {}）", self.0)
+    }
+}
+impl std::error::Error for AuthorizationHttpError {}
+
 fn http_client() -> ResultType<reqwest::Client> {
     let builder = reqwest::Client::builder().https_only(true).no_proxy()
         .redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(5));
@@ -52,7 +61,7 @@ async fn request(auth: &AuthRequest, method: reqwest::Method, path: &str, body: 
     let mut query = http_client()?.request(method, format!("{}{}", auth.origin, path)).bearer_auth(&auth.access_token);
     if let Some(body) = body { query = query.json(&body); }
     let response = query.send().await?;
-    if !response.status().is_success() { bail!("账号或远控许可已失效（HTTP {}）", response.status().as_u16()); }
+    if !response.status().is_success() { return Err(AuthorizationHttpError(response.status().as_u16()).into()); }
     if response.status() == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
     let mut response = response;
     if response.content_length().is_some_and(|length| length > 64 * 1024) { bail!("服务返回了超出限制的数据"); }
@@ -136,13 +145,7 @@ fn clear_revision(revision: u64) {
     clear_if_revision(revision, true);
 }
 fn clear_if_revision(revision: u64, require_installed: bool) {
-    {
-        let mut auth = AUTH.write().unwrap();
-        if REVISION.load(Ordering::SeqCst) != revision || (require_installed && auth.as_ref().map(|auth| auth.revision) != Some(revision)) { return; }
-        *auth = None;
-        REVISION.fetch_add(1, Ordering::SeqCst);
-        EPOCH.fetch_add(1, Ordering::SeqCst);
-    }
+    if !invalidate_revision(revision, require_installed) { return; }
     AUTH_CHANGED.notify_waiters();
     #[cfg(target_os = "android")]
     if let Err(error) = scrap::android::call_main_service_set_by_name("account_revoked", None, None) {
@@ -151,6 +154,25 @@ fn clear_if_revision(revision: u64, require_installed: bool) {
     AUTH_UPDATES.send_replace(REVISION.load(Ordering::SeqCst));
     #[cfg(not(target_os = "ios"))]
     crate::rendezvous_mediator::RendezvousMediator::restart();
+}
+fn invalidate_revision(revision: u64, require_installed: bool) -> bool {
+    let mut auth = AUTH.write().unwrap();
+    if REVISION.load(Ordering::SeqCst) != revision || (require_installed && auth.as_ref().map(|auth| auth.revision) != Some(revision)) { return false; }
+    *auth = None;
+    REVISION.fetch_add(1, Ordering::SeqCst);
+    EPOCH.fetch_add(1, Ordering::SeqCst);
+    true
+}
+fn store_validated_auth(current: &mut Option<ValidatedAuth>, request: AuthRequest, presence: Presence, revision: u64) -> bool {
+    let changed = current.as_ref().map_or(true, |old| old.request.origin != request.origin || old.presence != presence);
+    let epoch = if changed { EPOCH.fetch_add(1, Ordering::SeqCst) + 1 } else { EPOCH.load(Ordering::SeqCst) };
+    *current = Some(ValidatedAuth { request, presence, valid_until: Instant::now() + Duration::from_secs(15), revision, epoch });
+    changed
+}
+fn renew_presence_revision(revision: u64) {
+    if let Some(current) = AUTH.write().unwrap().as_mut() {
+        if current.revision == revision { current.valid_until = Instant::now() + Duration::from_secs(15); }
+    }
 }
 fn snapshot() -> ResultType<ValidatedAuth> {
     AUTH.read().unwrap().as_ref().filter(|auth| Instant::now() < auth.valid_until).cloned()
@@ -193,9 +215,7 @@ pub async fn install(auth: AuthRequest) -> ResultType<()> {
         return Err(anyhow!(error));
     }
     crate::homedesk_config::mark_profile_confirmed();
-    let changed = current.as_ref().map_or(true, |old| old.request.origin != auth.origin || old.presence != presence);
-    let epoch = if changed { EPOCH.fetch_add(1, Ordering::SeqCst) + 1 } else { EPOCH.load(Ordering::SeqCst) };
-    *current = Some(ValidatedAuth { request: auth, presence, valid_until: Instant::now() + Duration::from_secs(15), revision, epoch });
+    let changed = store_validated_auth(&mut current, auth, presence, revision);
     drop(current);
     AUTH_UPDATES.send_replace(revision);
     if changed {
@@ -209,14 +229,11 @@ pub async fn install(auth: AuthRequest) -> ResultType<()> {
             loop {
                 timer.tick().await;
                 let Ok(auth) = snapshot() else { continue; };
-                let result = request(&auth.request, reqwest::Method::GET, "/api/v2/remote/presence", None).await
+                let result = authorized_request(&auth, reqwest::Method::GET, "/api/v2/remote/presence", None).await
                     .and_then(|value| Ok(serde_json::from_value::<Presence>(value)?));
                 match result {
                     Ok(presence) if presence == auth.presence => {
-                        let mut current = AUTH.write().unwrap();
-                        if let Some(current) = current.as_mut() {
-                            if current.revision == auth.revision { current.valid_until = Instant::now() + Duration::from_secs(15); }
-                        }
+                        renew_presence_revision(auth.revision);
                     }
                     Ok(_) => clear_revision(auth.revision),
                     Err(error) => {
@@ -269,18 +286,53 @@ fn start_account_watch() {
 }
 
 async fn authorized_request(auth: &ValidatedAuth, method: reqwest::Method, path: &str, body: Option<serde_json::Value>) -> ResultType<serde_json::Value> {
-    match request(&auth.request, method.clone(), path, body.clone()).await {
+    authorized_request_using(auth, |request_auth| {
+        let method = method.clone();
+        let body = body.clone();
+        async move { request(&request_auth, method, path, body).await }
+    }).await
+}
+
+async fn replacement_after_401(auth: &ValidatedAuth, updates: &mut tokio::sync::watch::Receiver<u64>) -> ResultType<ValidatedAuth> {
+    // Refresh commits before Dart receives the response and installs over IPC.
+    // Only a server-validated replacement in the same authorization scope may
+    // retry. Waiting never renews the old presence lease or accepts its token.
+    let remaining = auth.valid_until.saturating_duration_since(Instant::now()).min(Duration::from_secs(2));
+    tokio::time::timeout(remaining, async {
+        loop {
+            let current = snapshot()?;
+            if current.epoch != auth.epoch || current.request.origin != auth.request.origin
+                || current.request.device_id != auth.request.device_id || current.presence != auth.presence {
+                bail!("账号授权已结束");
+            }
+            if current.revision != auth.revision && current.revision == REVISION.load(Ordering::SeqCst)
+                && current.request.access_token != auth.request.access_token {
+                return Ok(current);
+            }
+            updates.changed().await.map_err(|_| anyhow!("账号授权已结束"))?;
+        }
+    }).await.map_err(|_| anyhow!("账号授权轮换确认超时"))?
+}
+
+async fn authorized_request_using<F, Fut>(auth: &ValidatedAuth, mut send: F) -> ResultType<serde_json::Value>
+where F: FnMut(AuthRequest) -> Fut, Fut: std::future::Future<Output = ResultType<serde_json::Value>> {
+    let mut updates = subscribe();
+    match send(auth.request.clone()).await {
         Ok(value) if auth.epoch == EPOCH.load(Ordering::SeqCst) && ready() => Ok(value),
         Ok(_) => bail!("账号授权已结束"),
         Err(error) => {
-            // A refresh can invalidate the old token while the daemon's replacement is still in flight.
-            let mut updates = subscribe();
-            if REVISION.load(Ordering::SeqCst) != auth.revision && *updates.borrow() == auth.revision {
-                let _ = tokio::time::timeout(Duration::from_secs(6), updates.changed()).await;
+            if error.downcast_ref::<AuthorizationHttpError>().map(|value| value.0) != Some(401) {
+                return Err(error);
             }
-            let current = snapshot()?;
-            if current.epoch != auth.epoch || current.revision == auth.revision { return Err(error); }
-            request(&current.request, method, path, body).await
+            let current = match replacement_after_401(auth, &mut updates).await {
+                Ok(current) => current,
+                Err(_) => return Err(error),
+            };
+            match send(current.request.clone()).await {
+                Ok(value) if current.epoch == EPOCH.load(Ordering::SeqCst) && ready() => Ok(value),
+                Ok(_) => bail!("账号授权已结束"),
+                Err(error) => Err(error),
+            }
         }
     }
 }
@@ -433,6 +485,163 @@ pub async fn accept(login: &hbb_common::message_proto::LoginRequest) -> ResultTy
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static AUTH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    struct AuthTest(std::sync::MutexGuard<'static, ()>);
+    impl AuthTest {
+        fn start() -> (Self, ValidatedAuth) {
+            let test = Self(AUTH_TEST_LOCK.lock().unwrap());
+            let presence = Presence {
+                device_id: "test-device".into(), session_id: "test-session".into(), server: "test-server".into(),
+                key: "test-key".into(), key_sha256: "test-hash".into(), family_cidr: "test-family".into(),
+                source_cidr: "test-source".into(), permit_trust: Trust {
+                    algorithm: "Ed25519".into(), public_key: "test-public-key".into(), realm: "test-realm".into(),
+                },
+            };
+            let old = ValidatedAuth { request: AuthRequest {
+                origin: "https://test.example.com".into(), device_id: presence.device_id.clone(), access_token: "test-old-token".into(),
+            }, presence, valid_until: Instant::now() + Duration::from_secs(15), revision: 10, epoch: 20 };
+            *AUTH.write().unwrap() = Some(old.clone());
+            REVISION.store(old.revision, Ordering::SeqCst);
+            EPOCH.store(old.epoch, Ordering::SeqCst);
+            AUTH_UPDATES.send_replace(old.revision);
+            (test, old)
+        }
+        fn rotate(old: &ValidatedAuth) -> ValidatedAuth {
+            let revision = REVISION.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut request = old.request.clone(); request.access_token = "test-new-token".into();
+            assert!(!store_validated_auth(&mut AUTH.write().unwrap(), request, old.presence.clone(), revision));
+            AUTH_UPDATES.send_replace(revision);
+            snapshot().unwrap()
+        }
+    }
+    impl Drop for AuthTest {
+        fn drop(&mut self) {
+            *AUTH.write().unwrap() = None;
+            REVISION.fetch_add(1, Ordering::SeqCst); EPOCH.fetch_add(1, Ordering::SeqCst);
+            AUTH_UPDATES.send_replace(REVISION.load(Ordering::SeqCst));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn token_rotation_committed_before_response_retries_only_verified_same_scope() {
+        let (_test, old) = AuthTest::start();
+        let (rotated, response_pending) = tokio::sync::oneshot::channel();
+        let mut rotated = Some(rotated); let mut requests = Vec::new();
+        let pending = authorized_request_using(&old, |request| {
+            requests.push(request.access_token.clone());
+            let old_token = request.access_token == "test-old-token";
+            if old_token { rotated.take().unwrap().send(()).unwrap(); }
+            async move {
+                if old_token { Err(AuthorizationHttpError(401).into()) } else { Ok(serde_json::json!({"accepted": true})) }
+            }
+        });
+        let response = async {
+            response_pending.await.unwrap();
+            // The server has invalidated the old token, while Dart has not yet
+            // received the new one. A pending revision alone is not a grant.
+            REVISION.fetch_add(1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            assert_eq!(snapshot().unwrap().request.access_token, "test-old-token");
+            AuthTest::rotate(&old)
+        };
+        let (result, current) = tokio::join!(pending, response);
+        assert_eq!(result.unwrap(), serde_json::json!({"accepted": true}));
+        assert_eq!(requests, ["test-old-token", "test-new-token"]);
+        assert_eq!(current.epoch, old.epoch);
+        assert!(!invalidate_revision(old.revision, true));
+        assert_eq!(snapshot().unwrap().revision, current.revision);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stale_presence_success_cannot_renew_replacement_revision() {
+        let (_test, old) = AuthTest::start();
+        let current = AuthTest::rotate(&old); let deadline = current.valid_until;
+        let result = authorized_request_using(&old, |_| async { Ok(serde_json::json!({"accepted": true})) }).await;
+        assert!(result.is_ok());
+        renew_presence_revision(old.revision);
+        assert_eq!(snapshot().unwrap().valid_until, deadline);
+        assert_eq!(snapshot().unwrap().epoch, old.epoch);
+        assert!(!invalidate_revision(old.revision, true));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn logout_and_foreign_authorization_end_inflight_old_401_without_retry() {
+        for change in ["logout", "origin", "device", "session", "epoch"] {
+            let (_test, old) = AuthTest::start();
+            let (rejected, reject_pending) = tokio::sync::oneshot::channel();
+            let mut rejected = Some(rejected); let mut requests = 0;
+            let pending = authorized_request_using(&old, |_| {
+                requests += 1; rejected.take().unwrap().send(()).unwrap();
+                async { Err(AuthorizationHttpError(401).into()) }
+            });
+            let switched = async {
+                reject_pending.await.unwrap();
+                if change == "logout" {
+                    assert!(invalidate_revision(old.revision, true));
+                } else {
+                    let mut current = AuthTest::rotate(&old);
+                    match change {
+                        "origin" => current.request.origin = "https://other.example.com".into(),
+                        "device" => current.request.device_id = "other-device".into(),
+                        "session" => current.presence.session_id = "other-session".into(),
+                        _ => { current.epoch += 1; EPOCH.store(current.epoch, Ordering::SeqCst); }
+                    }
+                    *AUTH.write().unwrap() = Some(current);
+                }
+                AUTH_UPDATES.send_replace(REVISION.load(Ordering::SeqCst));
+            };
+            let (result, _) = tokio::join!(pending, switched);
+            assert!(result.is_err(), "{change}"); assert_eq!(requests, 1, "{change}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn failed_or_missing_rotation_never_extends_old_presence_lease() {
+        for fail_install in [false, true] {
+            let (_test, mut old) = AuthTest::start();
+            old.valid_until = Instant::now() + Duration::from_millis(40);
+            *AUTH.write().unwrap() = Some(old.clone());
+            let started = Instant::now(); let mut requests = 0;
+            let result = authorized_request_using(&old, |_| {
+                requests += 1;
+                let revision = REVISION.fetch_add(1, Ordering::SeqCst) + 1;
+                if fail_install {
+                    assert!(invalidate_revision(revision, false));
+                    AUTH_UPDATES.send_replace(REVISION.load(Ordering::SeqCst));
+                }
+                async { Err(AuthorizationHttpError(401).into()) }
+            }).await;
+            assert!(result.is_err()); assert_eq!(requests, 1);
+            assert!(started.elapsed() < Duration::from_millis(500));
+            if fail_install { assert!(!ready()); } else {
+                assert_eq!(AUTH.read().unwrap().as_ref().unwrap().valid_until, old.valid_until);
+                assert!(!ready());
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn transport_failure_and_repeat_401_remain_fail_closed() {
+        let (_test, old) = AuthTest::start(); AuthTest::rotate(&old);
+        for status in [403, 500] {
+            let mut requests = 0;
+            let result = authorized_request_using(&old, |_| {
+                requests += 1; async move { Err(AuthorizationHttpError(status).into()) }
+            }).await;
+            assert!(result.is_err()); assert_eq!(requests, 1);
+        }
+        let mut requests = 0;
+        let result = authorized_request_using(&old, |_| {
+            requests += 1; async { Err(AuthorizationHttpError(401).into()) }
+        }).await;
+        assert!(result.is_err()); assert_eq!(requests, 2);
+        let mut requests = 0;
+        let result = authorized_request_using(&old, |_| {
+            requests += 1; async { Err(anyhow!("test network failure")) }
+        }).await;
+        assert!(result.is_err()); assert_eq!(requests, 1);
+    }
 
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!("../../contracts/nestlink-auth.v2-vectors.json")).unwrap()

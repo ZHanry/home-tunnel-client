@@ -4,6 +4,7 @@ import 'dart:io';
 import 'homedesk_tunnel_api.dart';
 import 'models/platform_model.dart';
 import 'nestlink_browser_host.dart';
+import 'nestlink_native_authorization.dart';
 
 /// One foreground account owns native remote authorization. Tunnel Agents have their own credentials.
 class NestLinkNativeSession {
@@ -11,13 +12,21 @@ class NestLinkNativeSession {
   Timer? _timer;
   WebSocket? _socket;
   bool _closed = false, _busy = false;
-  String _installedToken = '';
   DateTime _lastBinding = DateTime.fromMillisecondsSinceEpoch(0);
   String message = '';
   NestLinkBrowserHost? _browser;
+  late final _authorization = NestLinkNativeAuthorization(
+      ready: bind.mainNestlinkAccountReady,
+      install: (auth) => bind.mainNestlinkAccountInstall(
+          origin: auth['origin']!,
+          deviceId: auth['device_id']!,
+          accessToken: auth['access_token']!),
+      clear: bind.mainNestlinkAccountClear);
+  late final _authorizationChanged = _authorization.synchronize;
   NestLinkNativeSession(this.api);
 
   Future<void> start() async {
+    api.onGuiAuthorizationChanged = _authorizationChanged;
     _timer =
         Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_sync()));
     await _sync();
@@ -36,22 +45,8 @@ class NestLinkNativeSession {
             fingerprint: identity['fingerprint_hash'] as String,
             name: Platform.isAndroid ? 'Android' : Platform.localHostname);
       }
-      final auth = await api.nativeAuthorization();
+      await api.nativeAuthorization();
       if (_closed) return;
-      if (_installedToken != auth['access_token'] ||
-          !bind.mainNestlinkAccountReady()) {
-        final error = await bind.mainNestlinkAccountInstall(
-            origin: auth['origin']!,
-            deviceId: auth['device_id']!,
-            accessToken: auth['access_token']!);
-        if (error.isNotEmpty)
-          throw HomeTunnelApiException(error, 'REMOTE_NOT_READY');
-        if (_closed) {
-          await bind.mainNestlinkAccountClear();
-          return;
-        }
-        _installedToken = auth['access_token']!;
-      }
       if (DateTime.now().difference(_lastBinding) >=
           const Duration(seconds: 30)) {
         final binding = jsonDecode(await bind.mainNestlinkBindingProof())
@@ -119,14 +114,13 @@ class NestLinkNativeSession {
   void close() {
     if (_closed) return;
     _closed = true;
+    if (identical(api.onGuiAuthorizationChanged, _authorizationChanged))
+      api.onGuiAuthorizationChanged = null;
     _timer?.cancel();
     _browser?.close();
     _browser = null;
     unawaited(_socket?.close());
     _socket = null;
-    unawaited(bind
-        .mainNestlinkAccountClear()
-        .then<void>((_) {})
-        .catchError((Object _) {}));
+    unawaited(_authorization.close().catchError((Object _) {}));
   }
 }

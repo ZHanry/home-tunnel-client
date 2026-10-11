@@ -231,6 +231,7 @@ class HomeTunnelApi {
   String? _guiRefresh;
   DateTime? _guiAccessExpires;
   Future<void>? _guiRefreshing;
+  Future<void> Function(Map<String, String>)? onGuiAuthorizationChanged;
   void Function()? onSessionClosed;
   String get guiDeviceId => _guiDeviceId;
   final Uri base;
@@ -1346,32 +1347,42 @@ class HomeTunnelApi {
     if (!isSignedIn || _guiAccess == null)
       throw const HomeTunnelApiException('请先登录自建服务。', 'LOGIN_REQUIRED');
     final generation = _generation;
-    if (_guiAccessExpires == null ||
-        _guiAccessExpires!.isBefore(
-            DateTime.now().toUtc().add(const Duration(seconds: 30)))) {
-      if (_guiRefreshing == null) {
-        final refresh = _guiRefresh;
-        _guiRefresh = null;
-        _guiRefreshing = () async {
-          try {
-            if (refresh == null)
-              throw const HomeTunnelApiException('设备登录已失效。', 'SESSION_REVOKED');
-            final value = _success(await _request('POST', '/auth/refresh',
-                generation: generation,
-                body: {'refresh_token': refresh, 'client_type': _clientType}));
-            _checkGeneration(generation);
-            _setGuiSession(value);
-          } catch (_) {
-            await revoke();
-            rethrow;
-          }
-        }();
-      }
+    // Every native/browser caller shares the refresh AND native installation.
+    // The new token must not escape while its replacement is still in IPC.
+    final pending = _guiRefreshing ??= () async {
+      var rotating = false;
       try {
-        await _guiRefreshing;
-      } finally {
-        _guiRefreshing = null;
+        if (_guiAccessExpires == null ||
+            _guiAccessExpires!.isBefore(
+                DateTime.now().toUtc().add(const Duration(seconds: 30)))) {
+          rotating = true;
+          final refresh = _guiRefresh;
+          _guiRefresh = null;
+          if (refresh == null)
+            throw const HomeTunnelApiException('设备登录已失效。', 'SESSION_REVOKED');
+          final value = _success(await _request('POST', '/auth/refresh',
+              generation: generation,
+              body: {'refresh_token': refresh, 'client_type': _clientType}));
+          _checkGeneration(generation);
+          _setGuiSession(value);
+        }
+        _checkGeneration(generation);
+        await onGuiAuthorizationChanged?.call({
+          'origin': base.origin,
+          'device_id': _guiDeviceId,
+          'access_token': _guiAccess!
+        });
+        _checkGeneration(generation);
+      } catch (_) {
+        // A late callback from the previous account cannot revoke a new login.
+        if (rotating && generation == _generation) await revoke();
+        rethrow;
       }
+    }();
+    try {
+      await pending;
+    } finally {
+      if (identical(_guiRefreshing, pending)) _guiRefreshing = null;
     }
     _checkGeneration(generation);
     return {
