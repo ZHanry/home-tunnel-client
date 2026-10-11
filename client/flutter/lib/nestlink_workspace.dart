@@ -13,7 +13,7 @@ import 'nestlink_remote_settings.dart';
 
 export 'nestlink_remote_settings.dart' show NestLinkRemoteSettings;
 
-const nestlinkVersion = '14.0.0';
+const nestlinkVersion = '14.0.1';
 final nestlinkRelease = ValueNotifier<Map<String, dynamic>?>(null);
 
 Future<void> checkNestLinkVersion(HomeTunnelApi? api) async {

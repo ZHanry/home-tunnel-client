@@ -1324,7 +1324,7 @@ class HomeTunnelApi {
           'name': name,
           'install_id': installId,
           'fingerprint_hash': fingerprint,
-          'client_version': '14.0.0',
+          'client_version': '14.0.1',
           'client_type': _clientType,
           'credential_purpose': 'gui',
         },
@@ -1531,7 +1531,7 @@ class HomeTunnelApi {
               'name': name,
               'install_id': installId,
               'fingerprint_hash': fingerprint,
-              'client_version': '14.0.0',
+              'client_version': '14.0.1',
               'client_type': _clientType,
               'credential_purpose': 'background',
             }));

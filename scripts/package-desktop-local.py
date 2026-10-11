@@ -56,7 +56,7 @@ for name in ('LICENSE', 'LICENSE-RUSTDESK'):
     shutil.copy2(ROOT / name, payload / name)
 shutil.copy2(ROOT / 'client/res/icon.ico', payload / 'NestLink.ico')
 (payload / 'README.md').write_text(f'# NestLink {version}\n\nLocal desktop development build. Purple grouped device workspace.\n'
-    'Uses the frozen API v2 and the coordinated 14.0.0 tunnel/browser runtime. Local package output is not a GitHub release.\n'
+    f'Uses the frozen API v2 and the coordinated {runtime["version"]} tunnel/browser runtime. Local package output is not a GitHub release.\n'
     'Clean installation removes the previous configuration; sign in to your own service again.\n', encoding='utf-8')
 (payload / 'VCRUNTIME-NOTICES.txt').write_text('Microsoft Visual C++ Runtime redistributables from the installed Visual Studio 2022 toolchain. Copyright Microsoft Corporation. Redistributed under the Visual Studio license.\n', encoding='utf-8')
 subprocess.run([str(args.iscc), '/DAppVersion=' + version,

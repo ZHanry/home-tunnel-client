@@ -9,6 +9,7 @@ import 'package:flutter_hbb/homedesk_title_bar.dart';
 import 'package:flutter_hbb/homedesk_window.dart';
 import 'package:flutter_hbb/nestlink_locale.dart';
 import 'package:flutter_hbb/nestlink_dialog.dart';
+import 'package:flutter_hbb/nestlink_workspace.dart' show nestlinkVersion;
 import 'package:flutter_hbb/homedesk_account.dart';
 import 'package:flutter_hbb/homedesk_navigation.dart';
 import 'homedesk_services_test.dart' as portal;
@@ -113,7 +114,7 @@ void main() {
                     onTheme: () => update(() => dark = !dark),
                     onLanguage: () => nestlinkLanguage.value =
                         nestlinkEnglish ? 'zh-cn' : 'en')))));
-    expect(find.text('14.0.0'), findsNothing);
+    expect(find.text(nestlinkVersion), findsNothing);
     await tester.tap(find.byKey(const ValueKey('title-theme')));
     await tester.pumpAndSettle();
     expect(Theme.of(tester.element(find.byType(HomeDeskTitleBar))).brightness,
@@ -125,11 +126,12 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('title-version')));
     await tester.pumpAndSettle();
     expect(find.byType(NestLinkDialog), findsOneWidget);
-    expect(find.widgetWithText(SelectableText, '14.0.0'), findsOneWidget);
+    expect(
+        find.widgetWithText(SelectableText, nestlinkVersion), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Close'));
     await tester.pumpAndSettle();
     expect(find.byType(NestLinkDialog), findsNothing);
-    expect(find.text('14.0.0'), findsNothing);
+    expect(find.text(nestlinkVersion), findsNothing);
     tester.view.physicalSize = const Size(360, 300);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('title-theme')), findsOneWidget);

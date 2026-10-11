@@ -8,11 +8,11 @@ fn main() {
         &std::fs::read(path).expect("read installed runtime metadata")).expect("runtime metadata JSON");
     let parent = manifest["parent_executable"].as_str().expect("parent executable").to_owned();
     assert!(matches!(parent.as_str(), "homedesk.exe" | "homedesk"));
-    assert_eq!(env!("CARGO_PKG_VERSION"), "14.0.0");
-    assert_eq!(manifest["version"], "14.0.0");
+    assert_eq!(env!("CARGO_PKG_VERSION"), "14.0.1");
+    assert_eq!(manifest["version"], "14.0.1");
     assert_eq!(runtime_compatibility::validate(&manifest, &parent), Ok(()));
 
-    for version in ["13.0.0", "12.0.0", "", "14.0.0-fake"] {
+    for version in ["14.0.0", "13.0.0", "12.0.0", "", "14.0.1-fake"] {
         let mut changed = manifest.clone();
         changed["version"] = version.into();
         assert_eq!(runtime_compatibility::validate(&changed, &parent), Err("RUNTIME_INCOMPATIBLE"));
@@ -30,5 +30,5 @@ fn main() {
     let mut missing = manifest.clone();
     missing.as_object_mut().unwrap().remove("parent_executable");
     assert_eq!(runtime_compatibility::validate(&missing, &parent), Err("INTEGRITY_FAILED"));
-    println!("11 runtime compatibility/identity cases passed using the built 14.0.0 manifest.");
+    println!("12 runtime compatibility/identity cases passed using the built 14.0.1 manifest.");
 }

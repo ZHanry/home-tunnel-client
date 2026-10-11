@@ -23,7 +23,7 @@ class ProductReleaseTests(unittest.TestCase):
                 "deliverables": {}}
 
     def test_stable_versions_and_rc_are_distinct(self):
-        for value in ("13.0.0", "14.0.0", "15.2.1"):
+        for value in ("13.0.0", "14.0.0", "14.0.1", "15.2.1"):
             self.assertTrue(release.is_stable_release(value))
         for value in ("14.0.0-RC1", "14.0.0-rc.1", "v14.0.0", "14.0", "014.0.0"):
             self.assertFalse(release.is_stable_release(value))
@@ -36,6 +36,15 @@ class ProductReleaseTests(unittest.TestCase):
             (root / "docs/release/acceptance-13.0.0.json").write_text(json.dumps(old))
             with patch.object(release, "ROOT", root), patch.object(release, "version", return_value="14.0.0"):
                 with self.assertRaisesRegex(SystemExit, "14.0.0 requires recorded"):
+                    release.validate_acceptance("client", "b" * 40)
+
+    def test_maintenance_cannot_reuse_fourteen_zero_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs/release").mkdir(parents=True)
+            (root / "docs/release/acceptance-14.0.0.json").write_text(json.dumps(self.record()))
+            with patch.object(release, "ROOT", root), patch.object(release, "version", return_value="14.0.1"):
+                with self.assertRaisesRegex(SystemExit, "14.0.1 requires recorded"):
                     release.validate_acceptance("client", "b" * 40)
 
     def test_acceptance_must_match_version_scenarios_and_payload(self):

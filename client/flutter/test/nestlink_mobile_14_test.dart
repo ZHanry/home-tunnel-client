@@ -15,7 +15,8 @@ import 'package:flutter_hbb/nestlink_remote_credentials.dart';
 import 'package:flutter_hbb/nestlink_remote_settings.dart';
 import 'package:flutter_hbb/nestlink_device_list.dart';
 import 'package:flutter_hbb/nestlink_locale.dart';
-import 'package:flutter_hbb/nestlink_workspace.dart' show nestlinkRelease;
+import 'package:flutter_hbb/nestlink_workspace.dart'
+    show nestlinkRelease, nestlinkVersion;
 import 'package:flutter_hbb/mobile/pages/settings_page.dart'
     show mobileDeviceInformation;
 import 'package:settings_ui/settings_ui.dart';
@@ -338,7 +339,7 @@ void main() {
     await tester.pumpAndSettle();
     await press(tester, 'mobile-preferences');
     await press(tester, 'mobile-preference-version');
-    expect(find.text('14.0.0'), findsOneWidget);
+    expect(find.text(nestlinkVersion), findsOneWidget);
     await tester.ensureVisible(find.text('关闭'));
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();

@@ -287,7 +287,7 @@ class HomeDeskDashboardState extends State<HomeDeskDashboard> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.stretch,
                                       children: [
-                                        if (mobile)
+                                        if (mobile || !Platform.isWindows)
                                           Padding(
                                               padding:
                                                   const EdgeInsets.fromLTRB(

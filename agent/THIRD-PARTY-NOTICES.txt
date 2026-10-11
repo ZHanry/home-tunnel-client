@@ -1,4 +1,4 @@
-NestLink Agent 14.0.0
+NestLink Agent 14.0.1
 
 This product includes software developed by the frp project
 (https://github.com/fatedier/frp), version 0.70.1, commit
