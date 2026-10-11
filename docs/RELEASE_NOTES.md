@@ -24,4 +24,8 @@ Windows x64 实测备份、卸载、清配置、清装、启动和全部 115 个
 
 联调使用任务专用 WSL、自签 TLS、host-network 健康适配、localhost 桥、HBBS LAN mask 和 STUN-only 后端。部分 API/Web 场景跳过任务自签证书验证；任务网络恢复和 Android P2P 的精确临时单端口规则均单独记录。原始失败、时钟域与未测范围保留，13.0.0 验收结论不复用于本版。
 
+依赖安全范围已针对确切构建材料核对。截至本次审查，客户端仓库仍有 18 个未关闭的 Dependabot 告警（3 high、7 medium、8 low）。`mio` 高危告警来自虚拟显示独立旧锁，本次 Windows/Linux/Android 选择的版本已超出受影响范围。Linux 的 `users` 0.10.0/0.11.0 未修复，冻结消费者未发现调用该高危告警涉及的组列表访问控制入口；这只是静态范围判断，没有动态可达性或利用测试。Linux 的 `libgit2-sys` 高危版本仍是读取冻结本地源码元数据的构建输入，其依赖链未选入受管运行时，该构建依赖没有修复。Linux glib、users 的其他告警以及 atty 风险仍保留；没有关闭或 dismiss 告警，也不宣称安装包没有受影响依赖。
+
+The exact build materials were reviewed against the open dependency alerts. Linux still selects unpatched users 0.10.0/0.11.0; no calls to the affected group-list access-control entry points were found in the frozen consumers, without dynamic reachability or exploitation tests. The affected libgit2-sys remains a Linux build input and is not selected into the managed runtime. Selected Mio versions are outside its affected range. Other glib/users and atty risks remain; this release does not claim that all dependency vulnerabilities are fixed.
+
 此次发布更新 GitHub、下载站及自动更新信息。正在运行的生产服务端保持原版本。
